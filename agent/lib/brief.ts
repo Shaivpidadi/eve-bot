@@ -1,3 +1,4 @@
+import { DEFAULT_EFFORT } from "./models";
 import type { Bot, Job } from "./types";
 
 /**
@@ -20,10 +21,23 @@ export function renderBrief(bot: Bot, job: Job): string {
       `title: ${job.title}`,
       `requested by: ${job.requestedBy}`,
       job.everyMinutes === null ? "cadence: one-off" : `cadence: every ${job.everyMinutes} minutes`,
+      // Read back by the teammate's model choice (see models.ts); keep the format.
+      `effort: ${job.effort ?? DEFAULT_EFFORT}`,
       job.requiresSignoff ? "sign-off: a human must approve the deliverable" : "sign-off: not required",
       "",
       job.brief.trim(),
     ].join("\n"),
+    job.feedback
+      ? [
+          "## Sent back for changes",
+          job.feedback.trim(),
+          "",
+          "A person reviewed your last result and wants the changes above. Revise that work rather than starting over:",
+          job.result === null
+            ? "(no previous result was recorded)"
+            : `${job.result.summary}\n\n${job.result.deliverable.slice(0, 2_000)}`,
+        ].join("\n")
+      : null,
     job.successCriteria.length > 0
       ? ["## Done means", ...job.successCriteria.map((item) => `- ${item}`)].join("\n")
       : null,
@@ -47,7 +61,11 @@ export const JOB_RESULT_SCHEMA = {
     summary: { type: "string", description: "One or two sentences an operator can read." },
     deliverable: { type: "string", description: "The actual output, or where it now lives." },
     openQuestions: { type: "array", items: { type: "string" } },
-    needsHuman: { type: "boolean", description: "True when a person must act before this is done." },
+    needsHuman: {
+      type: "boolean",
+      description:
+        "True only when the job cannot count as done until a person acts. Open questions alone are not a reason; list them in openQuestions.",
+    },
   },
   required: ["summary", "deliverable", "openQuestions", "needsHuman"],
   additionalProperties: false,

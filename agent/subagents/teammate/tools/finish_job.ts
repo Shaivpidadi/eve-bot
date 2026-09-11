@@ -2,8 +2,10 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { record } from "../../../lib/activity";
+import { checkpointComputer } from "../../../lib/computer-backup";
 import { getJob, patchJob } from "../../../lib/jobs";
 import { operator } from "../../../lib/session";
+import { looseBoolean } from "../../../lib/tool-input";
 
 export default defineTool({
   description:
@@ -17,11 +19,11 @@ export default defineTool({
       .max(8_000)
       .describe("The output itself, or exactly where it now lives."),
     openQuestions: z.array(z.string().max(300)).max(10).optional(),
-    needsHuman: z
-      .boolean()
-      .describe("True when a person must act or decide before this can be considered done."),
-    verified: z
-      .boolean()
+    needsHuman: looseBoolean()
+      .describe(
+        "True only when the job cannot count as done until a person acts: they skipped a takeover you needed, or a decision only they can make blocks the deliverable. Open questions alone are not a reason; put them in openQuestions.",
+      ),
+    verified: looseBoolean()
       .describe("True only if you re-checked the result after acting, rather than assuming it."),
   }),
   label: { start: ({ summary }) => `Finish: ${summary.slice(0, 60)}` },
@@ -48,6 +50,8 @@ export default defineTool({
         : `Result recorded (unverified): ${input.summary}`,
     });
 
+    // The end of a job is the natural point to keep what it left on the computer.
+    await checkpointComputer(ctx, { minIntervalMs: 60_000 });
     return { recorded: true as const, result };
   },
 });

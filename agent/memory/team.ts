@@ -2,6 +2,8 @@ import { defineMemory } from "eve/memory";
 import { fileMemory } from "eve/memory/file";
 import type { MemoryScopeContext } from "eve/memory";
 
+import { memoryBackend } from "../lib/memory-backend";
+
 /**
  * Conventions shared by everyone in a workspace: escalation paths, the tools the
  * team actually uses, house style. Scoped to the workspace rather than the
@@ -18,6 +20,6 @@ function byWorkspace(ctx: MemoryScopeContext): string | null {
 export default defineMemory({
   description:
     "Conventions that apply to the whole workspace: who approves what, which systems are the source of truth, house style for anything the team publishes.",
-  provider: fileMemory({ maxCharacters: 6_000 }),
+  provider: fileMemory({ maxCharacters: 6_000, backend: memoryBackend() }),
   scope: byWorkspace,
 });

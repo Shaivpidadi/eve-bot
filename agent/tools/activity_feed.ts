@@ -10,7 +10,7 @@ export default defineTool({
     "Read what the team has been doing: hires, assignments, progress, approvals, results and failures, newest first. Use this to answer 'what happened while I was away'.",
   inputSchema: z.object({
     bot: z.string().optional().describe("Bot name or id."),
-    limit: z.number().int().min(1).max(100).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
   }),
   label: { start: () => "Read the activity feed" },
   async execute(input, ctx) {

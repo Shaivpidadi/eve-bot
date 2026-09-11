@@ -59,7 +59,12 @@ export default defineTool({
       botId: job.botId,
       jobId,
       text: `Saved ${artifact.name} (${artifact.bytes} bytes).`,
-      data: { artifactId: artifact.id },
+      data: {
+        artifactId: artifact.id,
+        name: artifact.name,
+        mediaType: artifact.mediaType,
+        bytes: artifact.bytes,
+      },
     });
 
     return { saved: true as const, artifact };

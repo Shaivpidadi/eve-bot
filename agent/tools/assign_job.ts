@@ -3,6 +3,9 @@ import { z } from "zod";
 
 import { findBot } from "../lib/bots";
 import { assignJob } from "../lib/jobs";
+import { JOB_EFFORTS } from "../lib/models";
+import { looseBoolean } from "../lib/tool-input";
+import { isRoomName } from "../lib/rooms";
 import { operator } from "../lib/session";
 
 export default defineTool({
@@ -25,7 +28,9 @@ export default defineTool({
       .string()
       .optional()
       .describe("ISO 8601 timestamp with offset for the first run. Defaults to now."),
-    everyMinutes: z
+    // Coerced: some models send numbers as strings ("60"), and a rejected call
+    // tends to be retried without the field, silently dropping the schedule.
+    everyMinutes: z.coerce
       .number()
       .int()
       .min(5)
@@ -33,16 +38,23 @@ export default defineTool({
       .nullable()
       .optional()
       .describe("Repeat interval. Omit or null for a one-off job."),
-    requiresSignoff: z
-      .boolean()
+    requiresSignoff: looseBoolean()
       .optional()
-      .describe("Ask a human to approve the deliverable before the job closes."),
+      .describe(
+        "Ask a human to approve the deliverable before the job closes. Only when the operator asked to review it first, or it goes somewhere public, irreversible, or expensive. Research, analysis, files, and monitors do not need it.",
+      ),
     priority: z.enum(["normal", "high"]).optional(),
+    effort: z
+      .enum(JOB_EFFORTS)
+      .optional()
+      .describe(
+        'How hard the job is, which picks the model and its cost. "quick": lookups, status checks, simple routine monitors (cheapest, about 10x less than standard). "standard" (default): most work — browsing and operating web apps, reading, summarizing, drafting. "deep": hard multi-step research, analysis, coding, or anything high-stakes (most capable, about 2.5x standard). Choose the lowest that will do the job well; a failed job re-runs one level up.',
+      ),
     room: z
       .string()
       .max(60)
       .optional()
-      .describe("Where the result should be reported. Defaults to the operator's desk."),
+      .describe("Where the result should be reported. Defaults to the conversation you are in."),
   }),
   label: {
     start: ({ bot, title }) => `Assign "${title}" to ${bot}`,
@@ -71,7 +83,9 @@ export default defineTool({
       ...(input.everyMinutes !== undefined ? { everyMinutes: input.everyMinutes } : {}),
       ...(input.requiresSignoff !== undefined ? { requiresSignoff: input.requiresSignoff } : {}),
       ...(input.priority ? { priority: input.priority } : {}),
-      ...(input.room ? { room: input.room } : {}),
+      ...(input.effort ? { effort: input.effort } : {}),
+      // Report back in the thread the work was asked for in, unless told otherwise.
+      room: input.room !== undefined && isRoomName(input.room) ? input.room : who.room,
     });
 
     return {
@@ -83,6 +97,7 @@ export default defineTool({
         runAt: job.runAt,
         everyMinutes: job.everyMinutes,
         requiresSignoff: job.requiresSignoff,
+        effort: job.effort,
       },
       bot: { id: bot.id, name: bot.name },
       nextStep:

@@ -1,79 +1,181 @@
-import { GET, POST, defineChannel } from "eve/channels";
+import { DELETE, GET, PATCH, POST, defineChannel } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
 
-import console_ from "./console.html?raw";
-
-import { recentActivity } from "../lib/activity";
-import { listBots } from "../lib/bots";
-import { listJobs } from "../lib/jobs";
+import {
+  authenticate,
+  sessionCookie,
+  tokensConfigured,
+  workspaceForToken,
+  type Access,
+  type Gate,
+} from "../lib/access";
+import { record } from "../lib/activity";
+import { readArtifact } from "../lib/artifacts";
+import { buildBoard } from "../lib/board";
+import { findBot, getBot, hireBot, patchBot } from "../lib/bots";
+import { computerMode, vercelCredentialsError } from "../lib/computer-config";
+import * as computer from "../lib/computer/http";
+import { clearHandovers, finishHandover, screenForBot } from "../lib/computer/screens";
+import { cancelJob, listOpenJobs } from "../lib/jobs";
+import {
+  addPlugin,
+  getPlugin,
+  listPlugins,
+  publicPlugin,
+  recheckPlugin,
+  removePlugin,
+  updatePlugin,
+} from "../lib/plugins";
+import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
+import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
+import { getRoomState, noteAnswered, resetRoom } from "../lib/roomstate";
+import { store } from "../lib/store";
 
 /**
- * The ops channel: how people and machines reach HQ.
+ * The ops channel: how people and machines reach the team.
  *
- * A "room" is a conversation address — one operator's desk, a shared control
- * room, the standup feed. Sending to a room resumes that room's durable session,
- * so a bot's work, its approvals, and the operator's replies all stay in one
- * thread no matter which side started it.
+ * A "room" is a conversation address — HQ's desk, or one bot's own thread.
+ * Sending to a room resumes that room's durable session, so a bot's work, its
+ * approvals, and the operator's replies all stay in one thread no matter which
+ * side started it. Rooms are addressed per workspace, and the workspace comes
+ * from the caller's token, never from the request.
  *
- * `receive` is what makes this channel a valid target for schedules and other
- * channels: it is how the dispatcher wakes HQ every minute without a human in
- * the loop.
+ * `receive` is what makes this channel a valid target for schedules: it is how
+ * the dispatcher wakes a room every minute without a human in the loop.
  */
 
-const CONSOLE_TOKEN = process.env.BOT_CONSOLE_TOKEN;
-
-function authorize(request: Request): boolean {
-  if (CONSOLE_TOKEN === undefined) return true; // Local dev: the server is already local-only.
-  return request.headers.get("authorization") === `Bearer ${CONSOLE_TOKEN}`;
-}
-
-function principal(request: Request, room: string): SessionAuthContext {
-  const user = request.headers.get("x-bot-user") ?? "operator";
-  const workspaceId =
-    request.headers.get("x-bot-workspace") ?? process.env.BOT_DEFAULT_WORKSPACE ?? "default";
-  return {
-    attributes: { workspaceId, room },
-    authenticator: "bot-console",
-    principalId: user,
-    principalType: "user",
-  };
-}
+const MAX_MESSAGE_CHARS = 20_000;
+const SECURITY_HEADERS = { "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" };
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body, null, 2), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      ...SECURITY_HEADERS,
+    },
   });
 
-export default defineChannel<undefined, void, { room: string }>({
+const denied = (gate: Extract<Gate, { ok: false }>) => json({ error: gate.error }, gate.status);
+
+/** The console is the Next.js app; sign-in outcomes send the browser back to its pages. */
+const seeOther = (location: string, headers: Record<string, string> = {}) =>
+  new Response(null, { status: 303, headers: { location, ...headers } });
+
+function principal(access: Access, room: string): SessionAuthContext {
+  return {
+    attributes: roomAttributes(access.workspaceId, room),
+    authenticator: "bot-console",
+    principalId: access.user,
+    principalType: "user",
+  };
+}
+
+async function readJson(request: Request): Promise<Record<string, unknown> | null> {
+  try {
+    const body: unknown = await request.json();
+    return typeof body === "object" && body !== null && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function text(value: unknown, min: number, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length >= min && trimmed.length <= max ? trimmed : null;
+}
+
+/** A valid room name, and for a bot's thread, a bot on this workspace's roster. */
+async function resolveRoom(access: Access, raw: string | undefined): Promise<string | Response> {
+  if (raw === undefined || !isRoomName(raw)) return json({ error: "invalid room" }, 400);
+  const botId = botIdForRoom(raw);
+  if (botId !== null && (await getBot(access.workspaceId, botId)) === null) {
+    return json({ error: "no such bot" }, 404);
+  }
+  return raw;
+}
+
+export default defineChannel<undefined, void, { workspaceId: string; room: string }>({
   // A bot is mid-job more often than not; queueing keeps a new instruction from
   // cancelling the turn that is reporting the last one.
   turnPolicy: "queue",
 
   routes: [
-    /**
-     * The console: roster, work, live activity, and the desk conversation.
-     * Embedded at compile time, so there is no second server to run.
-     */
-    GET("/bot", async (request) => {
-      if (!authorize(request)) return json({ error: "unauthorized" }, 401);
-      return new Response(console_, {
-        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    /** Signs the browser console in. The token goes into an HttpOnly cookie. */
+    POST("/bot/v1/session", async (request) => {
+      if (!tokensConfigured()) return seeOther("/bot");
+      let token = "";
+      try {
+        const value = (await request.formData()).get("token");
+        token = typeof value === "string" ? value.trim() : "";
+      } catch {
+        token = "";
+      }
+      if (token === "" || workspaceForToken(token) === null) return seeOther("/bot/login?error=invalid");
+      return seeOther("/bot", { "set-cookie": sessionCookie(token, request) });
+    }),
+
+    POST("/bot/v1/session/end", async (request) =>
+      seeOther("/bot/login", { "set-cookie": sessionCookie(null, request) }),
+    ),
+
+    /** Reaches the app only when nothing stands in front of it; see `lib/protection.ts`. */
+    GET(PROBE_PATH, async () =>
+      new Response(PROBE_MARKER, {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", ...SECURITY_HEADERS },
+      }),
+    ),
+
+    /** What a new deployment still needs, for the setup page. Yes-or-no answers only. */
+    GET("/bot/v1/setup", async (request) => {
+      const onVercel = process.env.VERCEL === "1";
+      const host = requestHost(request);
+      const backend = computerMode();
+      const driver = store().name;
+      return json({
+        platform: onVercel ? "vercel" : "local",
+        protected: onVercel && host !== null ? await hostIsProtected(host) : null,
+        tokens: tokensConfigured(),
+        storage: {
+          driver,
+          ready: driver !== "vercel-blob" || Boolean(process.env.BLOB_STORE_ID || process.env.BLOB_READ_WRITE_TOKEN),
+        },
+        computer: { backend, ready: backend !== "vercel" || vercelCredentialsError() === null },
       });
     }),
 
-    POST("/bot/v1/rooms/:room/messages", async (request, { from, params }) => {
-      if (!authorize(request)) return json({ error: "unauthorized" }, 401);
-      const room = params.room;
-      if (room === undefined) return json({ error: "missing room" }, 400);
+    /** Everything the console needs: the roster with presence, and the feed. */
+    GET("/bot/v1/state", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const after = new URL(request.url).searchParams.get("after");
+      const board = await buildBoard(gate.access.workspaceId, {
+        ...(after !== null && !Number.isNaN(Date.parse(after)) ? { after } : {}),
+      });
+      return json({ ...board, user: gate.access.user });
+    }),
 
-      const body = (await request.json()) as { message?: string };
-      if (typeof body.message !== "string" || body.message.trim() === "") {
+    POST("/bot/v1/rooms/:room/messages", async (request, { from, params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const room = await resolveRoom(gate.access, params.room);
+      if (room instanceof Response) return room;
+
+      const body = await readJson(request);
+      const message = body?.message;
+      if (typeof message !== "string" || message.trim() === "") {
         return json({ error: "message is required" }, 400);
       }
+      if (message.length > MAX_MESSAGE_CHARS) return json({ error: "message is too long" }, 413);
 
-      const session = await from(room).send(body.message, { auth: principal(request, room) });
+      const session = await from(roomAddress(gate.access.workspaceId, room)).send(message, {
+        auth: principal(gate.access, room),
+      });
       return json({ room, sessionId: session.id });
     }),
 
@@ -86,18 +188,19 @@ export default defineChannel<undefined, void, { room: string }>({
      * that asked hours ago pick up exactly where it parked.
      */
     POST("/bot/v1/rooms/:room/respond", async (request, { from, params }) => {
-      if (!authorize(request)) return json({ error: "unauthorized" }, 401);
-      const room = params.room;
-      if (room === undefined) return json({ error: "missing room" }, 400);
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const room = await resolveRoom(gate.access, params.room);
+      if (room instanceof Response) return room;
 
-      const body = (await request.json()) as { responses?: unknown };
+      const body = await readJson(request);
       let responses;
       try {
-        responses = parseInputResponses(body.responses);
+        responses = parseInputResponses(body?.responses);
       } catch (error) {
         return json(
           {
-            error: "responses must be [{ requestId, optionId? , text? }]",
+            error: "responses must be [{ requestId, optionId?, text? }]",
             detail: error instanceof Error ? error.message : String(error),
           },
           400,
@@ -105,24 +208,112 @@ export default defineChannel<undefined, void, { room: string }>({
       }
       if (responses.length === 0) return json({ error: "no responses" }, 400);
 
-      const session = await from(room).respond(responses, { auth: principal(request, room) });
+      const session = await from(roomAddress(gate.access.workspaceId, room)).respond(responses, {
+        auth: principal(gate.access, room),
+      });
+      await noteAnswered(gate.access.workspaceId, room, responses);
+      await clearHandovers(gate.access.workspaceId, responses.map((response) => response.requestId));
       return json({ room, sessionId: session.id, answered: responses.length });
     }),
 
     POST("/bot/v1/rooms/:room/cancel", async (request, { from, params }) => {
-      if (!authorize(request)) return json({ error: "unauthorized" }, 401);
-      const room = params.room;
-      if (room === undefined) return json({ error: "missing room" }, 400);
-      return json(await from(room).cancel());
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const room = await resolveRoom(gate.access, params.room);
+      if (room instanceof Response) return room;
+      return json(await from(roomAddress(gate.access.workspaceId, room)).cancel());
     }),
 
-    GET("/bot/v1/sessions/:sessionId/stream", async (request, { attachSession, params }) => {
-      if (!authorize(request)) return json({ error: "unauthorized" }, 401);
-      const sessionId = params.sessionId;
-      if (sessionId === undefined) return json({ error: "missing session" }, 400);
+    /**
+     * Starts a room over. Stops its turn and the background work it started,
+     * cancels the one-off jobs asked for in it, and retires its session, so the
+     * next message opens a fresh one with no history. The bot, its routines,
+     * playbook and files, and the team's sign-ins are left as they are.
+     */
+    POST("/bot/v1/rooms/:room/reset", async (request, { attachSession, from, params, resolveSession }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const room = await resolveRoom(gate.access, params.room);
+      if (room instanceof Response) return room;
+      const { workspaceId, user } = gate.access;
+      const address = roomAddress(workspaceId, room);
+      const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
-      // The handle streams event objects; the wire wants NDJSON bytes.
-      const events = await attachSession(sessionId).getEventStream();
+      const cancelledJobs: string[] = [];
+      for (const job of await listOpenJobs(workspaceId)) {
+        if (job.room !== room || job.everyMinutes !== null) continue;
+        const cancelled = await cancelJob(workspaceId, job.id);
+        if (!cancelled.ok) continue;
+        cancelledJobs.push(job.id);
+        // The teammate's own session holds its open requests, such as a cost-limit card.
+        if (job.sessionId) {
+          const child = attachSession(job.sessionId);
+          await quietly(child.cancel({ tasks: true }));
+          await quietly(child.reset({ reason: "Room reset" }));
+        }
+      }
+
+      const live = await resolveSession(address);
+      const recorded = (await getRoomState(workspaceId, room))?.sessionId ?? null;
+      for (const id of new Set([live?.id ?? null, recorded])) {
+        if (id !== null) await quietly(attachSession(id).cancel({ tasks: true }));
+      }
+      const reset = await from(address).reset({ reason: `Started over from the console by ${user}` });
+      if (recorded !== null && recorded !== live?.id) {
+        await quietly(attachSession(recorded).reset({ reason: "Room reset" }));
+      }
+      await resetRoom(workspaceId, room);
+
+      const botId = botIdForRoom(room);
+      const bot = botId === null ? null : await getBot(workspaceId, botId);
+      if (bot !== null) {
+        const screen = await screenForBot(workspaceId, bot.id);
+        if (screen?.handover) await finishHandover(screen.n);
+      }
+      await record({
+        workspaceId,
+        kind: "bot.updated",
+        botId: bot?.id ?? null,
+        text: `${user} started ${bot === null ? "HQ's desk" : `${bot.name}'s thread`} over.`,
+      });
+      return json({
+        room,
+        reset: reset.status,
+        sessions: [...new Set([live?.id, recorded].filter((id): id is string => typeof id === "string"))],
+        cancelledJobs,
+      });
+    }),
+
+    /**
+     * Follows a room's conversation as NDJSON, from `startIndex`. Addressed by
+     * room rather than session id, so a caller can only read threads in its
+     * own workspace. `x-bot-session` tells the reader when the room moved to a
+     * new session and its cursor no longer applies.
+     */
+    GET("/bot/v1/rooms/:room/stream", async (request, { attachSession, params, resolveSession }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const room = await resolveRoom(gate.access, params.room);
+      if (room instanceof Response) return room;
+      const none = () => new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+
+      // The room's live session, or the last one it had once that session
+      // ended, so the thread still reads back. The fallback id comes from this
+      // workspace's own room record, never from the request.
+      const live = await resolveSession(roomAddress(gate.access.workspaceId, room));
+      const sessionId =
+        live?.id ?? (await getRoomState(gate.access.workspaceId, room))?.sessionId ?? null;
+      if (sessionId === null) return none();
+      const session = live ?? attachSession(sessionId);
+
+      const requested = Number(new URL(request.url).searchParams.get("startIndex") ?? 0);
+      const startIndex = Number.isInteger(requested) && requested >= 0 ? requested : 0;
+      let events;
+      try {
+        events = await session.getEventStream({ startIndex });
+      } catch {
+        return none();
+      }
       const encoder = new TextEncoder();
       const ndjson = events.pipeThrough(
         new TransformStream<unknown, Uint8Array>({
@@ -133,51 +324,225 @@ export default defineChannel<undefined, void, { room: string }>({
       );
 
       return new Response(ndjson, {
-        headers: { "content-type": "application/x-ndjson; charset=utf-8" },
+        headers: {
+          "content-type": "application/x-ndjson; charset=utf-8",
+          "cache-control": "no-store",
+          "x-bot-session": sessionId,
+          ...SECURITY_HEADERS,
+        },
       });
     }),
 
-    // Everything a dashboard needs in one call: who is on the team, what is in
-    // flight, and what just happened.
-    GET("/bot/v1/state", async (request) => {
-      if (!authorize(request)) return json({ error: "unauthorized" }, 401);
-      const workspaceId =
-        new URL(request.url).searchParams.get("workspace") ??
-        process.env.BOT_DEFAULT_WORKSPACE ??
-        "default";
+    /** Hire from the console: a name, a job, and how it should work. */
+    POST("/bot/v1/bots", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const name = text(body?.name, 1, 40);
+      const role = text(body?.role, 1, 120);
+      const persona = text(body?.persona, 20, 4_000);
+      if (name === null || role === null || persona === null) {
+        return json(
+          { error: "A name (1–40), a job (1–120), and how it should work (20–4000 characters) are required." },
+          400,
+        );
+      }
+      const clash = await findBot(gate.access.workspaceId, name);
+      if (clash !== null) return json({ error: `${clash.name} is already on the team.` }, 409);
 
-      const [bots, jobs, activity] = await Promise.all([
-        listBots(workspaceId),
-        listJobs(workspaceId, { limit: 50 }),
-        recentActivity(workspaceId, { limit: 50 }),
-      ]);
+      const bot = await hireBot({
+        workspaceId: gate.access.workspaceId,
+        hiredBy: gate.access.user,
+        name,
+        role,
+        persona,
+      });
+      return json({ bot: { id: bot.id, name: bot.name, room: roomForBot(bot.id) } }, 201);
+    }),
 
-      return json({
-        workspaceId,
-        bots: bots.map((bot) => ({
-          id: bot.id,
-          name: bot.name,
-          emoji: bot.emoji,
-          role: bot.role,
-          status: bot.status,
-          stats: bot.stats,
-        })),
-        jobs: jobs.map((job) => ({
-          id: job.id,
-          botId: job.botId,
-          title: job.title,
-          status: job.status,
-          runAt: job.runAt,
-          everyMinutes: job.everyMinutes,
-          summary: job.result?.summary ?? job.error ?? null,
-        })),
-        activity,
+    /** Pause or resume. Retiring stays a conversation, because it needs approval. */
+    PATCH("/bot/v1/bots/:botId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const botId = params.botId;
+      const body = await readJson(request);
+      const status = body?.status;
+      if (botId === undefined || (status !== "active" && status !== "paused")) {
+        return json({ error: 'status must be "active" or "paused"' }, 400);
+      }
+      const bot = await patchBot(gate.access.workspaceId, botId, (current) => ({ ...current, status }));
+      if (bot === null) return json({ error: "no such bot" }, 404);
+      await record({
+        workspaceId: gate.access.workspaceId,
+        kind: "bot.updated",
+        botId: bot.id,
+        text: `${bot.name} was ${status === "paused" ? "paused" : "resumed"}.`,
+      });
+      return json({ bot: { id: bot.id, status: bot.status } });
+    }),
+
+    // The team's computer (see lib/computer/http.ts). Each Bot has a screen with a
+    // desktop people can watch and take over; Files move things on and off the computer.
+
+    /** The still frame of a Bot's screen. Never wakes the computer. */
+    /** The team's plugins: MCP servers every Bot can use. Keys never come back out. */
+    GET("/bot/v1/plugins", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return json({ plugins: (await listPlugins(gate.access.workspaceId)).map(publicPlugin) });
+    }),
+
+    /** Connects a plugin: the server must answer with its tools before it is saved. */
+    POST("/bot/v1/plugins", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const keyInput = typeof body?.key === "object" && body.key !== null ? (body.key as Record<string, unknown>) : {};
+      const kind = keyInput.kind === "bearer" || keyInput.kind === "header" ? keyInput.kind : "none";
+      const added = await addPlugin(gate.access.workspaceId, gate.access.user, {
+        label: typeof body?.label === "string" ? body.label : "",
+        url: typeof body?.url === "string" ? body.url : "",
+        ...(typeof body?.description === "string" ? { description: body.description } : {}),
+        key: {
+          kind,
+          ...(typeof keyInput.header === "string" ? { header: keyInput.header } : {}),
+          ...(typeof keyInput.secret === "string" ? { secret: keyInput.secret } : {}),
+        },
+        askFirst: body?.askFirst === true,
+      });
+      if (!added.ok) return json({ error: added.error }, 422);
+      return json({ plugin: publicPlugin(added.plugin) }, 201);
+    }),
+
+    PATCH("/bot/v1/plugins/:pluginId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const updated = await updatePlugin(gate.access.workspaceId, params.pluginId ?? "", {
+        ...(typeof body?.enabled === "boolean" ? { enabled: body.enabled } : {}),
+        ...(typeof body?.askFirst === "boolean" ? { askFirst: body.askFirst } : {}),
+        ...(typeof body?.description === "string" ? { description: body.description } : {}),
+      });
+      return updated === null ? json({ error: "no such plugin" }, 404) : json({ plugin: publicPlugin(updated) });
+    }),
+
+    DELETE("/bot/v1/plugins/:pluginId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const removed = await removePlugin(gate.access.workspaceId, params.pluginId ?? "");
+      return removed ? json({ removed: true }) : json({ error: "no such plugin" }, 404);
+    }),
+
+    /** Reaches the server again with its stored key, to show whether it still works. */
+    POST("/bot/v1/plugins/:pluginId/check", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const plugin = await getPlugin(gate.access.workspaceId, params.pluginId ?? "");
+      if (plugin === null) return json({ error: "no such plugin" }, 404);
+      const checked = await recheckPlugin(plugin);
+      return checked === null ? json({ error: "no such plugin" }, 404) : json({ plugin: publicPlugin(checked) });
+    }),
+
+    GET("/bot/v1/bots/:botId/screen", async (request, { params }) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.poster(gate.access, params.botId) : denied(gate);
+    }),
+
+    /** Watch a Bot's browser live. */
+    POST("/bot/v1/bots/:botId/computer/browser", async (request, { params }) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.openBrowser(request, gate.access, params.botId) : denied(gate);
+    }),
+
+    /** Take control of a Bot's browser, for example to sign in. */
+    POST("/bot/v1/bots/:botId/computer/control", async (request, { params }) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.takeControl(request, gate.access, params.botId) : denied(gate);
+    }),
+
+    POST("/bot/v1/bots/:botId/computer/control/heartbeat", async (request, { params }) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.renewControl(gate.access, params.botId) : denied(gate);
+    }),
+    POST("/bot/v1/bots/:botId/computer/viewing", async (request, { params }) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.keepWatching(gate.access, params.botId) : denied(gate);
+    }),
+
+    POST("/bot/v1/bots/:botId/computer/release", async (request, { params }) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.releaseControl(gate.access, params.botId, { handBack: false }) : denied(gate);
+    }),
+
+    /** Release control and share the sign-ins made meanwhile with the other browsers. */
+    POST("/bot/v1/bots/:botId/computer/handback", async (request, { params }) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.releaseControl(gate.access, params.botId, { handBack: true, request }) : denied(gate);
+    }),
+
+    GET("/bot/v1/bots/:botId/computer/frame", async (request, { params }) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.frame(gate.access, params.botId) : denied(gate);
+    }),
+
+    POST("/bot/v1/bots/:botId/computer/input", async (request, { params }) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.input(request, gate.access, params.botId) : denied(gate);
+    }),
+
+    GET("/bot/v1/computer/files", async (request) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.listFiles(request) : denied(gate);
+    }),
+
+    GET("/bot/v1/computer/files/content", async (request) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.fileContent(request) : denied(gate);
+    }),
+
+    POST("/bot/v1/computer/files", async (request) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.uploadFile(request, gate.access) : denied(gate);
+    }),
+
+    DELETE("/bot/v1/computer/files", async (request) => {
+      const gate = await authenticate(request);
+      return gate.ok ? computer.deleteFile(request, gate.access) : denied(gate);
+    }),
+
+    /**
+     * Downloads a saved artifact. Bots save things they found on the web, so
+     * nothing but plain images renders inline, and even those are sandboxed.
+     */
+    GET("/bot/v1/artifacts/:artifactId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const artifactId = params.artifactId;
+      if (artifactId === undefined || !/^art_[a-z0-9]+$/.test(artifactId)) {
+        return json({ error: "invalid artifact" }, 400);
+      }
+      const [key] = await store().list(`artifacts/${gate.access.workspaceId}/${artifactId}-`);
+      const stored = key === undefined ? null : await readArtifact(key);
+      if (stored === null) return json({ error: "not found" }, 404);
+
+      const { meta } = stored;
+      const inline = /^image\/(png|jpeg|gif|webp)$/.test(meta.mediaType);
+      return new Response(Buffer.from(stored.base64, "base64"), {
+        headers: {
+          "content-type": inline ? meta.mediaType : "application/octet-stream",
+          "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(meta.name)}`,
+          "content-security-policy": "sandbox",
+          "cache-control": "private, max-age=300",
+          ...SECURITY_HEADERS,
+        },
       });
     }),
   ],
 
-  /** Cross-channel and schedule hand-offs land here. The room is the address. */
+  /** Schedule hand-offs land here. The workspace and room are the address. */
   async receive(input, { from }) {
-    return from(input.target.room).send(input.message, { auth: input.auth });
+    return from(roomAddress(input.target.workspaceId, input.target.room)).send(input.message, {
+      auth: input.auth,
+    });
   },
 });

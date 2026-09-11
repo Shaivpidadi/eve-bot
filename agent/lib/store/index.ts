@@ -56,6 +56,14 @@ export async function writeDoc<T>(
   return store().put(key, JSON.stringify(value, null, 2), { expectedVersion });
 }
 
+export function writeBytes(key: string, bytes: Uint8Array): Promise<void> {
+  return store().putBytes(key, bytes);
+}
+
+export function readBytes(key: string): Promise<Uint8Array | null> {
+  return store().getBytes(key);
+}
+
 export async function deleteDoc(key: string): Promise<void> {
   await store().delete(key);
 }

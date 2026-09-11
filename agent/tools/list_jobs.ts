@@ -21,7 +21,7 @@ export default defineTool({
   inputSchema: z.object({
     bot: z.string().optional().describe("Bot name or id."),
     status: z.array(STATUS).max(8).optional(),
-    limit: z.number().int().min(1).max(100).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
   }),
   label: { start: ({ bot }) => (bot ? `List ${bot}'s jobs` : "List jobs") },
   async execute(input, ctx) {

@@ -45,9 +45,28 @@ export function fileKv(root: string): Kv {
     async delete(key) {
       await rm(pathFor(key), { force: true });
     },
+    async putBytes(key, bytes) {
+      const path = pathFor(key);
+      await mkdir(dirname(path), { recursive: true });
+      const staging = `${path}.${process.pid}.${Date.now()}.tmp`;
+      await writeFile(staging, bytes);
+      await rename(staging, path);
+    },
+    async getBytes(key) {
+      try {
+        return new Uint8Array(await readFile(pathFor(key)));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      }
+    },
     async list(prefix) {
+      // Walk only the directory the prefix names, not the whole store: the tick
+      // lists the open-job index every minute and must not pay for history.
+      const cut = prefix.lastIndexOf("/");
+      const base = cut < 0 ? root : join(root, encode(prefix.slice(0, cut)));
       const keys: string[] = [];
-      await walk(root, root, keys);
+      await walk(root, base, keys);
       return keys.filter((key) => key.startsWith(prefix)).sort();
     },
   };

@@ -1,12 +1,12 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { findBot, hireBot } from "../lib/bots";
+import { findBot, getBot, hireBot } from "../lib/bots";
 import { operator } from "../lib/session";
 
 export default defineTool({
   description:
-    "Add a new teammate to the roster. Give it a name, a role, and a persona describing how it should work. Use this when no existing bot fits the kind of work being asked for.",
+    "Add a new teammate to the roster. Give it a name, a role, and a persona describing how it should work. Use this when no existing bot fits the work, or whenever the operator asks for a new Bot — in a Bot's own thread, that Bot is recorded as the creator.",
   inputSchema: z.object({
     name: z.string().min(1).max(40).describe("First name, as a person would say it: Ava, Milo."),
     role: z.string().min(1).max(120).describe("One line: what this bot is for."),
@@ -33,6 +33,8 @@ export default defineTool({
         bot: existing,
       };
     }
+    // In a Bot's own thread, the operator is asking that Bot to grow the team.
+    const creator = who.botId === null ? null : await getBot(who.workspaceId, who.botId);
     const bot = await hireBot({
       workspaceId: who.workspaceId,
       hiredBy: who.id,
@@ -41,6 +43,7 @@ export default defineTool({
       persona: input.persona,
       ...(input.emoji ? { emoji: input.emoji } : {}),
       ...(input.skills ? { skills: input.skills } : {}),
+      ...(creator === null ? {} : { createdBy: { botId: creator.id, name: creator.name } }),
     });
     return { hired: true as const, bot };
   },

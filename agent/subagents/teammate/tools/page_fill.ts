@@ -1,7 +1,9 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { browser } from "../lib/browser";
+import { looseBoolean } from "../../../lib/tool-input";
+
+import { browser, refreshScreen } from "../lib/browser";
 
 export default defineTool({
   description:
@@ -9,7 +11,7 @@ export default defineTool({
   inputSchema: z.object({
     target: z.string().min(1).describe("An @ref like @e7, or a CSS selector."),
     value: z.string().max(4_000),
-    submit: z.boolean().optional().describe("Press Enter after filling."),
+    submit: looseBoolean().optional().describe("Press Enter after filling."),
   }),
   label: {
     // The value can be sensitive, so activity shows the field, never the text.
@@ -26,6 +28,7 @@ export default defineTool({
         return { filled: true as const, submitted: false as const, detail: pressed.output };
       }
     }
+    await refreshScreen(ctx);
     const snapshot = await browser(ctx, ["snapshot"]);
     return {
       filled: true as const,
