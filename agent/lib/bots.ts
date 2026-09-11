@@ -1,9 +1,20 @@
 import { record } from "./activity";
+import { DEFAULT_BOT } from "./default-bot";
 import { newId } from "./ids";
-import { deleteDoc, listDocs, readDoc, updateDoc, writeDoc } from "./store";
+import { deleteDoc, isConflict, listDocs, readDoc, updateDoc, writeDoc } from "./store";
 import type { Bot } from "./types";
 
 const key = (workspaceId: string, botId: string) => `bots/${workspaceId}/${botId}.json`;
+const seedKey = (workspaceId: string) => `defaults/${workspaceId}/default-bot.json`;
+
+/** A seed that has not finished after this long is assumed lost and retried. */
+const STALE_SEED_MS = 10 * 60_000;
+
+interface SeedRecord {
+  readonly state: "seeding" | "seeded";
+  readonly at: string;
+  readonly botId?: string;
+}
 
 export async function hireBot(input: {
   workspaceId: string;
@@ -13,6 +24,8 @@ export async function hireBot(input: {
   persona: string;
   emoji?: string;
   skills?: string[];
+  /** Set when a Bot created this one at the operator's request. */
+  createdBy?: { botId: string; name: string };
 }): Promise<Bot> {
   const now = new Date().toISOString();
   const bot: Bot = {
@@ -27,6 +40,7 @@ export async function hireBot(input: {
     status: "active",
     hiredBy: input.hiredBy,
     hiredAt: now,
+    createdBy: input.createdBy ?? null,
     updatedAt: now,
     stats: { jobsCompleted: 0, jobsFailed: 0 },
   };
@@ -35,7 +49,10 @@ export async function hireBot(input: {
     workspaceId: bot.workspaceId,
     kind: "bot.hired",
     botId: bot.id,
-    text: `${bot.emoji} ${bot.name} joined the team as ${bot.role}.`,
+    text:
+      input.createdBy === undefined
+        ? `${bot.emoji} ${bot.name} joined the team as ${bot.role}.`
+        : `${bot.emoji} ${bot.name} joined the team as ${bot.role}, created by ${input.createdBy.name}.`,
   });
   return bot;
 }
@@ -44,9 +61,43 @@ export async function getBot(workspaceId: string, botId: string): Promise<Bot | 
   return (await readDoc<Bot>(key(workspaceId, botId)))?.value ?? null;
 }
 
+const seededWorkspaces = new Set<string>();
+
 export async function listBots(workspaceId: string): Promise<Bot[]> {
+  if (!seededWorkspaces.has(workspaceId)) {
+    await seedDefaultBot(workspaceId);
+    seededWorkspaces.add(workspaceId);
+  }
   const bots = await listDocs<Bot>(`bots/${workspaceId}/`);
   return bots.sort((left, right) => left.hiredAt.localeCompare(right.hiredAt));
+}
+
+/**
+ * Every workspace starts with one generalist Bot, exactly once. Retiring it
+ * later does not bring it back: the seed record, not the roster, says whether
+ * seeding happened. The record is a create-only write, so concurrent processes
+ * cannot both hire it.
+ */
+async function seedDefaultBot(workspaceId: string): Promise<void> {
+  const seeding: SeedRecord = { state: "seeding", at: new Date().toISOString() };
+  const existing = await readDoc<SeedRecord>(seedKey(workspaceId));
+  if (existing !== null) {
+    const stalled =
+      existing.value.state === "seeding" && Date.now() - Date.parse(existing.value.at) > STALE_SEED_MS;
+    if (!stalled) return;
+  }
+  try {
+    await writeDoc(seedKey(workspaceId), seeding, existing?.version ?? null);
+  } catch (error) {
+    if (isConflict(error)) return;
+    throw error;
+  }
+
+  const bots = await listDocs<Bot>(`bots/${workspaceId}/`);
+  const named = bots.find((bot) => bot.name.toLowerCase() === DEFAULT_BOT.name.toLowerCase());
+  const bot = named ?? (await hireBot({ workspaceId, hiredBy: "system", ...DEFAULT_BOT }));
+  const seeded: SeedRecord = { state: "seeded", at: new Date().toISOString(), botId: bot.id };
+  await writeDoc(seedKey(workspaceId), seeded);
 }
 
 /** Resolves "Ava", "ava", or `bot_k3f9x2` to one bot, the way a person would refer to it. */

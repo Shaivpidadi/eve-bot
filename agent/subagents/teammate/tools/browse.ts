@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { browser } from "../lib/browser";
+import { browser, refreshScreen } from "../lib/browser";
 
 export default defineTool({
   description:
@@ -15,6 +15,7 @@ export default defineTool({
     if (!opened.ok) {
       return { opened: false as const, url, error: opened.error, detail: opened.output };
     }
+    await refreshScreen(ctx);
     const snapshot = await browser(ctx, ["snapshot"]);
     return {
       opened: true as const,

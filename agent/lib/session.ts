@@ -1,7 +1,12 @@
 import type { SessionAuthContext, SessionContext } from "eve/context";
 
-/** The slice of context both ordinary tools and workflow tools share. */
-export type AuthedContext = Pick<SessionContext, "session">;
+import { HQ_ROOM, botIdForRoom } from "./rooms";
+
+/**
+ * The slice of context `operator` needs: the session's auth. Ordinary tools,
+ * workflow tools, and dynamic resolvers (which see no turn) all have it.
+ */
+export type AuthedContext = { readonly session: Pick<SessionContext["session"], "auth"> };
 
 export interface Operator {
   /** Stable id of whoever this turn is acting for. Never taken from model input. */
@@ -9,11 +14,15 @@ export interface Operator {
   readonly label: string;
   /** Isolation boundary for every stored record. */
   readonly workspaceId: string;
+  /** The conversation this turn belongs to: HQ's desk or a bot's own thread. */
+  readonly room: string;
+  /** Set when the operator is talking to one bot directly, in its own thread. */
+  readonly botId: string | null;
   /** True when the turn was started by a schedule or the runtime itself. */
   readonly automated: boolean;
 }
 
-function attribute(auth: SessionAuthContext | null, key: string): string | undefined {
+export function attribute(auth: SessionAuthContext | null | undefined, key: string): string | undefined {
   const value = auth?.attributes[key];
   if (typeof value === "string") return value;
   if (Array.isArray(value) && typeof value[0] === "string") return value[0];
@@ -36,11 +45,14 @@ export function operator(ctx: AuthedContext): Operator {
     attribute(initiator, "workspaceId") ??
     process.env.BOT_DEFAULT_WORKSPACE ??
     "default";
+  const room = attribute(auth, "room") ?? attribute(initiator, "room") ?? HQ_ROOM;
 
   return {
     id: auth?.principalId ?? "local",
     label: attribute(auth, "name") ?? auth?.subject ?? auth?.principalId ?? "local operator",
     workspaceId,
+    room,
+    botId: botIdForRoom(room),
     automated: auth?.principalType === "runtime",
   };
 }

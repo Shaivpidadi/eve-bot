@@ -1,5 +1,7 @@
 /** Everything Bot persists. One file so the shape of the product is readable in one place. */
 
+import type { JobEffort } from "./models";
+
 export type BotStatus = "active" | "paused";
 
 export interface Bot {
@@ -21,6 +23,8 @@ export interface Bot {
   status: BotStatus;
   hiredBy: string;
   hiredAt: string;
+  /** The Bot that created this one at the operator's request, when a Bot did. */
+  createdBy?: { readonly botId: string; readonly name: string } | null;
   updatedAt: string;
   stats: {
     jobsCompleted: number;
@@ -37,6 +41,8 @@ export type JobStatus =
   | "done"
   | "failed"
   | "cancelled";
+
+export type JobLeaseKind = "dispatch" | "run" | "signoff" | "wait";
 
 export interface JobArtifact {
   readonly id: string;
@@ -58,6 +64,8 @@ export interface Job {
   successCriteria: string[];
   status: JobStatus;
   priority: "normal" | "high";
+  /** How hard the job is, which picks the teammate's model (see `models.ts`). Absent on older jobs. */
+  effort?: JobEffort;
   /** When the job becomes eligible to run. */
   runAt: string;
   /** Repeat interval in minutes, or `null` for a one-shot job. */
@@ -71,15 +79,20 @@ export interface Job {
   updatedAt: string;
   attempts: number;
   /**
-   * Held while something owns this job, so overlapping ticks cannot double-run
-   * it. A `dispatch` lease is the minute-tick saying "I handed this to HQ"; a
-   * `run` lease is a bot actually working. A run may take over a dispatch lease,
-   * never the other way round.
+   * Held while something owns this job, so nothing double-runs it. A `wait`
+   * lease is a run sleeping until the job's start time; a `dispatch` lease is
+   * the watchdog saying "I handed this to HQ"; a `run` lease is a bot actually
+   * working, renewed while it works; a `signoff` lease is a finished run
+   * waiting on a person. A run may take over a dispatch lease, and its own or
+   * (when started early on purpose) another run's wait lease, never the other
+   * way round.
    */
-  lease: { token: string; until: string; kind: "dispatch" | "run" } | null;
+  lease: { token: string; until: string; kind: JobLeaseKind } | null;
   sessionId: string | null;
   agentId: string | null;
   result: JobResult | null;
+  /** The operator's note when they last sent the work back; cleared once the job closes. Absent on older jobs. */
+  feedback?: string | null;
   error: string | null;
   artifacts: JobArtifact[];
   lastRunAt: string | null;
@@ -104,7 +117,12 @@ export type ActivityKind =
   | "job.done"
   | "job.failed"
   | "job.cancelled"
-  | "job.learned";
+  | "job.learned"
+  | "input.requested"
+  | "computer.restored"
+  | "computer.failed"
+  | "computer.takeover"
+  | "computer.handback";
 
 export interface ActivityEvent {
   readonly id: string;

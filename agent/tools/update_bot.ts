@@ -29,6 +29,13 @@ export default defineTool({
     const who = operator(ctx);
     const found = await findBot(who.workspaceId, input.bot);
     if (found === null) return { updated: false as const, reason: `No bot called ${input.bot}.` };
+    if (input.name !== undefined) {
+      // Bots are addressed by name, so two with the same name would be ambiguous.
+      const clash = await findBot(who.workspaceId, input.name);
+      if (clash !== null && clash.id !== found.id) {
+        return { updated: false as const, reason: `${clash.name} is already on the team.` };
+      }
+    }
 
     const updated = await patchBot(who.workspaceId, found.id, (bot) => ({
       ...bot,

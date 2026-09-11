@@ -2,6 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { record } from "../../../lib/activity";
+import { checkpointComputer } from "../../../lib/computer-backup";
 import { getJob } from "../../../lib/jobs";
 import { operator } from "../../../lib/session";
 
@@ -28,6 +29,8 @@ export default defineTool({
       text: note,
       ...(detail ? { data: detail } : {}),
     });
+    // Throttled inside: most progress notes do not trigger a backup.
+    await checkpointComputer(ctx);
     return { logged: true as const };
   },
 });

@@ -39,7 +39,8 @@ export default defineTool({
     if (endpoint === undefined) {
       return {
         sent: false as const,
-        reason: "No BOT_EMAIL_WEBHOOK configured. This is the draft that would have been sent.",
+        reason:
+          "No BOT_EMAIL_WEBHOOK configured, so nothing was sent. This draft is the deliverable: report it as unsent. Do not send it any other way (a mail website, another tool, or the computer).",
         draft: { to: input.to, cc: input.cc ?? [], subject: input.subject, body: input.body },
       };
     }

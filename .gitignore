@@ -6,3 +6,7 @@ node_modules
 .env.local
 *.log
 .output
+.next
+next-env.d.ts
+*.tsbuildinfo
+.env*.local

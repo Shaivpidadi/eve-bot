@@ -2,6 +2,8 @@ import { defineMemory } from "eve/memory";
 import { fileMemory } from "eve/memory/file";
 import { byPrincipal } from "eve/memory/scope";
 
+import { memoryBackend } from "../lib/memory-backend";
+
 /**
  * How this particular operator likes things done.
  *
@@ -12,6 +14,6 @@ import { byPrincipal } from "eve/memory/scope";
 export default defineMemory({
   description:
     "Durable preferences of the person you are working for: tone, formats, recurring accounts and contacts, standing instructions.",
-  provider: fileMemory({ maxCharacters: 6_000 }),
+  provider: fileMemory({ maxCharacters: 6_000, backend: memoryBackend() }),
   scope: byPrincipal,
 });

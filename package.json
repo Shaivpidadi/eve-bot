@@ -3,24 +3,33 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Bot — always-on AI teammates with their own computer, built on Vercel eve.",
+  "description": "Bot — always-on AI teammates with their own computer, built on Vercel eve and Next.js.",
   "scripts": {
-    "dev": "eve dev",
-    "build": "eve build",
-    "start": "eve start",
-    "deploy": "eve deploy",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "agent:dev": "eve dev",
+    "agent:build": "eve build",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@agent-browser/eve": "^0.37.1",
+    "@novnc/novnc": "^1.7.0",
     "@vercel/blob": "^2.8.0",
+    "@vercel/sandbox": "^3.2.2",
     "ai": "^7.0.97",
     "eve": "^0.53.1",
+    "next": "^16.3.4",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "just-bash": "^3.4.2",
+    "microsandbox": "^0.5.10",
     "typescript": "^5.9.2"
   },
   "engines": {

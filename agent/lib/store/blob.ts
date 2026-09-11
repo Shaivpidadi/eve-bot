@@ -11,6 +11,9 @@ import { KvConflictError, isConflict, type Kv, type KvPutOptions } from "./kv";
  * version token. ETags are the version tokens, so `ifMatch` gives us a real
  * compare-and-set across concurrent runtimes.
  */
+/** Large uploads, such as computer backups, go up in parts. */
+const MULTIPART_BYTES = 50 * 1024 * 1024;
+
 export function blobKv(prefix: string): Kv {
   const pathFor = (key: string) => `${prefix}/${key}`;
 
@@ -40,6 +43,20 @@ export function blobKv(prefix: string): Kv {
     },
     async delete(key) {
       await del(pathFor(key));
+    },
+    async putBytes(key, bytes) {
+      await put(pathFor(key), Buffer.from(bytes), {
+        access: "private",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        contentType: "application/octet-stream",
+        multipart: bytes.byteLength > MULTIPART_BYTES,
+      });
+    },
+    async getBytes(key) {
+      const result = await get(pathFor(key), { access: "private", useCache: false });
+      if (result === null || result.statusCode !== 200) return null;
+      return new Uint8Array(await new Response(result.stream).arrayBuffer());
     },
     async list(keyPrefix) {
       const keys: string[] = [];

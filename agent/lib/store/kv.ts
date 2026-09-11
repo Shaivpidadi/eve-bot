@@ -26,6 +26,9 @@ export interface Kv {
   put(key: string, value: string, options?: KvPutOptions): Promise<string>;
   delete(key: string): Promise<void>;
   list(prefix: string): Promise<string[]>;
+  /** Unversioned binary objects, such as computer backups. Last write wins. */
+  putBytes(key: string, bytes: Uint8Array): Promise<void>;
+  getBytes(key: string): Promise<Uint8Array | null>;
 }
 
 /** Thrown when an `expectedVersion` precondition fails. Callers retry. */

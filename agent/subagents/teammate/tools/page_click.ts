@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { browser } from "../lib/browser";
+import { browser, refreshScreen } from "../lib/browser";
 
 export default defineTool({
   description:
@@ -21,6 +21,7 @@ export default defineTool({
         hint: "A covered or stale ref is the usual cause. Take a fresh snapshot, dismiss anything overlaying the element, and try again.",
       };
     }
+    await refreshScreen(ctx);
     const snapshot = await browser(ctx, ["snapshot"]);
     return { clicked: true as const, target, page: snapshot.ok ? snapshot.output : null };
   },

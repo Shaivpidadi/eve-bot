@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { record } from "../lib/activity";
 import { findBot, retireBot } from "../lib/bots";
+import { releaseBotScreens } from "../lib/computer/screens";
 import { cancelJob, listJobs } from "../lib/jobs";
 import { operator } from "../lib/session";
 
@@ -27,6 +28,8 @@ export default defineTool({
     });
     for (const job of open) await cancelJob(who.workspaceId, job.id);
     await retireBot(who.workspaceId, found.id);
+    // Its screen on the team's computer goes back to the pool.
+    await releaseBotScreens(who.workspaceId, found.id);
     await record({
       workspaceId: who.workspaceId,
       kind: "bot.retired",

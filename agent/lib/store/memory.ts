@@ -6,6 +6,7 @@ interface Row {
 }
 
 const rows = new Map<string, Row>();
+const blobs = new Map<string, Uint8Array>();
 let counter = 0;
 
 /** Process-local storage. Used by tests and as the last-resort fallback. */
@@ -25,6 +26,14 @@ export function inMemoryKv(): Kv {
     },
     async delete(key) {
       rows.delete(key);
+      blobs.delete(key);
+    },
+    async putBytes(key, bytes) {
+      blobs.set(key, new Uint8Array(bytes));
+    },
+    async getBytes(key) {
+      const bytes = blobs.get(key);
+      return bytes === undefined ? null : new Uint8Array(bytes);
     },
     async list(prefix) {
       return [...rows.keys()].filter((key) => key.startsWith(prefix)).sort();

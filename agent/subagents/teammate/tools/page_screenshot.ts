@@ -1,7 +1,9 @@
 import { defineTool, toolOutput, toolOutputPart } from "eve/tools";
 import { z } from "zod";
 
-import { browser } from "../lib/browser";
+import { looseBoolean } from "../../../lib/tool-input";
+
+import { browser, sessionDirectory } from "../lib/browser";
 
 const MAX_INLINE_BYTES = 3 * 1024 * 1024;
 
@@ -13,13 +15,13 @@ export default defineTool({
       .string()
       .max(60)
       .optional()
-      .describe("File name, saved under work/. Defaults to shot.png."),
-    fullPage: z.boolean().optional().describe("Capture the whole page instead of the viewport."),
+      .describe("File name, saved in this run's folder on the computer. Defaults to shot.png."),
+    fullPage: looseBoolean().optional().describe("Capture the whole page instead of the viewport."),
   }),
   label: { start: ({ name }) => `Screenshot ${name ?? "the page"}` },
   async execute({ name, fullPage }, ctx) {
     const raw = (name ?? "shot.png").replaceAll("/", "-");
-    const path = `/workspace/work/${raw.endsWith(".png") ? raw : `${raw}.png`}`;
+    const path = `${await sessionDirectory(ctx)}/${raw.endsWith(".png") ? raw : `${raw}.png`}`;
 
     const result = await browser(ctx, [
       "screenshot",
