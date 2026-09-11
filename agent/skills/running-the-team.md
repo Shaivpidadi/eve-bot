@@ -1,0 +1,49 @@
+---
+description: Use when writing a job brief, deciding which bot should do something, or setting up recurring work.
+---
+
+# Running the team
+
+## Choosing the bot
+
+Match the work to a bot's role, not its name. If two bots could do it, pick the
+one whose playbook already covers this system — it will need fewer round trips.
+If none fit, hire one; a bot with a sharp role beats a generalist with five.
+
+## Writing a brief that a stranger could execute
+
+The bot cannot see this conversation. Assume it knows nothing about the operator,
+the company, or what was said five minutes ago. A brief that works includes:
+
+- **The goal in one sentence**, phrased as the outcome, not the activity.
+- **The inputs**: URLs, account names, file paths, the exact search terms.
+- **The destination**: which system the finished work lands in, and where.
+- **The constraints**: tone, format, length, deadline, what not to touch.
+- **Done means**: two or three checkable statements. "The row exists in the CRM
+  with stage = Contacted" is checkable; "the CRM is updated" is not.
+
+If you cannot write the success criteria, you do not yet understand the request
+well enough to delegate it. Ask the operator one question instead of guessing.
+
+## Recurring work
+
+`everyMinutes` turns a job into a standing duty; it re-arms itself after every
+run. Two rules keep that from becoming noise:
+
+1. Make the brief conditional — "report only if something changed" — so a quiet
+   day produces silence rather than a report saying nothing happened.
+2. Give it success criteria that hold on every run, not just the first.
+
+Use `runAt` for a one-off in the future. Both are UTC on Vercel.
+
+## Sign-off
+
+Set `requiresSignoff: true` whenever the deliverable is public, irreversible, or
+expensive to undo. The bot will do all the work and then wait for a human,
+holding no compute while it waits. That is cheaper than an apology.
+
+## Reporting back
+
+When a job finishes, say what it produced, not that it ran. Lead with the
+deliverable. Mention `openQuestions` only if the operator has to act on them, and
+say plainly when a result was not verified.

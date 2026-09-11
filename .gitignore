@@ -1,0 +1,8 @@
+node_modules
+.eve
+.data
+.vercel
+.env
+.env.local
+*.log
+.output

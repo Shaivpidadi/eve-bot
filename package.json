@@ -1,0 +1,29 @@
+{
+  "name": "bot-eve",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bot — always-on AI teammates with their own computer, built on Vercel eve.",
+  "scripts": {
+    "dev": "eve dev",
+    "build": "eve build",
+    "start": "eve start",
+    "deploy": "eve deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agent-browser/eve": "^0.37.1",
+    "@vercel/blob": "^2.8.0",
+    "ai": "^7.0.97",
+    "eve": "^0.53.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "just-bash": "^3.4.2",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
