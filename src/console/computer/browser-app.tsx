@@ -82,6 +82,8 @@ export function BrowserApp({
   const [status, setStatus] = useState<Status>({ kind: "connecting" });
   /** Bumped to skip a reconnect's backoff, for instance when someone takes control mid-reconnect. */
   const [attempt, setAttempt] = useState(0);
+  /** A still frame that failed to load is left out rather than shown as a broken image. */
+  const [brokenPoster, setBrokenPoster] = useState<string | null>(null);
   const visible = usePageVisible();
   const botId = member.id;
   const watching = !compact || (visible && member.computer.browser === "on");
@@ -192,8 +194,11 @@ export function BrowserApp({
     onLive?.(live);
   }, [live, onLive]);
 
-  const poster = posterUrl(member);
+  const posterCandidate = posterUrl(member);
+  const poster = posterCandidate !== null && posterCandidate === brokenPoster ? null : posterCandidate;
   const text = compact ? null : statusText(status);
+  // Nothing to show yet: a placeholder browser stands in until the picture arrives.
+  const loading = !live && (status.kind === "connecting" || status.kind === "starting") && poster === null;
   const className = ["browser-app", compact ? "compact" : null, controlling ? "controlling" : null]
     .filter((name) => name !== null)
     .join(" ");
@@ -208,7 +213,10 @@ export function BrowserApp({
       }}
     >
       {/* A live, authenticated, uncached frame: next/image would only get in the way. */}
-      {!live && status.kind !== "relay" && poster !== null ? <img className="poster" src={poster} alt="" /> : null}
+      {!live && status.kind !== "relay" && poster !== null ? (
+        <img className="poster" src={poster} alt="" onError={() => setBrokenPoster(poster)} />
+      ) : null}
+      {loading ? <ScreenSkeleton /> : null}
       <div ref={container} className="vnc" hidden={status.kind === "relay"} />
       {status.kind === "relay" ? <RelayFrame connection={status.connection} /> : null}
       {text === null ? null : (
@@ -217,6 +225,28 @@ export function BrowserApp({
           {text}
         </div>
       )}
+    </div>
+  );
+}
+
+/** The shape of a browser window, shimmering, while the real one is on its way. */
+function ScreenSkeleton() {
+  return (
+    <div className="screen-skeleton" aria-hidden="true">
+      <div className="sk-bar">
+        <i />
+        <i />
+        <i />
+        <span className="sk-url" />
+      </div>
+      <div className="sk-page">
+        <span className="sk-line w-40" />
+        <span className="sk-line w-90" />
+        <span className="sk-line w-75" />
+        <span className="sk-block" />
+        <span className="sk-line w-60" />
+        <span className="sk-line w-85" />
+      </div>
     </div>
   );
 }

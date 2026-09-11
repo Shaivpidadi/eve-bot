@@ -3,7 +3,7 @@ import { always } from "eve/tools/approval";
 import { z } from "zod";
 
 import { syncIdentity, toolIo } from "../../../lib/computer/runtime";
-import { finishHandover, liveControl, screenForBot, sessionBinding, setControl } from "../../../lib/computer/screens";
+import { finishHandover, liveControl, sessionBinding, setControl, teamScreen } from "../../../lib/computer/screens";
 import { operator } from "../../../lib/session";
 import { browser } from "../lib/browser";
 
@@ -33,13 +33,13 @@ export default defineTool({
     if (binding === null) {
       return { handedBack: false as const, note: "Call job_brief first: it sets up your screen." };
     }
-    const screen = await screenForBot(who.workspaceId, binding.botId);
+    const screen = await teamScreen(who.workspaceId);
     const n = screen?.n ?? binding.n;
     // Returning control releases it; a lock left behind must not stall the Bot.
     if (screen !== null && liveControl(screen) !== null) await setControl(n, null);
     const personSaid = await finishHandover(n);
     try {
-      // Whatever they signed in to becomes available to every Bot's browser.
+      // Whatever they signed in to goes into the team's jar, which backups carry.
       await syncIdentity(await toolIo(ctx), n);
     } catch {
       // The sign-in still holds in this browser.

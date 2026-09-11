@@ -15,8 +15,8 @@ export interface Screen {
 
 const key = (workspaceId: string, name: string) => `screens/${workspaceId}/${name}.json`;
 
-/** Frames are kept per Bot, since a Bot keeps its screen from one job to the next. */
-export const posterKey = (botId: string) => `bot-${botId}`;
+/** Frames are kept per screen: the team's one browser, whichever Bot is using it. */
+export const posterKey = (n: number) => `screen-${n}`;
 
 export async function saveScreen(
   workspaceId: string,

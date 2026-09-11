@@ -48,10 +48,11 @@ function pendingTakeover(room: RoomSnapshot, member: Member, preferred: string |
 }
 
 /**
- * The team's computer, the way Grok Bot shows it: the Bot's own screen, live,
- * with its browser, files, and terminal inside it. Opening it watches the Bot
- * work. When the Bot needs a person for one step, the screen says so; take
- * control, do the step, and return control, and the Bot carries on.
+ * The team's computer, the way Grok Bot shows it: its one screen, live, with
+ * the browser, files, and terminal inside it, opened from any thread. Opening
+ * it watches whichever Bot is at work. When a Bot needs a person for one step,
+ * the screen says so; take control, do the step, and return control, and the
+ * Bot carries on with the sign-in you made, as does every other Bot.
  */
 export function ComputerView({
   member,
@@ -190,15 +191,16 @@ export function ComputerView({
       ? `${control.by} has control`
       : `${state}${member.action ? ` · ${member.action}` : ""}`;
   const reason = handover?.reason ?? (request === null ? null : String(request.action?.input?.reason ?? request.prompt));
+  const returnLabel = member.kind === "hq" ? "Return control" : `Return control to ${member.name}`;
 
   return (
-    <div className="computer" role="dialog" aria-modal="true" aria-label={`${member.name}'s computer`}>
+    <div className="computer" role="dialog" aria-modal="true" aria-label="Team computer">
       <div className="computer-bar">
         <button type="button" className="computer-close" aria-label="Close" title="Close" onClick={close}>
           <Icon name="x" size={14} />
         </button>
         <Avatar member={member} size={18} />
-        <b>{`${member.name}'s computer`}</b>
+        <b>Team computer</b>
         <span className="what">{status}</span>
         {error === null ? null : <span className="error-text">{error}</span>}
         <button
@@ -220,7 +222,7 @@ export function ComputerView({
               onKeyDown={(event) => event.stopPropagation()}
             />
             <button type="button" className="btn primary" disabled={busy} onClick={() => void returnControl()}>
-              {`Return control to ${member.name}`}
+              {returnLabel}
             </button>
           </>
         ) : (

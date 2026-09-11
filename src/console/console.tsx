@@ -32,22 +32,24 @@ function write(key: string, value: string): void {
 }
 
 /**
- * Which Bot's computer a takeover request in this thread is about. In a Bot's
- * own thread it is that Bot; in HQ's, the Bot at work that is waiting on you.
+ * Whose thread the team's computer opens from. The screen is the same for
+ * everyone; in a Bot's own thread it is that Bot's, and from HQ's desk it is the
+ * Bot at work that is waiting on you, or HQ's own view when nobody is.
  */
-function computerFor(member: Member, members: readonly Member[]): Member | undefined {
+function computerFor(member: Member, members: readonly Member[]): Member {
   if (member.kind === "bot") return member;
   const bots = members.filter((entry) => entry.kind === "bot");
   return (
     bots.find((bot) => bot.computer.active && bot.presence === "waiting") ??
     bots.find((bot) => bot.computer.active) ??
-    bots.find((bot) => bot.presence === "waiting")
+    bots.find((bot) => bot.presence === "waiting") ??
+    member
   );
 }
 
 /**
- * Bots on the left, the selected Bot's thread in the middle, and its computer,
- * routines, and files on the right.
+ * Bots on the left, the selected thread in the middle, and the team's computer
+ * with that Bot's routines and files on the right.
  */
 export function Console() {
   const { board, online, refresh } = useBoard();
@@ -120,10 +122,7 @@ export function Console() {
             showPanel(!(panelOpen && panelView === "overview"));
             setPanelView("overview");
           }}
-          onOpenComputer={(requestId) => {
-            const bot = computerFor(member, members);
-            if (bot !== undefined) setComputer({ botId: bot.id, requestId });
-          }}
+          onOpenComputer={(requestId) => setComputer({ botId: computerFor(member, members).id, requestId })}
           onHover={setHover}
         />
         {panelOpen ? (
@@ -138,9 +137,7 @@ export function Console() {
               select(id);
               if (window.innerWidth <= 1080) showPanel(false);
             }}
-            onTakeover={() => {
-              if (member.kind === "bot") setComputer({ botId: member.id, requestId: null });
-            }}
+            onTakeover={() => setComputer({ botId: computerFor(member, members).id, requestId: null })}
             onChanged={refresh}
             onHover={setHover}
           />
@@ -168,7 +165,7 @@ export function Console() {
         </div>
       ) : null}
 
-      {computer !== null && computerMember !== undefined && computerMember.kind === "bot" ? (
+      {computer !== null && computerMember !== undefined ? (
         <ComputerView
           member={computerMember}
           user={board.user}

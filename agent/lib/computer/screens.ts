@@ -4,11 +4,13 @@ import { readDoc, updateDoc, writeDoc } from "../store";
 /**
  * Screens on the team's computer.
  *
- * Like Grok Bot, each Bot gets its own screen: a browser the operator can watch
- * and take over. Screens are a small, fixed pool on one machine, so they are
- * allocated to Bots on demand and reclaimed from the least recently used Bot.
- * The table lives in the app store, never on the computer, so the console can
- * read it without waking the sandbox.
+ * A workspace has one screen: the team's browser, which HQ and every Bot share
+ * and the operator can watch and take over from any thread. One Chrome profile
+ * means one set of tabs and sign-ins, so what a person signs in to for one Bot
+ * is there for the next. Screens are a small, fixed pool on one machine, so
+ * they are allocated to workspaces on demand and reclaimed from the least
+ * recently used workspace. The table lives in the app store, never on the
+ * computer, so the console can read it without waking the sandbox.
  */
 export type ServiceState = "off" | "starting" | "on" | "error";
 
@@ -32,11 +34,14 @@ export interface Handover {
   /** The request's id in the Bot's own session; the thread's copy adds a task prefix. */
   readonly requestId: string;
   readonly jobId: string | null;
+  /** The Bot that asked. Older records may lack it; `jobId` still says whose it was. */
+  readonly botId?: string;
 }
 
 export interface ScreenAllocation {
   readonly n: number;
   readonly workspaceId: string;
+  /** The Bot (or HQ) that last used the team's screen. */
   readonly botId: string;
   readonly allocatedAt: string;
   readonly lastUsedAt: string;
@@ -52,6 +57,9 @@ export interface ScreenTable {
   readonly computer: string;
   readonly screens: readonly ScreenAllocation[];
 }
+
+/** The id HQ uses when it is the one on the team's screen. */
+export const HQ_SCREEN_USER = "hq";
 
 /** Which Bot and screen a teammate session is working as. */
 export interface SessionBinding {
@@ -83,23 +91,38 @@ export async function readScreens(): Promise<ScreenTable> {
   return (await readDoc<ScreenTable>(TABLE_KEY))?.value ?? emptyTable();
 }
 
-export async function screenForBot(workspaceId: string, botId: string): Promise<ScreenAllocation | null> {
-  const table = await readScreens();
-  return table.screens.find((screen) => screen.workspaceId === workspaceId && screen.botId === botId) ?? null;
+/**
+ * The workspace's screen among the table's rows. A table from before screens
+ * were shared holds one per Bot; the most recently used one becomes the team's,
+ * and the rest go idle until another workspace reclaims them.
+ */
+export function workspaceScreen(table: ScreenTable, workspaceId: string): ScreenAllocation | null {
+  return (
+    [...table.screens]
+      .filter((screen) => screen.workspaceId === workspaceId)
+      .sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt))[0] ?? null
+  );
+}
+
+/** The workspace's screen, if it has one yet. */
+export async function teamScreen(workspaceId: string): Promise<ScreenAllocation | null> {
+  return workspaceScreen(await readScreens(), workspaceId);
 }
 
 /**
- * The Bot's screen, allocating one if it has none. With every screen taken, the
- * least recently used screen that nobody is controlling moves to this Bot.
+ * The team's screen, allocating one if the workspace has none. A Bot starting
+ * work passes its id, so the screen says who is using it; a person opening it
+ * from the console leaves that as it is. With every screen taken, the least
+ * recently used screen that nobody is controlling moves to this workspace.
  */
-export async function allocateScreen(workspaceId: string, botId: string): Promise<ScreenAllocation> {
+export async function allocateScreen(workspaceId: string, botId?: string): Promise<ScreenAllocation> {
   const outcome: { screen: ScreenAllocation | null } = { screen: null };
   await updateDoc<ScreenTable>(TABLE_KEY, (current) => {
     const table = current ?? emptyTable();
     const at = now();
-    const mine = table.screens.find((screen) => screen.workspaceId === workspaceId && screen.botId === botId);
-    if (mine !== undefined) {
-      outcome.screen = { ...mine, lastUsedAt: at };
+    const mine = workspaceScreen(table, workspaceId);
+    if (mine !== null) {
+      outcome.screen = { ...mine, botId: botId ?? mine.botId, lastUsedAt: at };
       return replace(table, outcome.screen);
     }
 
@@ -120,7 +143,7 @@ export async function allocateScreen(workspaceId: string, botId: string): Promis
     outcome.screen = {
       n,
       workspaceId,
-      botId,
+      botId: botId ?? HQ_SCREEN_USER,
       allocatedAt: at,
       lastUsedAt: at,
       // A reclaimed screen keeps its running browser; its state carries over.
@@ -202,12 +225,24 @@ export function liveControl(screen: ScreenAllocation): ScreenControl | null {
   return screen.control !== null && Date.parse(screen.control.until) > Date.now() ? screen.control : null;
 }
 
-export async function releaseBotScreens(workspaceId: string, botId: string): Promise<void> {
+/**
+ * A retired Bot leaves the team's screen as it is — the browser and its
+ * sign-ins belong to the team — but a handover it was waiting on is over.
+ */
+export async function forgetBot(workspaceId: string, botId: string): Promise<void> {
   await updateDoc<ScreenTable>(TABLE_KEY, (current) => {
     if (current === null) return null;
-    const screens = current.screens.filter((screen) => !(screen.workspaceId === workspaceId && screen.botId === botId));
-    return screens.length === current.screens.length ? null : { ...current, screens };
+    const screen = workspaceScreen(current, workspaceId);
+    if (screen === null || !handoverBelongsTo(screen.handover ?? null, botId)) return null;
+    return replace(current, { ...screen, handover: null, handoverNote: null });
   });
+}
+
+/** Whether a handover on the team's screen is this Bot's. */
+export function handoverBelongsTo(handover: Handover | null, botId: string, jobIds: readonly string[] = []): boolean {
+  if (handover === null) return false;
+  if (handover.botId !== undefined) return handover.botId === botId;
+  return handover.jobId !== null && jobIds.includes(handover.jobId);
 }
 
 async function patchScreen(n: number, patch: (screen: ScreenAllocation) => ScreenAllocation): Promise<void> {

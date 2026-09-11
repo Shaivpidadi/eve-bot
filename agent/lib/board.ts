@@ -1,7 +1,14 @@
 import { recentActivity } from "./activity";
 import { listBots } from "./bots";
 import { computerMode, vercelCredentialsError, type ComputerMode } from "./computer-config";
-import { liveControl, readScreens, type ScreenAllocation, type ServiceState } from "./computer/screens";
+import {
+  handoverBelongsTo,
+  liveControl,
+  readScreens,
+  workspaceScreen,
+  type ScreenAllocation,
+  type ServiceState,
+} from "./computer/screens";
 import { listOpenJobs } from "./jobs";
 import { HQ_ROOM, roomForBot } from "./rooms";
 import { getRoomState, type AnsweredInput, type RoomState } from "./roomstate";
@@ -35,19 +42,24 @@ export interface FileRef {
   readonly jobId: string | null;
 }
 
+/**
+ * The team's one screen, as seen from a member's thread. The browser, control,
+ * and still frame are the same for everyone; `active`, `jobId`, and `handover`
+ * are this member's own.
+ */
 export interface MemberComputer {
-  /** A job is running, so the Bot is likely using its browser. */
+  /** A job is running, so this Bot is likely using the browser; for HQ, any Bot is. */
   readonly active: boolean;
   /** The run the console follows. */
   readonly jobId: string | null;
-  /** The Bot's screen on the team's computer, once it has one. */
+  /** The team's screen on the computer, once the workspace has one. */
   readonly screen: number | null;
   readonly browser: ServiceState;
-  /** Someone holding the Bot's browser, for example to sign in. */
+  /** Someone holding the team's browser, for example to sign in. */
   readonly control: { readonly by: string; readonly until: string } | null;
   /** When the still frame of the screen was last refreshed. */
   readonly posterAt: string | null;
-  /** The Bot is waiting for a person to do one step in its browser. */
+  /** This Bot is waiting for a person to do one step in the browser; on HQ, whichever Bot is. */
   readonly handover: {
     readonly reason: string;
     readonly url: string | null;
@@ -105,15 +117,33 @@ const SCREEN_WINDOW_MS = 30 * 60_000;
 const COMPUTER_ERROR_WINDOW_MS = 30 * 60_000;
 const FEED_WINDOW = 150;
 
-const NO_COMPUTER: MemberComputer = {
-  active: false,
-  jobId: null,
-  screen: null,
-  browser: "off",
-  control: null,
-  posterAt: null,
-  handover: null,
-};
+/** The team's screen from one member's point of view; see `MemberComputer`. */
+function sharedComputer(
+  screen: ScreenAllocation | null,
+  running: Job | undefined,
+  jobId: string | null,
+  handover: NonNullable<ScreenAllocation["handover"]> | null,
+): MemberComputer {
+  const control = screen === null ? null : liveControl(screen);
+  return {
+    active: running !== undefined,
+    jobId,
+    screen: screen?.n ?? null,
+    browser: screen?.browser.state ?? "off",
+    control: control === null ? null : { by: control.by, until: control.until },
+    posterAt: screen?.posterAt ?? null,
+    handover:
+      handover === null
+        ? null
+        : {
+            reason: handover.reason,
+            url: handover.url,
+            at: handover.at,
+            room: handover.room,
+            requestId: handover.requestId,
+          },
+  };
+}
 
 export async function buildBoard(
   workspaceId: string,
@@ -132,8 +162,9 @@ export async function buildBoard(
   );
 
   const now = Date.now();
+  const screen = workspaceScreen(screens, workspaceId);
   const members: Member[] = [
-    hqMember(rooms[0] ?? null),
+    hqMember(rooms[0] ?? null, open, screen),
     ...bots
       .map((bot, index) =>
         botMember(
@@ -141,7 +172,7 @@ export async function buildBoard(
           open.filter((job) => job.botId === bot.id),
           rooms[index + 1] ?? null,
           recent.filter((event) => event.botId === bot.id),
-          screens.screens.find((screen) => screen.workspaceId === workspaceId && screen.botId === bot.id) ?? null,
+          screen,
           now,
         ),
       )
@@ -169,8 +200,10 @@ const recency = (member: Member) => member.preview?.at ?? member.profile?.hiredA
 const answeredIn = (room: RoomState | null): Member["answered"] =>
   Object.fromEntries((room?.answered ?? []).map((entry) => [entry.requestId, { outcome: entry.outcome, optionId: entry.optionId }]));
 
-function hqMember(room: RoomState | null): Member {
+function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAllocation | null): Member {
   const pending = room?.pending ?? [];
+  // From HQ's desk the team's browser is whoever is on it right now.
+  const running = open.find((job) => job.status === "running");
   return {
     id: HQ_MEMBER_ID,
     kind: "hq",
@@ -183,7 +216,7 @@ function hqMember(room: RoomState | null): Member {
     preview: room?.preview ?? null,
     pending: pending.length,
     answered: answeredIn(room),
-    computer: NO_COMPUTER,
+    computer: sharedComputer(screen, running, running?.id ?? null, screen?.handover ?? null),
     routines: [],
     files: [],
     profile: null,
@@ -198,7 +231,8 @@ function botMember(
   screen: ScreenAllocation | null,
   now: number,
 ): Member {
-  const handover = screen?.handover ?? null;
+  const own = screen?.handover ?? null;
+  const handover = handoverBelongsTo(own, bot.id, jobs.map((job) => job.id)) ? own : null;
   const derived = presenceOf(jobs, room, events, now);
   // A Bot waiting for someone to take over its browser is waiting on you, not stuck.
   const { presence, action } =
@@ -210,7 +244,6 @@ function botMember(
       now - Date.parse(event.at) < SCREEN_WINDOW_MS,
   );
   const latest = events[0];
-  const control = screen === null ? null : liveControl(screen);
 
   return {
     id: bot.id,
@@ -226,24 +259,7 @@ function botMember(
       (latest === undefined ? null : { text: latest.text, from: "activity", at: latest.at }),
     pending: room?.pending.length ?? 0,
     answered: answeredIn(room),
-    computer: {
-      active: running !== undefined,
-      jobId: running?.id ?? lastRun?.jobId ?? null,
-      screen: screen?.n ?? null,
-      browser: screen?.browser.state ?? "off",
-      control: control === null ? null : { by: control.by, until: control.until },
-      posterAt: screen?.posterAt ?? null,
-      handover:
-        handover === null
-          ? null
-          : {
-              reason: handover.reason,
-              url: handover.url,
-              at: handover.at,
-              room: handover.room,
-              requestId: handover.requestId,
-            },
-    },
+    computer: sharedComputer(screen, running, running?.id ?? lastRun?.jobId ?? null, handover),
     routines: jobs
       .filter((job) => job.everyMinutes !== null || job.status === "scheduled")
       .map((job) => ({

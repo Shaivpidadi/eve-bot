@@ -20,10 +20,10 @@ you ──▶ HQ ──assign──▶ job queue ──dispatch──▶ teammat
 
 | The claim | How it works |
 | --- | --- |
-| **A computer the team keeps** | One persistent Linux microVM (Vercel Sandbox) shared by HQ and every Bot, like Grok Bot's Agent Computer: a browser per Bot, a terminal, and files. It is backed up while Bots work and restored if it is ever replaced. `agent/sandbox/`, `agent/lib/computer*`. |
-| **Watch it work, take over when it needs you** | Open a Bot's computer to watch its browser live. When it hits a sign-in, 2FA, or CAPTCHA it asks you to take over; you do that step in its browser and hand it back. Passwords go straight to the page, never through chat. `agent/lib/computer/`, `src/console/computer/`. |
+| **A computer the team keeps** | One persistent Linux microVM (Vercel Sandbox) shared by HQ and every Bot, like Grok Bot's Agent Computer: one browser the whole team works in, a terminal, and files. One Chrome profile means one set of tabs and sign-ins, so what you sign in to for one Bot is there for the next. It is backed up while Bots work and restored if it is ever replaced. `agent/sandbox/`, `agent/lib/computer*`. |
+| **Watch it work, take over when it needs you** | The team's screen sits in the right panel of every thread, HQ's desk included; open it to watch the browser live. When a Bot hits a sign-in, 2FA, or CAPTCHA it asks you to take over; you do that step in the browser and hand it back. Passwords go straight to the page, never through chat. `agent/lib/computer/`, `src/console/computer/`. |
 | **A strong default Bot** | Every workspace starts with Atlas, a generalist on the strongest model with the deepest reasoning. Any Bot can create new Bots when you ask. `agent/lib/default-bot.ts`. |
-| **Works inside apps, no API needed** | A real Google Chrome on the Bot's screen, driven through accessibility snapshots with stable `@ref` handles. `agent/subagents/teammate/tools/page_*.ts`. |
+| **Works inside apps, no API needed** | A real Google Chrome on the team's screen, driven through accessibility snapshots with stable `@ref` handles. `agent/subagents/teammate/tools/page_*.ts`. |
 | **Keeps working 24/7** | Jobs run as durable Workflow runs. A run survives redeploys and crashes, and a bot waiting on a human holds no compute. `agent/tools/run_job.ts`. |
 | **Only comes back for approval** | Irreversible actions are gated on a person (`approval: always()`), and a deliverable can require sign-off that stays pending for a day. Answer one with `POST /bot/v1/rooms/:room/respond` — a plain message starts a new turn instead of resolving the request. |
 | **Message them like a colleague** | HQ's desk plus a thread per bot, each a durable conversation that is still there tomorrow. A Next.js console at `/bot` shows the roster with live presence, each bot's chat, its screen, and its routines. `agent/channels/ops.ts`. |
@@ -47,6 +47,12 @@ display, which takes a few minutes; after that screens start in seconds.
 Then open **http://localhost:3000/bot** — the console: your Bots on the left,
 the conversation with whichever one you pick in the middle, and its screen and
 routines on the right. Approvals appear as cards you answer in place.
+
+Opening the console from another device (an IP or hostname rather than
+`localhost`) puts the browser in an insecure context, and noVNC logs
+"requires a secure context" when a Bot's screen connects. Run
+`npm run dev:https` instead: Next.js serves `https://localhost:3000` with a
+locally trusted certificate (generated into `certificates/`, which is ignored).
 
 Then talk to HQ:
 
@@ -218,7 +224,7 @@ agent/
 ├── lib/computer-backup.ts      archive the computer, restore it onto a replacement
 ├── lib/computer/script.ts      the software on the computer: screens, desktop, gateway
 ├── lib/computer/runtime.ts     start screens, sign-ins, files
-├── lib/computer/screens.ts     which Bot has which screen, and who has control
+├── lib/computer/screens.ts     the team's screen, who is on it, and who has control
 ├── lib/computer/http.ts        the console's live view, takeover, and files
 ├── lib/default-bot.ts          the generalist every workspace starts with
 ├── lib/                        persistence, job queue, briefs, artifacts
@@ -273,27 +279,31 @@ every `BOT_BACKUP_EVERY_MINUTES` while Bots work and at the end of every job. A
 marker file tells an original machine from a replacement; a replacement gets the
 latest archive restored before the next job starts.
 
-**Screens you can watch and take over.** Each Bot gets a screen on the computer:
-a TigerVNC display with a small desktop, like Grok Bot's. Openbox manages the
+**A screen you can watch and take over.** The team has one screen on the
+computer, shared by HQ and every Bot and shown on every thread: a TigerVNC
+display with a small desktop, like Grok Bot's. Openbox manages the
 windows, a tint2 dock opens the Browser (Google Chrome, with DevTools on
 localhost), Files (pcmanfm), and a Terminal (xfce4-terminal), and there is
 nothing else: no menus, no desktop icons. agent-browser attaches to that Chrome,
-so everything a Bot does happens where you can see it, and the Bot brings its
-browser back to the front before it acts. The computer exposes a single port, a
+so everything a Bot does happens where you can see it, and the Bot brings the
+browser back to the front before it acts. Because it is one Chrome profile, the
+tabs and sign-ins a person or a Bot leaves are there for whoever works next;
+the trade-off is that two Bots working at the same moment share that one
+browser and its active tab. The computer exposes a single port, a
 websockify gateway, and it only lets a connection through with a fresh,
 single-use token the console signs after checking who you are. The console shows
-that screen full size over noVNC, view-only until you take control. Screens
-start on demand, restart after the computer resumes from a snapshot, and stop
+that screen full size over noVNC, view-only until you take control. The screen
+starts on demand, restarts after the computer resumes from a snapshot, and stops
 after `BOT_COMPUTER_IDLE_MINUTES` without use.
 
 **Handing a step to a person.** When a Bot hits a sign-in, a code, or a CAPTCHA
 it calls `request_takeover`, which pauses it on an approval. A hook inside the
-teammate records the handover on the Bot's screen, so the roster shows the Bot
-waiting on you, a banner says so anywhere in the console, and its screen shows
-what it needs. Taking control sets a lock the Bot's browser tools respect;
-returning control, with an optional note, approves the request, copies whatever
-you signed in to into every other Bot's browser, and gives the Bot your note and
-a fresh look at the page. If the computer slept meanwhile, taking control reopens
+teammate records the handover on the team's screen, so the roster shows the Bot
+waiting on you, a banner says so anywhere in the console, and the screen shows
+what it needs. Taking control sets a lock every Bot's browser tools respect;
+returning control, with an optional note, approves the request, saves whatever
+you signed in to into the team's jar so backups carry it, and gives the Bot your
+note and a fresh look at the page. If the computer slept meanwhile, taking control reopens
 the page the Bot was on.
 
 **Approvals are structural, not advisory.** `send_email` and `retire_bot` are

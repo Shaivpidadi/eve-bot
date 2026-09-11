@@ -12,11 +12,11 @@ import {
   allocateScreen,
   bindSession,
   liveControl,
-  screenForBot,
   screenPorts,
   sessionBinding,
   setBrowserState,
   setPosterAt,
+  teamScreen,
   touchScreen,
   type ServiceState,
   type SessionBinding,
@@ -25,8 +25,8 @@ import { posterKey, saveScreen } from "../../../lib/screens";
 import { operator } from "../../../lib/session";
 
 /**
- * The Bot's browser: the Google Chrome on its own screen of the team's
- * computer, which the operator can watch live and take over.
+ * The Bot's browser: the Google Chrome on the team's one screen, which every
+ * Bot shares and the operator can watch live and take over from any thread.
  *
  * agent-browser attaches to that Chrome over DevTools and speaks in
  * accessibility snapshots with stable `@ref` handles, which is what makes a web
@@ -92,8 +92,9 @@ const SCREEN_TRUSTED_MS = 30_000;
 const readyScreens = new Map<string, { n: number; at: number }>();
 
 /**
- * Binds this run to its Bot's screen, allocating one if needed. Called by
- * `job_brief`; starting the screen is left to the first browser action.
+ * Binds this run to the team's screen, allocating one if the workspace has
+ * none. Called by `job_brief`; starting the screen is left to the first
+ * browser action.
  */
 export async function bindScreen(ctx: ToolContext, botId: string, jobId: string): Promise<SessionBinding> {
   const { workspaceId } = operator(ctx);
@@ -101,9 +102,9 @@ export async function bindScreen(ctx: ToolContext, botId: string, jobId: string)
   return bindSession({ sessionId: ctx.session.id, workspaceId, botId, jobId, n: screen.n });
 }
 
-/** This run's screen, following the Bot if its screen was handed to another Bot meanwhile. */
+/** The team's screen, following it if the workspace was moved to another one meanwhile. */
 async function currentScreen(ctx: ToolContext, binding: SessionBinding) {
-  const screen = await screenForBot(binding.workspaceId, binding.botId);
+  const screen = await teamScreen(binding.workspaceId);
   if (screen !== null) {
     if (screen.n !== binding.n) {
       await bindSession({ ...binding, n: screen.n });
@@ -204,7 +205,7 @@ const POSTER_EVERY_MS = 5_000;
 const lastPoster = new Map<string, number>();
 
 /**
- * Refreshes the still frame the console shows for this Bot's screen when nobody
+ * Refreshes the still frame the console shows for the team's screen when nobody
  * is watching live. Throttled and best-effort: the frame goes to storage for the
  * console, never into the model's context, and a missed frame never fails the
  * action that triggered it.
@@ -218,7 +219,7 @@ export async function refreshScreen(ctx: ToolContext): Promise<void> {
     const binding = await sessionBinding(workspaceId, ctx.session.id);
     if (binding === null) return;
     const shot = await captureScreen(await toolIo(ctx), binding.n, 55);
-    if (await saveScreen(workspaceId, posterKey(binding.botId), shot.bytes, shot.mediaType)) {
+    if (await saveScreen(workspaceId, posterKey(binding.n), shot.bytes, shot.mediaType)) {
       await setPosterAt(binding.n, new Date().toISOString());
     }
   } catch {

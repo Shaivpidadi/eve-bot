@@ -16,7 +16,7 @@ import { buildBoard } from "../lib/board";
 import { findBot, getBot, hireBot, patchBot } from "../lib/bots";
 import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
-import { clearHandovers, finishHandover, screenForBot } from "../lib/computer/screens";
+import { clearHandovers, finishHandover, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
 import { cancelJob, listOpenJobs } from "../lib/jobs";
 import {
   addPlugin,
@@ -267,8 +267,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const botId = botIdForRoom(room);
       const bot = botId === null ? null : await getBot(workspaceId, botId);
       if (bot !== null) {
-        const screen = await screenForBot(workspaceId, bot.id);
-        if (screen?.handover) await finishHandover(screen.n);
+        const screen = await teamScreen(workspaceId);
+        if (screen !== null && handoverBelongsTo(screen.handover ?? null, bot.id, cancelledJobs)) {
+          await finishHandover(screen.n);
+        }
       }
       await record({
         workspaceId,

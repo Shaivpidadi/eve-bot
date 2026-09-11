@@ -39,17 +39,15 @@ export function ChatPane({
         </button>
         <Avatar member={member} size={18} onHover={onHover} />
         <span className="head-name">{member.name}</span>
-        {member.kind === "bot" ? (
-          <button
-            type="button"
-            className={member.computer.active ? "icon-btn computer-btn active" : "icon-btn computer-btn"}
-            aria-label="Computer"
-            title={member.computer.active ? `${member.name}'s computer is on` : "Computer"}
-            onClick={onToggleComputer}
-          >
-            <Icon name="monitor" />
-          </button>
-        ) : null}
+        <button
+          type="button"
+          className={member.computer.active ? "icon-btn computer-btn active" : "icon-btn computer-btn"}
+          aria-label="Team computer"
+          title={member.computer.active ? "The team's computer is in use" : "Team computer"}
+          onClick={onToggleComputer}
+        >
+          <Icon name="monitor" />
+        </button>
       </header>
       <Transcript
         member={member}

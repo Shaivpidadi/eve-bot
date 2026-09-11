@@ -361,6 +361,26 @@ button:disabled { cursor: default; opacity: 0.5; }
 /* The thumbnail in a Bot's panel: the wallpaper shows through until a picture arrives, and clicks open the computer. */
 .browser-app.compact { background: transparent; pointer-events: none; }
 .browser-app.compact .poster { filter: none; object-fit: cover; object-position: top left; }
+/* A placeholder browser window while the screen connects or the computer starts. */
+.screen-skeleton {
+  position: absolute; inset: 0; display: flex; flex-direction: column; background: #1c1c1f; overflow: hidden;
+  container-type: inline-size;
+}
+.screen-skeleton::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.07) 50%, transparent 70%);
+  background-size: 200% 100%; animation: shimmer 1.6s linear infinite;
+}
+.sk-bar { display: flex; align-items: center; gap: 2.2cqw; padding: 2.2cqw 3cqw; background: #26262a; }
+.sk-bar i { width: 2.6cqw; height: 2.6cqw; border-radius: 50%; background: #3a3a40; display: block; }
+.sk-url { flex: 1; height: 5cqw; margin-left: 2cqw; border-radius: 2.5cqw; background: #32323a; }
+.sk-page { flex: 1; padding: 5cqw 8cqw; display: flex; flex-direction: column; gap: 3.4cqw; }
+.sk-line { display: block; height: 3cqw; border-radius: 1.5cqw; background: #2b2b30; }
+.sk-block { display: block; height: 22cqw; border-radius: 2cqw; background: #26262b; }
+.sk-line.w-40 { width: 40%; } .sk-line.w-60 { width: 60%; } .sk-line.w-75 { width: 75%; }
+.sk-line.w-85 { width: 85%; } .sk-line.w-90 { width: 90%; }
+.browser-app.compact .screen-skeleton { background: rgba(28, 28, 31, 0.92); }
+
 .app-status {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: min(90%, 460px);
   display: flex; align-items: center; gap: 9px; padding: 9px 14px; border-radius: 10px;

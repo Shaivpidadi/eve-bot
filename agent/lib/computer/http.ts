@@ -25,11 +25,12 @@ import {
 } from "./runtime";
 import {
   allocateScreen,
+  HQ_SCREEN_USER,
   liveControl,
-  screenForBot,
   setBrowserState,
   setControl,
   setHandoverNote,
+  teamScreen,
   touchScreen,
   type ScreenAllocation,
   type ScreenControl,
@@ -37,8 +38,9 @@ import {
 import { mintToken, type ComputerAccess } from "./tokens";
 
 /**
- * The console's computer routes: a Bot's live browser and its still frame,
- * taking control and handing it back, and the Files drawer.
+ * The console's computer routes: the team's live browser and its still frame,
+ * taking control and handing it back, and the Files drawer. The screen is one
+ * per workspace, so every Bot's thread and HQ's desk open the same browser.
  *
  * Every handler here runs after the ops channel authenticated the caller, and
  * scopes Bots to the caller's workspace. Live connections go straight from the
@@ -114,9 +116,21 @@ async function readBody(request: Request): Promise<Record<string, unknown> | nul
   }
 }
 
-async function botFor(access: Access, botId: string | undefined) {
-  return botId === undefined || botId === "" ? null : getBot(access.workspaceId, botId);
+/** Who is opening the team's browser: a Bot on the roster, or HQ itself. */
+interface ScreenUser {
+  readonly id: string;
+  readonly name: string;
 }
+
+async function botFor(access: Access, botId: string | undefined): Promise<ScreenUser | null> {
+  if (botId === undefined || botId === "") return null;
+  if (botId === HQ_SCREEN_USER) return { id: HQ_SCREEN_USER, name: "HQ" };
+  const bot = await getBot(access.workspaceId, botId);
+  return bot === null ? null : { id: bot.id, name: bot.name };
+}
+
+/** Activity is filed under a Bot; HQ's own use of the screen is the team's. */
+const activityBot = (user: ScreenUser) => (user.id === HQ_SCREEN_USER ? null : user.id);
 
 const noBot = () => json({ error: "no such bot" }, 404);
 const heldBy = (control: ScreenControl) => json({ error: `${control.by} has control of this browser right now.` }, 409);
@@ -154,13 +168,13 @@ async function connection(
   return json({ mode: "vnc", ...shared, url: gateway + token });
 }
 
-/** Watch a Bot's browser live. Starts its screen, and the computer, if needed. */
+/** Watch the team's browser live. Starts the screen, and the computer, if needed. */
 export async function openBrowser(request: Request, access: Access, botId: string | undefined): Promise<Response> {
   const bot = await botFor(access, botId);
   if (bot === null) return noBot();
   const body = await readBody(request);
   if (body?.wake === false) return watchBrowser(access, bot.id);
-  const screen = await allocateScreen(access.workspaceId, bot.id);
+  const screen = await allocateScreen(access.workspaceId);
   const control = liveControl(screen);
   const wantsControl = body?.access === "control";
   if (wantsControl && control?.by !== access.user) {
@@ -173,26 +187,26 @@ export async function openBrowser(request: Request, access: Access, botId: strin
 }
 
 /**
- * A glance at a Bot's browser, for the thumbnail in its panel: live while the
+ * A glance at the team's browser, for the thumbnail in a panel: live while the
  * browser is already running, and never a reason to start it, wake the
  * computer, or keep either from going idle. Anything else is `asleep`, and the
  * console shows the last still frame.
  */
 async function watchBrowser(access: Access, botId: string): Promise<Response> {
-  const screen = await screenForBot(access.workspaceId, botId);
+  const screen = await teamScreen(access.workspaceId);
   if (screen === null || screen.browser.state !== "on") return json({ mode: "asleep" });
   if ((await computerControl().availability()).state !== "running") return json({ mode: "asleep" });
   return connection(botId, screen, "view", { keepAlive: false });
 }
 
-/** Take control of a Bot's browser. The Bot's browser tools wait until it is released. */
+/** Take control of the team's browser. Every Bot's browser tools wait until it is released. */
 export async function takeControl(request: Request, access: Access, botId: string | undefined): Promise<Response> {
   const bot = await botFor(access, botId);
   if (bot === null) return noBot();
   const body = await readBody(request);
   const requestId =
     typeof body?.requestId === "string" && /^[\w.:-]{1,200}$/.test(body.requestId) ? body.requestId : null;
-  const screen = await allocateScreen(access.workspaceId, bot.id);
+  const screen = await allocateScreen(access.workspaceId);
   const current = liveControl(screen);
   if (current !== null && current.by !== access.user) return heldBy(current);
 
@@ -207,8 +221,8 @@ export async function takeControl(request: Request, access: Access, botId: strin
     await record({
       workspaceId: access.workspaceId,
       kind: "computer.takeover",
-      botId: bot.id,
-      text: `${access.user} took control of ${bot.name}'s browser.`,
+      botId: activityBot(bot),
+      text: `${access.user} took control of the team's browser.`,
     });
   }
   const started = await withComputer((io) => ensureScreen(io, screen.n, { wait: false }));
@@ -219,7 +233,7 @@ export async function takeControl(request: Request, access: Access, botId: strin
     // if it came back empty does the page the Bot was on get opened.
     await withComputer((io) => openUrl(io, screen.n, url, { ifBlank: true }));
   }
-  const held = (await screenForBot(access.workspaceId, bot.id)) ?? screen;
+  const held = (await teamScreen(access.workspaceId)) ?? screen;
   return connection(bot.id, held, "control");
 }
 
@@ -231,7 +245,7 @@ export async function takeControl(request: Request, access: Access, botId: strin
 export async function keepWatching(access: Access, botId: string | undefined): Promise<Response> {
   const bot = await botFor(access, botId);
   if (bot === null) return noBot();
-  const screen = await screenForBot(access.workspaceId, bot.id);
+  const screen = await teamScreen(access.workspaceId);
   if (screen === null) return json({ watching: false });
   await touchScreen(screen.n);
   await computerControl().keepAlive().catch(() => undefined);
@@ -242,7 +256,7 @@ export async function keepWatching(access: Access, botId: string | undefined): P
 export async function renewControl(access: Access, botId: string | undefined): Promise<Response> {
   const bot = await botFor(access, botId);
   if (bot === null) return noBot();
-  const screen = await screenForBot(access.workspaceId, bot.id);
+  const screen = await teamScreen(access.workspaceId);
   const current = screen === null ? null : liveControl(screen);
   if (screen === null || current === null || current.by !== access.user) {
     return json({ error: "You do not have control of this browser." }, 409);
@@ -258,8 +272,8 @@ export async function renewControl(access: Access, botId: string | undefined): P
 }
 
 /**
- * Gives control back. Handing back also shares whatever the operator signed in
- * to with every other browser on the computer; the console then answers the
+ * Gives control back. Handing back also saves whatever the operator signed in
+ * to into the team's jar, which backups carry; the console then answers the
  * Bot's takeover request so it carries on.
  */
 export async function releaseControl(
@@ -269,7 +283,7 @@ export async function releaseControl(
 ): Promise<Response> {
   const bot = await botFor(access, botId);
   if (bot === null) return noBot();
-  const screen = await screenForBot(access.workspaceId, bot.id);
+  const screen = await teamScreen(access.workspaceId);
   const current = screen === null ? null : liveControl(screen);
   const body = options.request === undefined ? null : await readBody(options.request);
   const note = typeof body?.note === "string" && body.note.trim() !== "" ? body.note.trim().slice(0, 1_000) : null;
@@ -293,8 +307,8 @@ export async function releaseControl(
     await record({
       workspaceId: access.workspaceId,
       kind: "computer.handback",
-      botId: bot.id,
-      text: `${access.user} handed ${bot.name}'s browser back.`,
+      botId: activityBot(bot),
+      text: `${access.user} handed the team's browser back.`,
     });
   }
   return json({
@@ -305,22 +319,28 @@ export async function releaseControl(
   });
 }
 
-/** The still frame of a Bot's screen, refreshed as it works. Never wakes the computer. */
+/** The still frame of the team's screen, refreshed as Bots work. Never wakes the computer. */
 export async function poster(access: Access, botId: string | undefined): Promise<Response> {
   const bot = await botFor(access, botId);
   if (bot === null) return noBot();
-  const frame = await readScreen(access.workspaceId, posterKey(bot.id));
+  const screen = await teamScreen(access.workspaceId);
+  if (screen === null) return json({ error: "no screen" }, 404);
+  const frame =
+    (await readScreen(access.workspaceId, posterKey(screen.n))) ??
+    // Frames from before screens were shared were kept per Bot.
+    (await readScreen(access.workspaceId, `bot-${screen.botId}`)) ??
+    (bot.id === HQ_SCREEN_USER ? null : await readScreen(access.workspaceId, `bot-${bot.id}`));
   if (frame === null) return json({ error: "no screen" }, 404);
   return new Response(Buffer.from(frame.base64, "base64"), {
     headers: { "content-type": frame.mediaType, "cache-control": "no-store", "x-screen-at": frame.at, ...SECURITY_HEADERS },
   });
 }
 
-/** A fresh frame from a Bot's browser, for backends without live connections. */
+/** A fresh frame from the team's browser, for backends without live connections. */
 export async function frame(access: Access, botId: string | undefined): Promise<Response> {
   const bot = await botFor(access, botId);
   if (bot === null) return noBot();
-  const screen = await screenForBot(access.workspaceId, bot.id);
+  const screen = await teamScreen(access.workspaceId);
   if (screen === null) return json({ error: "no screen" }, 404);
   const outcome = await withComputer((io) => captureScreen(io, screen.n, 50));
   if (!outcome.ok) return outcome.response;
@@ -333,7 +353,7 @@ export async function frame(access: Access, botId: string | undefined): Promise<
 export async function input(request: Request, access: Access, botId: string | undefined): Promise<Response> {
   const bot = await botFor(access, botId);
   if (bot === null) return noBot();
-  const screen = await screenForBot(access.workspaceId, bot.id);
+  const screen = await teamScreen(access.workspaceId);
   const current = screen === null ? null : liveControl(screen);
   if (screen === null || current === null || current.by !== access.user) {
     return json({ error: "Take control first." }, 409);

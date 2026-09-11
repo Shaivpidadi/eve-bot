@@ -42,9 +42,9 @@ export function Wallpaper() {
   );
 }
 
-/** The latest still frame of a Bot's screen, swapped in only once it has loaded. */
+/** The latest still frame of the team's screen, swapped in only once it has loaded. */
 export function useScreen(member: Member): string | null {
-  const url = member.kind === "bot" ? posterUrl(member) : null;
+  const url = posterUrl(member);
   const [loaded, setLoaded] = useState<string | null>(null);
 
   useEffect(() => {
@@ -61,7 +61,7 @@ export function useScreen(member: Member): string | null {
   }, [url]);
 
   if (url === null || loaded === null) return null;
-  // Keep this Bot's previous frame up while the next one loads, never another Bot's.
+  // Keep this thread's previous frame up while the next one loads.
   return loaded.split("?t=")[0] === url.split("?t=")[0] ? loaded : null;
 }
 
@@ -110,22 +110,43 @@ export function DetailsPanel({
       </div>
       <div className="panel-body">
         {member.kind === "hq" ? (
-          <HqPanel members={members} onSelect={onSelect} onHover={onHover} />
+          <HqPanel member={member} members={members} live={live} onTakeover={onTakeover} onSelect={onSelect} onHover={onHover} />
         ) : settings ? (
           <SettingsPanel key={member.id} member={member} onChanged={onChanged} />
         ) : (
-          <BotPanel member={member} live={live} onTakeover={onTakeover} />
+          <BotPanel member={member} members={members} live={live} onTakeover={onTakeover} />
         )}
       </div>
     </aside>
   );
 }
 
-function BotPanel({ member, live, onTakeover }: { member: Member; live: boolean; onTakeover: () => void }) {
+/** What the team's browser is up to right now, for its caption and badge. */
+function usingScreen(member: Member, members: readonly Member[]): Member | null {
+  if (member.kind === "bot") return member.computer.active ? member : null;
+  return members.find((entry) => entry.kind === "bot" && entry.computer.active) ?? null;
+}
+
+/**
+ * The team's one screen, from any thread: a still of the browser, live while it
+ * is running, and the way into the full computer. HQ's desk and every Bot's
+ * panel show the same browser, so a sign-in made for one Bot is there for all.
+ */
+function ScreenPreview({
+  member,
+  members,
+  live,
+  onTakeover,
+}: {
+  member: Member;
+  members: readonly Member[];
+  live: boolean;
+  onTakeover: () => void;
+}) {
   const screen = useScreen(member);
   const [streaming, setStreaming] = useState(false);
-  const paused = member.status === "paused";
   const showing = live && streaming;
+  const working = usingScreen(member, members);
 
   useEffect(() => {
     if (!live) setStreaming(false);
@@ -133,7 +154,7 @@ function BotPanel({ member, live, onTakeover }: { member: Member; live: boolean;
 
   return (
     <>
-      <button type="button" className="screen" aria-label={`Open ${member.name}'s computer`} onClick={onTakeover}>
+      <button type="button" className="screen" aria-label="Open the team's computer" onClick={onTakeover}>
         <Wallpaper />
         {live ? (
           <BrowserApp member={member} compact onLive={setStreaming} />
@@ -143,8 +164,8 @@ function BotPanel({ member, live, onTakeover }: { member: Member; live: boolean;
         )}
         {member.computer.control !== null ? (
           <span className="screen-live">{`${member.computer.control.by} has control`}</span>
-        ) : member.computer.active ? (
-          <span className="screen-live">Working</span>
+        ) : working !== null ? (
+          <span className="screen-live">{member.kind === "hq" ? `${working.name} is working` : "Working"}</span>
         ) : showing ? (
           <span className="screen-live">Live</span>
         ) : null}
@@ -160,9 +181,29 @@ function BotPanel({ member, live, onTakeover }: { member: Member; live: boolean;
       </button>
       <div className="screen-caption">
         {showing || member.computer.browser === "on" || member.computer.posterAt === null
-          ? `${member.name}'s computer`
-          : `${member.name}'s computer · asleep, last seen ${shortWhen(member.computer.posterAt)}`}
+          ? "Team computer"
+          : `Team computer · asleep, last seen ${shortWhen(member.computer.posterAt)}`}
       </div>
+    </>
+  );
+}
+
+function BotPanel({
+  member,
+  members,
+  live,
+  onTakeover,
+}: {
+  member: Member;
+  members: readonly Member[];
+  live: boolean;
+  onTakeover: () => void;
+}) {
+  const paused = member.status === "paused";
+
+  return (
+    <>
+      <ScreenPreview member={member} members={members} live={live} onTakeover={onTakeover} />
 
       <div className="section">
         <h3>Routines</h3>
@@ -283,11 +324,17 @@ function SettingsPanel({ member, onChanged }: { member: Member; onChanged: () =>
 }
 
 function HqPanel({
+  member,
   members,
+  live,
+  onTakeover,
   onSelect,
   onHover,
 }: {
+  member: Member;
   members: readonly Member[];
+  live: boolean;
+  onTakeover: () => void;
   onSelect: (id: string) => void;
   onHover: (hover: Hover | null) => void;
 }) {
@@ -296,6 +343,8 @@ function HqPanel({
 
   return (
     <>
+      <ScreenPreview member={member} members={members} live={live} onTakeover={onTakeover} />
+
       <div className="section">
         <h3>Team</h3>
         <ul className="list">

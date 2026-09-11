@@ -8,8 +8,9 @@ import { COMPUTER_SOFTWARE_REVISION } from "../lib/computer/script";
 
 /**
  * The team's computer: one persistent machine that HQ, every Bot's thread, and
- * every teammate at work share (see `lib/computer.ts`), with a browser per Bot
- * that people can watch and take over, and a terminal (see `lib/computer/`).
+ * every teammate at work share (see `lib/computer.ts`), with one browser the
+ * whole team uses, which people can watch and take over from any thread, and a
+ * terminal (see `lib/computer/`).
  *
  * It runs on Vercel Sandbox by default, in development too; `BOT_COMPUTER=local`
  * runs it in a VM on this machine instead (see `lib/computer-config.ts`). On

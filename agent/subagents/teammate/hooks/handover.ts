@@ -39,6 +39,7 @@ export default defineHook({
           room: job?.room ?? roomForBot(binding.botId),
           requestId: takeover.requestId,
           jobId: binding.jobId,
+          botId: binding.botId,
         });
         await record({
           workspaceId,
