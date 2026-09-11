@@ -268,9 +268,18 @@ export interface ScreenCapture {
 }
 
 /** What the screen's browser is showing, as a JPEG. */
-export async function captureScreen(io: ComputerIo, n: number, quality = 60): Promise<ScreenCapture> {
+export async function captureScreen(
+  io: ComputerIo,
+  n: number,
+  quality = 60,
+  targetId?: string,
+): Promise<ScreenCapture> {
   const path = `/tmp/bot-computer/shot-${n}.jpg`;
-  const answer = await runScript<{ url: string; title: string }>(io, ["shot", String(n), path, String(quality)], 30_000);
+  const answer = await runScript<{ url: string; title: string }>(
+    io,
+    ["shot", String(n), path, String(quality), ...(targetId === undefined ? [] : [targetId])],
+    30_000,
+  );
   const bytes = await io.readBinaryFile(path);
   if (bytes === null) throw new ComputerError("The screenshot was not written.", "shot");
   return { bytes, mediaType: "image/jpeg", url: answer.url, title: answer.title };
@@ -290,6 +299,16 @@ export function sendInput(io: ComputerIo, n: number, event: InputEvent): Promise
 /** Brings the screen's browser to the front, in case someone left another window over it. */
 export function raiseBrowser(io: ComputerIo, n: number): Promise<void> {
   return runScript(io, ["raise", String(n)], 30_000);
+}
+
+/** Brings one Bot's tab to the front of the shared browser window. */
+export function activateTab(io: ComputerIo, n: number, targetId: string): Promise<{ ok: boolean }> {
+  return runScript(io, ["activate", String(n), targetId], 15_000);
+}
+
+/** Closes one Bot's tab, for when its job is done. Never fails the caller. */
+export function closeTab(io: ComputerIo, n: number, targetId: string): Promise<{ ok: boolean; closed?: boolean }> {
+  return runScript(io, ["close-tab", String(n), targetId], 15_000);
 }
 
 /** Points the screen's browser at a web address. */

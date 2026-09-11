@@ -4,7 +4,7 @@ import { useEffect, useId, useState } from "react";
 
 import { api, errorMessage, SignedOutError } from "./api";
 import { Avatar } from "./avatar";
-import { BrowserApp, posterUrl } from "./computer/browser-app";
+import { posterUrl } from "./computer/browser-app";
 import { bytes, PRESENCE_LABEL, scheduleText, shortWhen } from "./format";
 import { Icon } from "./icons";
 import type { Hover, Member } from "./types";
@@ -143,22 +143,17 @@ function ScreenPreview({
   live: boolean;
   onTakeover: () => void;
 }) {
+  // The still frame of this member's own tab, refreshed as it works. The shared
+  // browser has one live picture (the front tab), so a thumbnail per Bot shows
+  // stills instead: that way two Bots working at once each show their own tab.
   const screen = useScreen(member);
-  const [streaming, setStreaming] = useState(false);
-  const showing = live && streaming;
   const working = usingScreen(member, members);
-
-  useEffect(() => {
-    if (!live) setStreaming(false);
-  }, [live]);
 
   return (
     <>
       <button type="button" className="screen" aria-label="Open the team's computer" onClick={onTakeover}>
         <Wallpaper />
-        {live ? (
-          <BrowserApp member={member} compact onLive={setStreaming} />
-        ) : screen === null ? null : (
+        {screen === null ? null : (
           // A live, authenticated, uncached frame: next/image would only get in the way.
           <img src={screen} alt="" />
         )}
@@ -166,21 +161,16 @@ function ScreenPreview({
           <span className="screen-live">{`${member.computer.control.by} has control`}</span>
         ) : working !== null ? (
           <span className="screen-live">{member.kind === "hq" ? `${working.name} is working` : "Working"}</span>
-        ) : showing ? (
-          <span className="screen-live">Live</span>
         ) : null}
-        {/* The live picture has the computer's own dock. */}
-        {showing ? null : (
-          <span className="dock">
-            <Avatar member={member} size={10} />
-            <i />
-            <i />
-            <i />
-          </span>
-        )}
+        <span className="dock">
+          <Avatar member={member} size={10} />
+          <i />
+          <i />
+          <i />
+        </span>
       </button>
       <div className="screen-caption">
-        {showing || member.computer.browser === "on" || member.computer.posterAt === null
+        {member.computer.browser === "on" || member.computer.posterAt === null
           ? "Team computer"
           : `Team computer · asleep, last seen ${shortWhen(member.computer.posterAt)}`}
       </div>

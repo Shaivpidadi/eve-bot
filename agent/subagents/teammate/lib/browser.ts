@@ -14,6 +14,7 @@ import {
   liveControl,
   screenPorts,
   sessionBinding,
+  setBotTab,
   setBrowserState,
   setPosterAt,
   teamScreen,
@@ -41,6 +42,69 @@ import { operator } from "../../../lib/session";
 const MAX_OUTPUT = process.env.BOT_BROWSER_MAX_OUTPUT ?? "20000";
 
 const preparedDirectories = new Set<string>();
+
+/**
+ * Each run works in its own tab of the team's one browser, so two Bots never
+ * fight over the same page. The tab belongs to the run's agent-browser session
+ * and is labelled with it, so a later action finds it and the console can show
+ * this Bot its own tab. The session name is the run's, kept to characters
+ * agent-browser accepts.
+ */
+const runSessionName = (ctx: ToolContext) => `run-${ctx.session.id.replace(/[^A-Za-z0-9_-]/g, "")}`.slice(0, 60);
+
+/** Runs opened with their tab ready, so the label lookup happens once per run. */
+const openedTabs = new Map<string, { targetId: string; at: number }>();
+const TAB_TRUSTED_MS = 60_000;
+
+async function labelledTab(ctx: ToolContext, cdp: number, session: string, label: string): Promise<string | null> {
+  try {
+    const listed = await runAgentBrowser<{ data?: { tabs?: { label?: string; targetId?: string }[] } }>(
+      ctx,
+      ["--cdp", String(cdp), "tab", "list", "--json"],
+      { session, env: environment(await sessionDirectory(ctx)), abortSignal: ctx.abortSignal },
+    );
+    const tab = listed.json?.data?.tabs?.find((entry) => entry.label === label);
+    return tab?.targetId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The run's own tab, opening it the first time. Records it so the console can
+ * show this Bot its own screen and, on takeover, bring the right tab to front.
+ */
+async function ensureRunTab(ctx: ToolContext, binding: SessionBinding, n: number): Promise<string | null> {
+  const cached = openedTabs.get(ctx.session.id);
+  if (cached !== undefined && Date.now() - cached.at < TAB_TRUSTED_MS) return cached.targetId;
+
+  const cdp = screenPorts(n).cdp;
+  const session = runSessionName(ctx);
+  const label = binding.tabLabel ?? session;
+
+  let targetId = await labelledTab(ctx, cdp, session, label);
+  if (targetId === null) {
+    try {
+      await runAgentBrowser(ctx, ["--cdp", String(cdp), "--pin-tab", "tab", "new", "--label", label, "about:blank"], {
+        session,
+        env: environment(await sessionDirectory(ctx)),
+        abortSignal: ctx.abortSignal,
+      });
+    } catch {
+      // The action that follows still runs; without a labelled tab it lands on the pinned one.
+    }
+    targetId = await labelledTab(ctx, cdp, session, label);
+  }
+  if (targetId === null) return null;
+
+  openedTabs.set(ctx.session.id, { targetId, at: Date.now() });
+  const { workspaceId } = operator(ctx);
+  await setBotTab(workspaceId, binding.botId, { targetId, sessionId: ctx.session.id, at: new Date().toISOString() });
+  if (binding.targetId !== targetId || binding.tabLabel !== label) {
+    await bindSession({ ...binding, targetId, tabLabel: label });
+  }
+  return targetId;
+}
 
 /** This run's scratch folder on the computer, created on first use. */
 export async function sessionDirectory(ctx: ToolContext): Promise<string> {
@@ -168,16 +232,19 @@ export async function browser(ctx: ToolContext, args: readonly string[]): Promis
     n = screen.n;
     recorded = screen.browser.state;
     await readyScreen(ctx, n, recorded);
+    // Open this run's own tab before its first action, so two Bots never share one page.
+    await ensureRunTab(ctx, binding, n);
   } catch (error) {
     return failure(error);
   }
 
+  const session = runSessionName(ctx);
   const run = async () =>
-    runAgentBrowser(ctx, ["--cdp", String(screenPorts(n).cdp), ...args], {
+    runAgentBrowser(ctx, ["--cdp", String(screenPorts(n).cdp), "--pin-tab", ...args], {
       abortSignal: ctx.abortSignal,
       env: environment(await sessionDirectory(ctx)),
-      // One agent-browser daemon per screen, attached to that screen's Chrome.
-      session: `screen-${n}`,
+      // One agent-browser session per run, pinned to that run's own tab in the shared browser.
+      session,
     });
 
   try {
@@ -218,8 +285,9 @@ export async function refreshScreen(ctx: ToolContext): Promise<void> {
     const { workspaceId } = operator(ctx);
     const binding = await sessionBinding(workspaceId, ctx.session.id);
     if (binding === null) return;
-    const shot = await captureScreen(await toolIo(ctx), binding.n, 55);
-    if (await saveScreen(workspaceId, posterKey(binding.n), shot.bytes, shot.mediaType)) {
+    // This Bot's own tab, so its thumbnail shows its work even while another Bot's tab is on screen.
+    const shot = await captureScreen(await toolIo(ctx), binding.n, 55, binding.targetId);
+    if (await saveScreen(workspaceId, posterKey(binding.botId), shot.bytes, shot.mediaType)) {
       await setPosterAt(binding.n, new Date().toISOString());
     }
   } catch {

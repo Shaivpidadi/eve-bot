@@ -46,6 +46,8 @@ import { store } from "../lib/store";
  */
 
 const MAX_MESSAGE_CHARS = 20_000;
+/** How often an idle thread stream sends a blank line so nothing in between drops it. */
+const STREAM_HEARTBEAT_MS = 15_000;
 const SECURITY_HEADERS = { "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" };
 
 const json = (body: unknown, status = 200) =>
@@ -310,20 +312,67 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
       const requested = Number(new URL(request.url).searchParams.get("startIndex") ?? 0);
       const startIndex = Number.isInteger(requested) && requested >= 0 ? requested : 0;
-      let events;
-      try {
-        events = await session.getEventStream({ startIndex });
-      } catch {
-        return none();
-      }
+
+      // A reader at the tail of a quiet thread waits for the next event, which can
+      // be minutes away. The headers go out at once, so the reader learns which
+      // session it is following, and a blank line every so often keeps the dev
+      // proxy and any load balancer from dropping the idle connection; the console
+      // skips blank lines. eve hands the event stream over only once it has
+      // something to say, so it is opened inside the response, not before it.
       const encoder = new TextEncoder();
-      const ndjson = events.pipeThrough(
-        new TransformStream<unknown, Uint8Array>({
-          transform(event, controller) {
-            controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
-          },
-        }),
-      );
+      let reader: ReadableStreamDefaultReader<unknown> | null = null;
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      let open = true;
+      const ndjson = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const stop = () => {
+            open = false;
+            clearInterval(heartbeat);
+            void reader?.cancel().catch(() => undefined);
+          };
+          heartbeat = setInterval(() => {
+            if (!open) return;
+            try {
+              controller.enqueue(encoder.encode("\n"));
+            } catch {
+              stop();
+            }
+          }, STREAM_HEARTBEAT_MS);
+          request.signal.addEventListener("abort", stop, { once: true });
+          // Headers leave with the first byte, so the reader sees `x-bot-session` straight away.
+          controller.enqueue(encoder.encode("\n"));
+
+          void (async () => {
+            try {
+              const events = await session.getEventStream({ startIndex });
+              if (!open) return void events.cancel().catch(() => undefined);
+              reader = events.getReader();
+              for (;;) {
+                const { value, done } = await reader.read();
+                if (done || !open) break;
+                controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+              }
+            } catch {
+              // The session is gone or the reader left; either way the stream ends.
+            } finally {
+              clearInterval(heartbeat);
+              if (open) {
+                open = false;
+                try {
+                  controller.close();
+                } catch {
+                  // Already closed by the reader going away.
+                }
+              }
+            }
+          })();
+        },
+        cancel() {
+          open = false;
+          clearInterval(heartbeat);
+          void reader?.cancel().catch(() => undefined);
+        },
+      });
 
       return new Response(ndjson, {
         headers: {

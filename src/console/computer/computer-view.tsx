@@ -71,8 +71,12 @@ export function ComputerView({
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [filesOpen, setFilesOpen] = useState(false);
+  /** A click on the screen while only watching asks before taking the computer over. */
+  const [asking, setAsking] = useState(false);
   const controllingNow = useRef(controlling);
   controllingNow.current = controlling;
+  const askingNow = useRef(asking);
+  askingNow.current = asking;
 
   const handover = member.computer.handover;
   const store = roomStore(handover?.room ?? member.room);
@@ -86,6 +90,7 @@ export function ComputerView({
     api(botPath(member.id, path), { method: "POST", body: JSON.stringify(body) });
 
   const take = async () => {
+    setAsking(false);
     setBusy(true);
     setError(null);
     try {
@@ -178,7 +183,9 @@ export function ComputerView({
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       // While in control, Escape belongs to the page.
-      if (event.key === "Escape" && !controllingNow.current) onClose();
+      if (event.key !== "Escape" || controllingNow.current) return;
+      if (askingNow.current) setAsking(false);
+      else onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -192,6 +199,16 @@ export function ComputerView({
       : `${state}${member.action ? ` · ${member.action}` : ""}`;
   const reason = handover?.reason ?? (request === null ? null : String(request.action?.input?.reason ?? request.prompt));
   const returnLabel = member.kind === "hq" ? "Return control" : `Return control to ${member.name}`;
+  // Whoever is on the computer right now: the Bot whose thread this is, when it is mid-job.
+  const working = member.kind === "bot" && member.computer.active ? member.name : null;
+
+  /** Clicking the picture while watching: the Bot that asked gets you straight in; otherwise ask first. */
+  const onScreenClick = () => {
+    if (controlling || busy) return;
+    if (heldByOther) return;
+    if (waiting) void take();
+    else setAsking(true);
+  };
 
   return (
     <div className="computer" role="dialog" aria-modal="true" aria-label="Team computer">
@@ -240,7 +257,48 @@ export function ComputerView({
 
       <div className="computer-stage">
         <div className={controlling ? "screen-frame controlling" : "screen-frame"}>
-          <BrowserApp member={member} controlling={controlling} />
+          <BrowserApp
+            member={member}
+            controlling={controlling}
+            onControlLost={(reason) => {
+              setControlling(false);
+              setError(`${reason} Take control again to keep going.`);
+            }}
+          />
+
+          {controlling ? null : (
+            // Watching is view-only, so a click on the picture would otherwise do nothing at all.
+            <div
+              className="take-catcher"
+              role="button"
+              tabIndex={-1}
+              aria-label="Take control of the computer"
+              title={heldByOther ? `${control.by} has control` : "Click to take control"}
+              onClick={onScreenClick}
+            />
+          )}
+
+          {asking && !controlling ? (
+            <div className="handover take-prompt" role="alertdialog" aria-modal="true" aria-label="Take control?">
+              <div className="handover-head">
+                <Avatar member={member} size={22} />
+                <b>{working === null ? "Take control of the computer?" : `${working} is working right now`}</b>
+              </div>
+              <p>
+                {working === null
+                  ? "Your mouse and keyboard go straight to the computer until you return control."
+                  : `Taking control pauses ${working}'s browser actions until you return control. Anything you sign in to stays signed in for the team.`}
+              </p>
+              <div className="handover-actions">
+                <button type="button" className="btn primary" disabled={busy} autoFocus onClick={() => void take()}>
+                  Take control
+                </button>
+                <button type="button" className="btn" disabled={busy} onClick={() => setAsking(false)}>
+                  Keep watching
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {waiting && !controlling ? (
             <div className="handover" role="alert">

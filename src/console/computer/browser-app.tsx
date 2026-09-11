@@ -24,6 +24,8 @@ interface Viewer {
 
 /** How often a thumbnail checks again on a browser the board says is running. */
 const ASLEEP_RECHECK_MS = 30_000;
+/** How often the full view tries again after the computer answered that it cannot connect. */
+const ERROR_RETRY_MS = 8_000;
 
 /** The last still frame, shown until the live picture arrives. */
 export const posterUrl = (member: Member): string | null =>
@@ -70,11 +72,14 @@ export function BrowserApp({
   controlling = false,
   compact = false,
   onLive,
+  onControlLost,
 }: {
   member: Member;
   controlling?: boolean;
   compact?: boolean;
   onLive?: (live: boolean) => void;
+  /** The computer refused a control connection: the lease lapsed while the picture was down. */
+  onControlLost?: (reason: string) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const viewer = useRef<Viewer | null>(null);
@@ -103,12 +108,20 @@ export function BrowserApp({
 
     async function connect(): Promise<void> {
       if (disposed) return;
+      const wantsControl = !compact && controllingNow.current;
       let connection;
       try {
         connection = await requestConnection(
           botPath(botId, "computer/browser"),
-          compact ? { access: "view", wake: false } : { access: controllingNow.current ? "control" : "view" },
+          compact ? { access: "view", wake: false } : { access: wantsControl ? "control" : "view" },
         );
+        if (wantsControl && connection.mode === "unavailable" && /control/i.test(connection.error)) {
+          // Control lapsed while the picture was down (a missed heartbeat, a sleeping
+          // laptop). Watch instead, and let the view offer to take control again.
+          controllingNow.current = false;
+          onControlLost?.(connection.error);
+          connection = await requestConnection(botPath(botId, "computer/browser"), { access: "view" });
+        }
       } catch (error) {
         if (error instanceof SignedOutError || disposed) return;
         failures += 1;
@@ -135,7 +148,8 @@ export function BrowserApp({
       }
       if (connection.mode !== "vnc") {
         setStatus({ kind: "error", message: connection.mode === "unavailable" ? connection.error : "Unexpected answer." });
-        if (compact) retry(ASLEEP_RECHECK_MS);
+        // The computer may be restarting or restoring; keep asking so the picture comes back on its own.
+        retry(compact ? ASLEEP_RECHECK_MS : ERROR_RETRY_MS);
         return;
       }
 
@@ -149,6 +163,9 @@ export function BrowserApp({
       client.background = "transparent";
       client.viewOnly = compact || !controllingNow.current;
       client.focusOnClick = !compact && controllingNow.current;
+      // The pointer follows the remote cursor while in control; if the computer
+      // ever reports an invisible cursor, a dot stands in so it never disappears.
+      client.showDotCursor = true;
       if (compact) {
         // A few hundred pixels wide: trade picture quality for far less traffic.
         client.qualityLevel = 2;
@@ -178,11 +195,18 @@ export function BrowserApp({
     };
   }, [botId, compact, watching, attempt]);
 
+  const mounted = useRef(false);
   useEffect(() => {
     controllingNow.current = controlling;
     const client = viewer.current;
-    // Taking control while the picture is reconnecting: connect now rather than after the backoff.
-    if (client === null && controlling && !compact) setAttempt((value) => value + 1);
+    if (!mounted.current) {
+      // The first connection is on its way with this access already.
+      mounted.current = true;
+      return;
+    }
+    // Control changed while the picture is down: connect now, with the right access, rather than
+    // after the backoff — or never, if the last attempt ended in an error.
+    if (client === null && !compact) setAttempt((value) => value + 1);
     if (client === null || compact) return;
     client.viewOnly = !controlling;
     client.focusOnClick = controlling;

@@ -538,14 +538,33 @@ cmd_status() {
 }
 
 cmd_shot() {
-  local n=$1 path=$2 quality=$3
+  local n=$1 path=$2 quality=$3 target=$4
   screen_arg "$n"
   [ -n "$path" ] || fail args "expected an output path"
   [ -n "$quality" ] || quality=60
   running "browser$n" "$(browser_pattern "$n")" || fail shot "screen $n's browser is not running"
   # Every still frame also notes the open tabs, for a restart that loses them.
   node "$BIN/bot-computer-cdp.mjs" tabs-save "$((9300 + n))" "$PROFILES/$n-tabs.json" >/dev/null 2>&1
-  node "$BIN/bot-computer-cdp.mjs" shot "$((9300 + n))" "$path" "$quality"
+  # A target id captures one Bot's tab even when another's is on screen; none means the front tab.
+  node "$BIN/bot-computer-cdp.mjs" shot "$((9300 + n))" "$path" "$quality" "$target"
+}
+
+# activate N TARGET: bring one Bot's tab to the front of the shared window.
+cmd_activate() {
+  local n=$1 target=$2
+  screen_arg "$n"
+  [ -n "$target" ] || fail args "expected a tab target id"
+  running "browser$n" "$(browser_pattern "$n")" || fail activate "screen $n's browser is not running"
+  node "$BIN/bot-computer-cdp.mjs" activate "$((9300 + n))" "$target"
+}
+
+# close-tab N TARGET: close one Bot's tab when its job is done.
+cmd_close_tab() {
+  local n=$1 target=$2
+  screen_arg "$n"
+  [ -n "$target" ] || fail args "expected a tab target id"
+  running "browser$n" "$(browser_pattern "$n")" || { printf '{"ok":true,"closed":false}\n'; return 0; }
+  node "$BIN/bot-computer-cdp.mjs" close-target "$((9300 + n))" "$target"
 }
 
 # launch KIND: what the dock's icons do. The screen comes from DISPLAY.
@@ -673,7 +692,9 @@ case "$1" in
   ensure) cmd_ensure "$2" ;;
   stop) cmd_stop "$2" ;;
   status) cmd_status ;;
-  shot) cmd_shot "$2" "$3" "$4" ;;
+  shot) cmd_shot "$2" "$3" "$4" "$5" ;;
+  activate) cmd_activate "$2" "$3" ;;
+  close-tab) cmd_close_tab "$2" "$3" ;;
   open) cmd_open "$2" "$3" "$4" ;;
   tabs) cmd_tabs "$2" "$3" ;;
   launch) cmd_launch "$2" ;;
@@ -832,7 +853,7 @@ if __name__ == "__main__":
 const CDP = String.raw`// bot-computer-cdp __VERSION__: screenshots and the shared sign-in jar over the Chrome DevTools Protocol.
 import { readFile, rename, writeFile } from "node:fs/promises";
 
-const [command, portText, path, extra] = process.argv.slice(2);
+const [command, portText, path, extra, extra2] = process.argv.slice(2);
 const port = Number(portText);
 
 const print = (value) => process.stdout.write(JSON.stringify(value) + "\n");
@@ -894,6 +915,14 @@ async function frontPage() {
   return page;
 }
 
+/** A specific tab by its CDP target id, so one Bot's tab is captured while another's is on screen. */
+async function pageById(id) {
+  const targets = await devtools("/json/list");
+  const page = targets.find((target) => target.id === id && target.type === "page");
+  if (page === undefined) throw new Error("that tab is gone");
+  return page;
+}
+
 function cookieParam(cookie) {
   const { size, session, partitionKeyOpaque, ...param } = cookie;
   if (session) delete param.expires;
@@ -942,7 +971,7 @@ const commands = {
     }
   },
   async shot() {
-    const page = await frontPage();
+    const page = extra2 ? await pageById(extra2) : await frontPage();
     const tab = await connect(page.webSocketDebuggerUrl);
     try {
       const quality = Math.min(90, Math.max(20, Number(extra) || 60));
@@ -996,6 +1025,25 @@ const commands = {
         }
       }
       print({ ok: true, restored: urls.length });
+    } finally {
+      browser.close();
+    }
+  },
+  async activate() {
+    // Bring one tab to the front of the shared window; "path" is its CDP target id.
+    const browser = await browserConnection();
+    try {
+      await browser.send("Target.activateTarget", { targetId: path });
+      print({ ok: true, targetId: path });
+    } finally {
+      browser.close();
+    }
+  },
+  async "close-target"() {
+    const browser = await browserConnection();
+    try {
+      await browser.send("Target.closeTarget", { targetId: path });
+      print({ ok: true, targetId: path });
     } finally {
       browser.close();
     }

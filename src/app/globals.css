@@ -289,7 +289,9 @@ button:disabled { cursor: default; opacity: 0.5; }
   border: 1px solid var(--line-2); background: #1d1d1f; cursor: zoom-in;
 }
 .screen svg.wall, .screen img { position: absolute; inset: 0; width: 100%; height: 100%; }
-.screen img { object-fit: cover; object-position: top left; background: #fff; }
+/* The frame is the page at its own shape; fit the whole of it, top-aligned, and let the
+   wallpaper show through the strip beneath, where the dock sits. Never crop the picture. */
+.screen img { object-fit: contain; object-position: top; }
 .dock {
   position: absolute; left: 50%; bottom: 7px; transform: translateX(-50%); display: flex; gap: 3px; align-items: center;
   padding: 3px 5px; border-radius: 7px; background: rgba(255, 255, 255, 0.35); backdrop-filter: blur(6px);
@@ -356,6 +358,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 .browser-app, .files-app { position: absolute; inset: 0; background: #161618; }
 .browser-app .vnc { position: absolute; inset: 0; }
+/* Watching: keep the viewer's own arrow. noVNC hides it (cursor: none) until the computer sends a
+   cursor shape, which a view-only connection may never receive; only in control does the pointer
+   follow the computer's cursor. */
+.screen-frame:not(.controlling) .browser-app .vnc canvas { cursor: default !important; }
 .browser-app .poster, .browser-app .relay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .browser-app .poster { filter: brightness(0.55); }
 /* The thumbnail in a Bot's panel: the wallpaper shows through until a picture arrives, and clicks open the computer. */
@@ -400,6 +406,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .handover p { margin: 8px 0 0; color: #e4e4e7; overflow-wrap: anywhere; }
 .handover .faint { color: #8a8a92; font-size: 12px; }
 .handover-actions { display: flex; gap: 8px; margin-top: 12px; }
+/* Watching: the picture is view-only, so a click on it asks about taking control instead of being lost. */
+.take-catcher { position: absolute; inset: 0; cursor: default; }
+.take-prompt { top: 50%; transform: translate(-50%, -50%); }
 
 .computer-bar .control-note {
   width: min(340px, 30vw); min-width: 140px; font: inherit; font-size: 12.5px; color: #eee;

@@ -69,6 +69,48 @@ export interface SessionBinding {
   readonly jobId: string;
   readonly n: number;
   readonly at: string;
+  /** The Bot's own tab in the shared browser, once its first browser action opens it. */
+  readonly targetId?: string;
+  /** agent-browser's label for that tab, so a later action finds it again. */
+  readonly tabLabel?: string;
+}
+
+/**
+ * Which tab each Bot is working in, on the shared browser. The team's one
+ * window holds a tab per running job; this says which is whose, so the console
+ * can show a Bot its own tab and bring it to the front, and so a finished job's
+ * tab is the one that gets closed. Kept next to the screen table, one document
+ * per workspace, read without waking the computer.
+ */
+export interface BotTab {
+  readonly targetId: string;
+  readonly sessionId: string;
+  readonly at: string;
+}
+
+const tabsKey = (workspaceId: string) => `computer/${COMPUTER_NAME}/tabs/${workspaceId}.json`;
+
+export async function readBotTabs(workspaceId: string): Promise<Record<string, BotTab>> {
+  return (await readDoc<Record<string, BotTab>>(tabsKey(workspaceId)))?.value ?? {};
+}
+
+export async function botTab(workspaceId: string, botId: string): Promise<BotTab | null> {
+  return (await readBotTabs(workspaceId))[botId] ?? null;
+}
+
+export async function setBotTab(workspaceId: string, botId: string, tab: BotTab): Promise<void> {
+  await updateDoc<Record<string, BotTab>>(tabsKey(workspaceId), (current) => ({ ...(current ?? {}), [botId]: tab }));
+}
+
+/** Forget a Bot's tab, but only if it is still the run that claimed it. */
+export async function clearBotTab(workspaceId: string, botId: string, sessionId?: string): Promise<void> {
+  await updateDoc<Record<string, BotTab>>(tabsKey(workspaceId), (current) => {
+    if (current === null) return null;
+    const held = current[botId];
+    if (held === undefined || (sessionId !== undefined && held.sessionId !== sessionId)) return null;
+    const { [botId]: _gone, ...rest } = current;
+    return rest;
+  });
 }
 
 export const MAX_SCREENS = Math.min(9, Math.max(1, Number(process.env.BOT_COMPUTER_MAX_SCREENS ?? 4)));

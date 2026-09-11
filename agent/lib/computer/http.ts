@@ -7,6 +7,7 @@ import { posterKey, readScreen } from "../screens";
 import { computerControl } from "./control";
 import { computerKey } from "./keys";
 import {
+  activateTab,
   captureScreen,
   ComputerError,
   ensureScreen,
@@ -27,6 +28,7 @@ import {
   allocateScreen,
   HQ_SCREEN_USER,
   liveControl,
+  readBotTabs,
   setBrowserState,
   setControl,
   setHandoverNote,
@@ -132,6 +134,25 @@ async function botFor(access: Access, botId: string | undefined): Promise<Screen
 /** Activity is filed under a Bot; HQ's own use of the screen is the team's. */
 const activityBot = (user: ScreenUser) => (user.id === HQ_SCREEN_USER ? null : user.id);
 
+/**
+ * Which tab to show for a member: its own tab when it has one, otherwise the
+ * Bot working most recently — so HQ's desk, and a Bot between jobs, watch
+ * whoever is at the computer now. Null means no tab is known; show the front one.
+ */
+async function tabForMember(workspaceId: string, botId: string): Promise<string | null> {
+  const tabs = await readBotTabs(workspaceId);
+  if (tabs[botId] !== undefined) return tabs[botId].targetId;
+  const recent = Object.values(tabs).sort((a, b) => b.at.localeCompare(a.at))[0];
+  return recent?.targetId ?? null;
+}
+
+/** Bring the member's tab to the front of the shared window, best-effort. */
+async function activateFor(workspaceId: string, botId: string, n: number): Promise<void> {
+  const targetId = await tabForMember(workspaceId, botId);
+  if (targetId === null) return;
+  await withComputer((io) => activateTab(io, n, targetId)).catch(() => undefined);
+}
+
 const noBot = () => json({ error: "no such bot" }, 404);
 const heldBy = (control: ScreenControl) => json({ error: `${control.by} has control of this browser right now.` }, 409);
 
@@ -183,6 +204,8 @@ export async function openBrowser(request: Request, access: Access, botId: strin
   const started = await withComputer((io) => ensureScreen(io, screen.n, { wait: false }));
   if (!started.ok) return started.response;
   if (started.value.started || screen.browser.state !== "on") await setBrowserState(screen.n, "on");
+  // Watching this member: bring its tab to the front so the live picture is its work.
+  await activateFor(access.workspaceId, bot.id, screen.n);
   return connection(bot.id, screen, wantsControl ? "control" : "view");
 }
 
@@ -227,6 +250,8 @@ export async function takeControl(request: Request, access: Access, botId: strin
   }
   const started = await withComputer((io) => ensureScreen(io, screen.n, { wait: false }));
   if (!started.ok) return started.response;
+  // Control should land on this member's own tab, not whatever was last on screen.
+  await activateFor(access.workspaceId, bot.id, screen.n);
   const url = screen.handover?.url ?? null;
   if (started.value.started && url !== null) {
     // The browser restarted since the Bot asked. It reopens its last tabs; only
@@ -323,13 +348,13 @@ export async function releaseControl(
 export async function poster(access: Access, botId: string | undefined): Promise<Response> {
   const bot = await botFor(access, botId);
   if (bot === null) return noBot();
-  const screen = await teamScreen(access.workspaceId);
-  if (screen === null) return json({ error: "no screen" }, 404);
-  const frame =
-    (await readScreen(access.workspaceId, posterKey(screen.n))) ??
-    // Frames from before screens were shared were kept per Bot.
-    (await readScreen(access.workspaceId, `bot-${screen.botId}`)) ??
-    (bot.id === HQ_SCREEN_USER ? null : await readScreen(access.workspaceId, `bot-${bot.id}`));
+  let frame = await readScreen(access.workspaceId, posterKey(bot.id));
+  if (frame === null) {
+    // HQ, or a Bot between jobs: show whoever worked most recently.
+    const tabs = await readBotTabs(access.workspaceId);
+    const recent = Object.entries(tabs).sort((a, b) => b[1].at.localeCompare(a[1].at))[0];
+    if (recent !== undefined) frame = await readScreen(access.workspaceId, posterKey(recent[0]));
+  }
   if (frame === null) return json({ error: "no screen" }, 404);
   return new Response(Buffer.from(frame.base64, "base64"), {
     headers: { "content-type": frame.mediaType, "cache-control": "no-store", "x-screen-at": frame.at, ...SECURITY_HEADERS },
@@ -342,7 +367,8 @@ export async function frame(access: Access, botId: string | undefined): Promise<
   if (bot === null) return noBot();
   const screen = await teamScreen(access.workspaceId);
   if (screen === null) return json({ error: "no screen" }, 404);
-  const outcome = await withComputer((io) => captureScreen(io, screen.n, 50));
+  const targetId = (await tabForMember(access.workspaceId, bot.id)) ?? undefined;
+  const outcome = await withComputer((io) => captureScreen(io, screen.n, 50, targetId));
   if (!outcome.ok) return outcome.response;
   return new Response(Buffer.from(outcome.value.bytes), {
     headers: { "content-type": outcome.value.mediaType, "cache-control": "no-store", ...SECURITY_HEADERS },
