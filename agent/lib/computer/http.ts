@@ -350,10 +350,14 @@ export async function poster(access: Access, botId: string | undefined): Promise
   if (bot === null) return noBot();
   let frame = await readScreen(access.workspaceId, posterKey(bot.id));
   if (frame === null) {
-    // HQ, or a Bot between jobs: show whoever worked most recently.
+    // HQ, or a Bot with no frame of its own: show the screen's latest frame. That
+    // is remembered on the screen, because a run's tab record goes when the run
+    // ends; the tab records only cover screens saved before it was.
+    const screen = await teamScreen(access.workspaceId);
     const tabs = await readBotTabs(access.workspaceId);
-    const recent = Object.entries(tabs).sort((a, b) => b[1].at.localeCompare(a[1].at))[0];
-    if (recent !== undefined) frame = await readScreen(access.workspaceId, posterKey(recent[0]));
+    const recent = Object.entries(tabs).sort((a, b) => b[1].at.localeCompare(a[1].at))[0]?.[0];
+    const latest = screen?.posterBotId ?? recent;
+    if (latest !== undefined && latest !== bot.id) frame = await readScreen(access.workspaceId, posterKey(latest));
   }
   if (frame === null) return json({ error: "no screen" }, 404);
   return new Response(Buffer.from(frame.base64, "base64"), {

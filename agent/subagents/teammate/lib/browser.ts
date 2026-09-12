@@ -315,7 +315,7 @@ export async function refreshScreen(ctx: ToolContext): Promise<void> {
     // This Bot's own tab, so its thumbnail shows its work even while another Bot's tab is on screen.
     const shot = await captureScreen(await toolIo(ctx), binding.n, 55, binding.targetId);
     if (await saveScreen(workspaceId, posterKey(binding.botId), shot.bytes, shot.mediaType)) {
-      await setPosterAt(binding.n, new Date().toISOString());
+      await setPosterAt(binding.n, new Date().toISOString(), binding.botId);
     }
   } catch {
     // The console keeps showing the previous frame.

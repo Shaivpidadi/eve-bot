@@ -48,6 +48,8 @@ export interface ScreenAllocation {
   readonly browser: { readonly state: ServiceState; readonly at: string; readonly detail?: string };
   readonly control: ScreenControl | null;
   readonly posterAt: string | null;
+  /** Whose tab the latest still frame shows, so HQ and idle Bots still have one after runs end. */
+  readonly posterBotId?: string | null;
   readonly handover?: Handover | null;
   /** What the person said they did, handed to the Bot when it resumes. */
   readonly handoverNote?: string | null;
@@ -192,6 +194,7 @@ export async function allocateScreen(workspaceId: string, botId?: string): Promi
       browser: reclaim?.browser ?? { state: "off", at },
       control: null,
       posterAt: null,
+      posterBotId: null,
       handover: null,
       handoverNote: null,
     };
@@ -217,8 +220,8 @@ export function setBrowserState(n: number, state: ServiceState, detail?: string)
   }));
 }
 
-export function setPosterAt(n: number, at: string): Promise<void> {
-  return patchScreen(n, (screen) => ({ ...screen, posterAt: at }));
+export function setPosterAt(n: number, at: string, botId?: string): Promise<void> {
+  return patchScreen(n, (screen) => ({ ...screen, posterAt: at, ...(botId === undefined ? {} : { posterBotId: botId }) }));
 }
 
 export function setControl(n: number, control: ScreenControl | null): Promise<void> {
