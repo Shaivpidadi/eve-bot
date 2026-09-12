@@ -16,6 +16,7 @@ export function Sidebar({
   onSelect,
   onHire,
   onPlugins,
+  onMemory,
   onHover,
 }: {
   members: readonly Member[];
@@ -25,6 +26,7 @@ export function Sidebar({
   onSelect: (id: string) => void;
   onHire: () => void;
   onPlugins: () => void;
+  onMemory: () => void;
   onHover: (hover: Hover | null) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -93,6 +95,10 @@ export function Sidebar({
         <button type="button" className="side-item" onClick={onPlugins}>
           <Icon name="plug" />
           Plugins
+        </button>
+        <button type="button" className="side-item" onClick={onMemory}>
+          <Icon name="brain" />
+          Memory
         </button>
         <div className="me">
           <span className="me-avatar">{(user || "You").charAt(0).toUpperCase()}</span>

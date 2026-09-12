@@ -7,6 +7,7 @@ import { ChatPane } from "./chat";
 import { ComputerView } from "./computer/computer-view";
 import { PRESENCE_LABEL } from "./format";
 import { HireDialog } from "./hire-dialog";
+import { MemoryDialog } from "./memory-dialog";
 import { DetailsPanel, type PanelView } from "./panel";
 import { PANEL_SLIDE_MS, PanelResizer, usePanelWidth } from "./panel-frame";
 import { PluginsDialog } from "./plugins-dialog";
@@ -63,6 +64,7 @@ export function Console() {
   const [computer, setComputer] = useState<{ botId: string; requestId: string | null } | null>(null);
   const [hiring, setHiring] = useState(false);
   const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [hover, setHover] = useState<Hover | null>(null);
   const [panelWidth, setPanelWidth] = usePanelWidth();
   const [resizing, setResizing] = useState(false);
@@ -129,6 +131,7 @@ export function Console() {
           onSelect={select}
           onHire={() => setHiring(true)}
           onPlugins={() => setPluginsOpen(true)}
+          onMemory={() => setMemoryOpen(true)}
           onHover={setHover}
         />
         <ChatPane
@@ -199,6 +202,7 @@ export function Console() {
       ) : null}
 
       <PluginsDialog open={pluginsOpen} onClose={() => setPluginsOpen(false)} />
+      <MemoryDialog open={memoryOpen} onClose={() => setMemoryOpen(false)} />
 
       <HireDialog
         open={hiring}

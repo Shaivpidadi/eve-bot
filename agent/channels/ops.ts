@@ -18,6 +18,7 @@ import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
 import { cancelJob, listOpenJobs } from "../lib/jobs";
+import { addMemory, forgetMemory, isMemorySlot, readMemory } from "../lib/memory";
 import {
   addPlugin,
   getPlugin,
@@ -468,6 +469,38 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     // desktop people can watch and take over; Files move things on and off the computer.
 
     /** The still frame of a Bot's screen. Never wakes the computer. */
+    /**
+     * What HQ and the Bots remember for the caller: their own memories and the
+     * workspace's. Whose memory it is comes from the session, never the path.
+     */
+    GET("/bot/v1/memory", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return json({ slots: await readMemory(gate.access.workspaceId, gate.access.user) });
+    }),
+
+    /** Adds one memory by hand, as if HQ or a Bot had saved it. */
+    POST("/bot/v1/memory/:slot", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const slot = params.slot ?? "";
+      if (!isMemorySlot(slot)) return json({ error: "no such memory" }, 404);
+      const body = await readJson(request);
+      const outcome = await addMemory(gate.access.workspaceId, gate.access.user, slot, typeof body?.text === "string" ? body.text : "");
+      return outcome.ok ? json({ saved: true }, 201) : json({ error: outcome.error }, outcome.status);
+    }),
+
+    /** Forgets one memory by the index it was saved under. */
+    DELETE("/bot/v1/memory/:slot/:index", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const slot = params.slot ?? "";
+      const index = Number(params.index);
+      if (!isMemorySlot(slot) || !Number.isSafeInteger(index) || index < 0) return json({ error: "no such memory" }, 404);
+      const outcome = await forgetMemory(gate.access.workspaceId, gate.access.user, slot, index);
+      return outcome.ok ? json({ forgotten: true }) : json({ error: outcome.error }, outcome.status);
+    }),
+
     /** The team's plugins: MCP servers every Bot can use. Keys never come back out. */
     GET("/bot/v1/plugins", async (request) => {
       const gate = await authenticate(request);
