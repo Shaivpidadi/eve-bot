@@ -1,6 +1,7 @@
 import { defineMemory } from "eve/memory";
-import { fileMemory } from "eve/memory/file";
 import { byPrincipal } from "eve/memory/scope";
+
+import { appMemory } from "../../../lib/memory";
 
 /**
  * What working for this operator has taught the bots.
@@ -13,6 +14,6 @@ import { byPrincipal } from "eve/memory/scope";
 export default defineMemory({
   description:
     "Lessons about doing this operator's work well: the systems they use, where the interfaces are awkward, what a finished deliverable looks like here.",
-  provider: fileMemory({ maxCharacters: 4_000 }),
+  provider: appMemory("craft"),
   scope: byPrincipal,
 });
