@@ -85,15 +85,16 @@ async function ensureRunTab(ctx: ToolContext, binding: SessionBinding, n: number
   let targetId = await labelledTab(ctx, cdp, session, label);
   if (targetId === null) {
     try {
-      await runAgentBrowser(ctx, ["--cdp", String(cdp), "--pin-tab", "tab", "new", "--label", label, "about:blank"], {
-        session,
-        env: environment(await sessionDirectory(ctx)),
-        abortSignal: ctx.abortSignal,
-      });
+      const opened = await runAgentBrowser<{ data?: { targetId?: string } }>(
+        ctx,
+        ["--cdp", String(cdp), "--pin-tab", "tab", "new", "--label", label, "about:blank"],
+        { session, env: environment(await sessionDirectory(ctx)), abortSignal: ctx.abortSignal },
+      );
+      // `tab new` answers with the new tab's target id; list the tabs only if it did not.
+      targetId = opened.json?.data?.targetId ?? (await labelledTab(ctx, cdp, session, label));
     } catch {
       // The action that follows still runs; without a labelled tab it lands on the pinned one.
     }
-    targetId = await labelledTab(ctx, cdp, session, label);
   }
   if (targetId === null) return null;
 
