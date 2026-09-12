@@ -82,18 +82,25 @@ curl -X POST http://localhost:3000/eve/v1/dev/schedules/tick
 
 ## Deploy
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot&project-name=eve-bot&repository-name=eve-bot&stores=%5B%7B%22type%22%3A%22blob%22%2C%22access%22%3A%22private%22%7D%5D)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot&project-name=eve-bot&repository-name=eve-bot&env=BOT_CONSOLE_TOKEN&envDescription=A%20long%20random%20password%20you%20sign%20in%20to%20the%20console%20with&envLink=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot%23sign-in&stores=%5B%7B%22type%22%3A%22blob%22%2C%22access%22%3A%22private%22%7D%5D)
 
 One click copies this repository to your GitHub, creates the project in your
-Vercel account, connects a private Blob store, and deploys. There is nothing to
-paste: AI Gateway, Vercel Sandbox, Workflow, and Blob all authenticate with the
-project's OIDC credentials, and Vercel bills your account for what your Bots use.
+Vercel account, connects a private Blob store, and deploys. The one thing to
+type is `BOT_CONSOLE_TOKEN`, a long random password you sign in to the console
+with (`openssl rand -base64 32` makes a good one). AI Gateway, Vercel Sandbox,
+Workflow, and Blob all authenticate with the project's OIDC credentials, and
+Vercel bills your account for what your Bots use.
 
-Then make it yours alone. In the project, open **Settings → Deployment
-Protection**, turn on **Vercel Authentication**, and choose **All
-Deployments**. The console checks that its own address is protected before it
-lets anyone in, and shows a setup page until it is. If you would rather sign in
-with a token, set `BOT_CONSOLE_TOKEN` instead.
+### Sign in
+
+Open `/bot` on your deployment and sign in with `BOT_CONSOLE_TOKEN`.
+
+You can also put the whole deployment behind your Vercel login: open **Settings
+→ Deployment Protection**, turn on **Vercel Authentication**, and choose **All
+Deployments**. Vercel's default, Standard Protection, leaves the production
+`.vercel.app` address public, so it is not enough on its own. The console checks
+that its own address is protected before it trusts a Vercel login, and the token
+keeps working either way.
 
 | | Hobby | Pro |
 | --- | --- | --- |
@@ -105,7 +112,8 @@ From the CLI instead:
 
 ```bash
 npx vercel link
-npx vercel blob store add bot-store   # the roster, jobs, feed, and memory
+npx vercel blob create-store bot-store --access private --yes   # the roster, jobs, feed, and memory
+npx vercel env add BOT_CONSOLE_TOKEN production                  # your console password
 npx vercel deploy --prod
 ```
 

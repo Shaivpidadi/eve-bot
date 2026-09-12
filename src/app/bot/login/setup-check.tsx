@@ -12,7 +12,9 @@ interface Setup {
 
 const PROTECTION_SETTINGS =
   "https://vercel.com/d?to=%2F%5Bteam%5D%2F%5Bproject%5D%2Fsettings%2Fdeployment-protection&title=Deployment+Protection";
-const STORAGE_SETTINGS = "https://vercel.com/d?to=%2F%5Bteam%5D%2F%5Bproject%5D%2Fstores&title=Storage";
+const ENV_SETTINGS =
+  "https://vercel.com/d?to=%2F%5Bteam%5D%2F%5Bproject%5D%2Fsettings%2Fenvironment-variables&title=Environment+Variables";
+const STORAGE_SETTINGS ="https://vercel.com/d?to=%2F%5Bteam%5D%2F%5Bproject%5D%2Fstores&title=Storage";
 
 /** What a new deployment still needs before the console opens. */
 export function SetupCheck() {
@@ -42,13 +44,20 @@ export function SetupCheck() {
       {setup === null && !failed ? <p className="faint">Checking this deployment…</p> : null}
       {setup === null ? null : (
         <ul className="setup-list">
-          <Step done={setup.platform !== "vercel" || setup.protected === true} title="Only you can open it">
-            In your project, open{" "}
+          <Step
+            done={setup.platform !== "vercel" || setup.protected === true || setup.tokens}
+            title="Only you can open it"
+          >
+            In your project&apos;s{" "}
+            <a href={ENV_SETTINGS} target="_blank" rel="noopener noreferrer">
+              Environment Variables
+            </a>
+            , set BOT_CONSOLE_TOKEN to a long random password, redeploy, and sign in with it. Or turn on Vercel
+            Authentication for All Deployments in{" "}
             <a href={PROTECTION_SETTINGS} target="_blank" rel="noopener noreferrer">
               Deployment Protection
             </a>
-            , turn on Vercel Authentication, and choose All Deployments. Or set BOT_CONSOLE_TOKEN and sign in
-            with it.
+            ; the default Standard Protection leaves the production address public.
           </Step>
           <Step done={setup.storage.ready} title="Storage">
             Connect a Blob store to the project in{" "}
