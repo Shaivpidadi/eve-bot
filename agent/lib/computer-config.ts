@@ -20,6 +20,14 @@ export type ComputerMode = "vercel" | "local";
 
 export const computerMode = (): ComputerMode => (process.env.BOT_COMPUTER === "local" ? "local" : "vercel");
 
+/**
+ * Which local backend runs the computer: Docker by default, which the console
+ * can watch live, or a microsandbox VM with `BOT_COMPUTER_LOCAL=microsandbox`
+ * (`vm` also works).
+ */
+export const localComputer = (): "docker" | "microsandbox" =>
+  process.env.BOT_COMPUTER_LOCAL === "microsandbox" || process.env.BOT_COMPUTER_LOCAL === "vm" ? "microsandbox" : "docker";
+
 /** The only port the computer exposes: websockify, which checks every token. */
 export const COMPUTER_PORT = 6080;
 
@@ -58,7 +66,7 @@ export function vercelCredentialsError(): string | null {
 export function computerBackend(): SandboxBackend {
   if (computerMode() === "local") {
     const local =
-      process.env.BOT_COMPUTER_LOCAL === "docker"
+      localComputer() === "docker"
         ? docker({ networkPolicy: allow.length > 0 ? "deny-all" : "allow-all" })
         : microsandbox({
             memoryMiB: 2048 * Number(process.env.BOT_SANDBOX_VCPUS ?? 4),

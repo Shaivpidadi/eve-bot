@@ -500,12 +500,16 @@ cmd_ensure() {
     daemon "browser$n" env DISPLAY=":$n" google-chrome $CHROME_FLAGS --user-data-dir="$profile" --remote-debugging-port="$cdp" --window-size="$WIDTH,$HEIGHT"
     wait_for 300 cdp_up "$cdp" || fail browser "screen $n's browser did not start: $(grep -v -e dbus -e Fontconfig "$RUN/browser$n.log" | tail -n 4)"
     # A new browser starts signed in to whatever the team is already signed in to.
+    # The DevTools helpers log apart from Chrome, which holds its own log open, and never inherit
+    # this screen's lock: a helper that stalls must not keep every later ensure waiting.
     if [ -s "$IDENTITY/cookies.json" ]; then
-      node "$BIN/bot-computer-cdp.mjs" cookies-import "$cdp" "$IDENTITY/cookies.json" >>"$RUN/browser$n.log" 2>&1
+      timeout 30 node "$BIN/bot-computer-cdp.mjs" cookies-import "$cdp" "$IDENTITY/cookies.json" >>"$RUN/cdp$n.log" 2>&1 </dev/null 9>&- || true
     fi
     # Chrome reopens its last session. When the computer stopped before Chrome
-    # saved it, the browser comes back empty; reopen the tabs noted last.
-    node "$BIN/bot-computer-cdp.mjs" tabs-restore "$cdp" "$PROFILES/$n-tabs.json" >>"$RUN/browser$n.log" 2>&1
+    # saved it, the browser comes back empty; reopen the tabs noted last. That
+    # can wait for pages to load, so it runs on its own rather than holding the screen up.
+    setsid nohup timeout 60 node "$BIN/bot-computer-cdp.mjs" tabs-restore "$cdp" "$PROFILES/$n-tabs.json" \
+      >>"$RUN/cdp$n.log" 2>&1 </dev/null 8>&- 9>&- &
     changed=true
   fi
   printf '{"ok":true,"screen":%d,"display":":%d","vnc":%d,"cdp":%d,"started":%s,"ms":%d,"version":"%s"}\n' \

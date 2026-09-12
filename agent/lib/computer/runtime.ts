@@ -4,6 +4,7 @@ import { posix } from "node:path";
 import type { SandboxSession } from "eve/sandbox";
 import type { ToolContext } from "eve/tools";
 
+import { computerMode, localComputer } from "../computer-config";
 import { computerKey } from "./keys";
 import {
   COMPUTER_BIN,
@@ -78,6 +79,9 @@ let runtime: ComputerRuntime | null = null;
 function currentRuntime(): ComputerRuntime {
   const flags = [process.env.BOT_COMPUTER_CHROME_FLAGS ?? ""];
   if (process.env.BOT_BROWSER_PROXY) flags.push(`--proxy-server=${process.env.BOT_BROWSER_PROXY}`);
+  // Chrome's own sandbox needs Linux namespaces that an ordinary Docker container does not grant, and
+  // without them the screen's browser exits on start. There the container is the isolation boundary.
+  if (computerMode() === "local" && localComputer() === "docker") flags.push("--no-sandbox");
   runtime ??= computerRuntime({ chromeFlags: flags.join(" "), aptMirror: process.env.BOT_COMPUTER_APT_MIRROR });
   return runtime;
 }
