@@ -141,6 +141,12 @@ function browserGone(error: unknown): boolean {
   return /CDP|connection refused|os error 111|target closed|browser has disconnected/i.test(`${error.stderr}\n${error.stdout}`);
 }
 
+/** The run's pinned tab was closed under it; agent-browser refuses to act on another tab instead. */
+function tabGone(error: unknown): boolean {
+  if (!(error instanceof AgentBrowserCommandError)) return false;
+  return /tab_gone/.test(`${error.stderr}\n${error.stdout}`);
+}
+
 export interface BrowserResult {
   readonly ok: boolean;
   readonly output: string;
@@ -253,6 +259,12 @@ export async function browser(ctx: ToolContext, args: readonly string[]): Promis
     try {
       if (missingBinary(error)) {
         await installAgentBrowser(await ctx.getSandbox(), { ...AGENT_BROWSER_INSTALL, abortSignal: ctx.abortSignal });
+        return shape(await run());
+      }
+      if (tabGone(error)) {
+        // Someone closed this run's tab, for example during a takeover: open a fresh one and try once more.
+        openedTabs.delete(ctx.session.id);
+        await ensureRunTab(ctx, binding, n);
         return shape(await run());
       }
       if (browserGone(error)) {
