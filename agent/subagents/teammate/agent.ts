@@ -1,7 +1,9 @@
 import type { ModelMessage } from "ai";
 import { defineAgent, defineDynamic } from "eve";
 
-import { effortInBrief, modelForEffort, reasoningLevel } from "../../lib/models";
+import type { DynamicResolveContext } from "eve";
+
+import { customEndpoint, effortInBrief, endpointModel, modelForEffort, reasoningFor } from "../../lib/models";
 
 /** The brief is the first message a teammate receives. */
 function briefText(messages: readonly ModelMessage[]): string {
@@ -18,6 +20,22 @@ function briefText(messages: readonly ModelMessage[]): string {
 const chosen = new Map<string, string>();
 const MAX_REMEMBERED = 500;
 
+function modelFor(ctx: Pick<DynamicResolveContext, "session" | "messages">): string {
+  const remembered = chosen.get(ctx.session.id);
+  if (remembered !== undefined) return remembered;
+  const model = modelForEffort(effortInBrief(briefText(ctx.messages)));
+  if (chosen.size >= MAX_REMEMBERED) chosen.delete(chosen.keys().next().value as string);
+  chosen.set(ctx.session.id, model);
+  return model;
+}
+
+/**
+ * On Vercel AI Gateway the model is chosen once per turn by name. A custom
+ * endpoint's model is a live object, which eve accepts only per model step, so
+ * it is chosen there, with the context window eve cannot look up.
+ */
+const endpoint = customEndpoint();
+
 /**
  * A teammate: one bot doing one job on the team's computer.
  *
@@ -30,18 +48,17 @@ export default defineAgent({
   description:
     "Does the actual work of a job end to end: research, browser sessions, files, and drafts. Give it the full brief; it cannot see this conversation.",
   model: defineDynamic({
-    events: {
-      "turn.started": (_event, ctx) => {
-        const remembered = chosen.get(ctx.session.id);
-        if (remembered !== undefined) return remembered;
-        const model = modelForEffort(effortInBrief(briefText(ctx.messages)));
-        if (chosen.size >= MAX_REMEMBERED) chosen.delete(chosen.keys().next().value as string);
-        chosen.set(ctx.session.id, model);
-        return model;
-      },
-    },
+    events:
+      endpoint === null
+        ? { "turn.started": (_event, ctx) => modelFor(ctx) }
+        : {
+            "step.started": (_event, ctx) => ({
+              model: endpointModel(endpoint, modelFor(ctx)),
+              modelContextWindowTokens: endpoint.contextWindowTokens,
+            }),
+          },
   }),
-  reasoning: reasoningLevel(process.env.BOT_TEAMMATE_REASONING, "medium"),
+  ...reasoningFor(process.env.BOT_TEAMMATE_REASONING, "medium"),
   compaction: {
     thresholdPercent: 0.75,
   },

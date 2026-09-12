@@ -1,3 +1,6 @@
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import type { LanguageModel } from "ai";
+
 /**
  * Which model does a job.
  *
@@ -37,7 +40,9 @@ export const isJobEffort = (value: unknown): value is JobEffort =>
 export function modelForEffort(effort: JobEffort): string {
   const pinned = process.env.BOT_TEAMMATE_MODEL?.trim();
   if (pinned) return pinned;
-  return process.env[MODEL_ENV[effort]]?.trim() || DEFAULT_MODELS[effort];
+  const level = process.env[MODEL_ENV[effort]]?.trim();
+  if (level) return level;
+  return customEndpoint() === null ? DEFAULT_MODELS[effort] : endpointDefaultModel();
 }
 
 /** One level up, for a job whose last run failed. */
@@ -58,4 +63,84 @@ export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
 
 export function reasoningLevel(value: string | undefined, fallback: ReasoningLevel): ReasoningLevel {
   return REASONING_LEVELS.find((level) => level === value) ?? fallback;
+}
+
+// ---------------------------------------------------------------------------
+// Your own model endpoint
+// ---------------------------------------------------------------------------
+
+export interface ModelEndpoint {
+  readonly baseURL: string;
+  readonly apiKey: string | undefined;
+  readonly contextWindowTokens: number;
+}
+
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
+
+/**
+ * An API that speaks OpenAI's chat completions format: Ollama, LM Studio, vLLM,
+ * OpenRouter, or a company proxy. Setting `BOT_MODEL_BASE_URL` (for example
+ * `http://localhost:11434/v1`) sends every model name to it instead of Vercel
+ * AI Gateway. `BOT_MODEL` names the model used everywhere unless
+ * `BOT_HQ_MODEL`, `BOT_TEAMMATE_MODEL`, or a `BOT_MODEL_*` level overrides it.
+ * Such models are not in the Gateway's catalog, so their context window comes
+ * from `BOT_MODEL_CONTEXT_TOKENS`, and the USD spend caps cannot price them.
+ */
+export function customEndpoint(): ModelEndpoint | null {
+  const baseURL = process.env.BOT_MODEL_BASE_URL?.trim();
+  if (!baseURL) return null;
+  const tokens = Number(process.env.BOT_MODEL_CONTEXT_TOKENS);
+  return {
+    baseURL: baseURL.replace(/\/+$/, ""),
+    apiKey: process.env.BOT_MODEL_API_KEY?.trim() || undefined,
+    contextWindowTokens: Number.isSafeInteger(tokens) && tokens > 0 ? tokens : DEFAULT_CONTEXT_WINDOW_TOKENS,
+  };
+}
+
+function endpointDefaultModel(): string {
+  const model = process.env.BOT_MODEL?.trim();
+  if (model) return model;
+  throw new Error(
+    "BOT_MODEL_BASE_URL is set, so set BOT_MODEL to a model that endpoint serves (for example qwen3:8b), or unset BOT_MODEL_BASE_URL to use Vercel AI Gateway.",
+  );
+}
+
+let endpointProvider: { readonly baseURL: string; readonly provider: ReturnType<typeof createOpenAICompatible> } | null = null;
+
+/** A model on the custom endpoint, as the AI SDK model object eve calls directly. */
+export function endpointModel(endpoint: ModelEndpoint, id: string): LanguageModel {
+  if (endpointProvider?.baseURL !== endpoint.baseURL) {
+    endpointProvider = {
+      baseURL: endpoint.baseURL,
+      provider: createOpenAICompatible({
+        name: "custom",
+        baseURL: endpoint.baseURL,
+        ...(endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey }),
+      }),
+    };
+  }
+  return endpointProvider.provider.chatModel(id);
+}
+
+/** HQ's model: a Gateway model name, or a model on the custom endpoint with its context window. */
+export function hqModel():
+  | { readonly model: string }
+  | { readonly model: LanguageModel; readonly modelContextWindowTokens: number } {
+  const endpoint = customEndpoint();
+  const named = process.env.BOT_HQ_MODEL?.trim();
+  if (endpoint === null) return { model: named || "anthropic/claude-sonnet-5" };
+  return { model: endpointModel(endpoint, named || endpointDefaultModel()), modelContextWindowTokens: endpoint.contextWindowTokens };
+}
+
+/**
+ * Reasoning effort for an agent. Gateway models get the level (or the default);
+ * a custom endpoint gets one only when it is set explicitly, since many local
+ * servers reject reasoning parameters they do not support.
+ */
+export function reasoningFor(
+  value: string | undefined,
+  fallback: ReasoningLevel,
+): { readonly reasoning?: ReasoningLevel } {
+  if (customEndpoint() !== null && value === undefined) return {};
+  return { reasoning: reasoningLevel(value, fallback) };
 }

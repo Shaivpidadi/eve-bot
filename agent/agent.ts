@@ -1,6 +1,6 @@
 import { defineAgent } from "eve";
 
-import { reasoningLevel } from "./lib/models";
+import { hqModel, reasoningFor } from "./lib/models";
 
 /**
  * Bot HQ — the teammate you message.
@@ -8,10 +8,11 @@ import { reasoningLevel } from "./lib/models";
  * HQ routes, delegates, and reports. The actual work happens in the `teammate`
  * subagent, on a model picked per job (see `lib/models.ts`). Sonnet handles the
  * conversation well and cheaply, and light reasoning is enough to write a brief.
+ * With `BOT_MODEL_BASE_URL` set, HQ runs on that endpoint's model instead.
  */
 export default defineAgent({
-  model: process.env.BOT_HQ_MODEL ?? "anthropic/claude-sonnet-5",
-  reasoning: reasoningLevel(process.env.BOT_HQ_REASONING, "low"),
+  ...hqModel(),
+  ...reasoningFor(process.env.BOT_HQ_REASONING, "low"),
   compaction: {
     thresholdPercent: 0.8,
   },

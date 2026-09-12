@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@agent-browser/eve": "^0.37.1",
+    "@ai-sdk/openai-compatible": "^3.0.48",
     "@novnc/novnc": "^1.7.0",
     "@vercel/blob": "^2.8.0",
     "@vercel/sandbox": "^3.2.2",
