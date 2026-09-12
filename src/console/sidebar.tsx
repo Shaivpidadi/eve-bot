@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Avatar } from "./avatar";
 import { shortWhen, withoutEmoji } from "./format";
 import { Icon } from "./icons";
+import { useTheme } from "./theme";
 import type { Hover, Member } from "./types";
 
 export function Sidebar({
@@ -27,6 +28,7 @@ export function Sidebar({
   onHover: (hover: Hover | null) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [theme, toggleTheme] = useTheme();
 
   const needle = query.trim().toLowerCase();
   const rows = members.filter(
@@ -97,6 +99,15 @@ export function Sidebar({
           <span className="me-name">
             {user || "You"} <span className="me-ws">{workspaceId}</span>
           </span>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            title={theme === "dark" ? "Light theme" : "Dark theme"}
+            onClick={toggleTheme}
+          >
+            <Icon name={theme === "dark" ? "sun" : "moon"} />
+          </button>
           <form method="post" action="/bot/v1/session/end">
             <button type="submit" className="icon-btn" aria-label="Sign out" title="Sign out">
               <Icon name="signout" />
