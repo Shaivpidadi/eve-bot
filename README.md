@@ -61,6 +61,34 @@ waits for its own start time, but you can run the watchdog by hand:
 curl -X POST http://localhost:3000/eve/v1/dev/schedules/tick
 ```
 
+### Run it fully local
+
+Nothing in the default setup has to leave your machine except the model and the
+computer, and both can stay local too:
+
+```bash
+# The team's computer in Docker instead of Vercel Sandbox (needs Docker Desktop, OrbStack, or Colima)
+BOT_COMPUTER=local
+
+# Models from any API that speaks OpenAI's chat completions format, instead of AI Gateway
+BOT_MODEL_BASE_URL=http://localhost:11434/v1   # Ollama; LM Studio is http://localhost:1234/v1
+BOT_MODEL=qwen3:8b                             # used everywhere unless BOT_HQ_MODEL / BOT_MODEL_* override it
+# BOT_MODEL_API_KEY=                           # if your endpoint needs one
+# BOT_MODEL_CONTEXT_TOKENS=128000
+```
+
+Storage and memory are already local in development (`.data/`). The first time a
+Bot or you opens the computer, eve builds its container and the computer installs
+Chrome and a small desktop, which takes a few minutes; after that it starts in
+seconds. You watch and take over it in the console as usual: a small forwarder
+container publishes its screen on `127.0.0.1:16080` only, and every connection
+still needs a single-use token.
+
+Pick a model that handles tool calls well; HQ and the Bots do almost everything
+through tools. Local models are not in AI Gateway's price list, so the USD spend
+caps do not apply to them, and eve's built-in web search runs through AI Gateway,
+so on your own endpoint Bots research with their browser instead.
+
 ## Deploy
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot&project-name=eve-bot&repository-name=eve-bot&env=BOT_CONSOLE_TOKEN&envDescription=A%20long%20random%20password%20you%20sign%20in%20to%20the%20console%20with&envLink=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot%23sign-in&stores=%5B%7B%22type%22%3A%22blob%22%2C%22access%22%3A%22private%22%7D%5D)
@@ -389,9 +417,13 @@ model.
   roster, finished work, and memory stay.
 - **No automated tests yet.** Changes are checked with `npm run typecheck`,
   `npm run agent:build`, and `npm run build`.
-- **The computer needs Vercel credentials, even locally.** Run `vercel link &&
-  vercel env pull`. `BOT_COMPUTER=local` runs it in a VM on your machine instead,
-  but the console cannot show that computer live yet.
+- **The computer uses Vercel Sandbox by default, even locally.** Run `vercel link
+  && vercel env pull`, or set `BOT_COMPUTER=local` to run it in Docker on your
+  machine (see [Run it fully local](#run-it-fully-local)).
+- **A local computer's Chrome runs without its own sandbox.** An ordinary Docker
+  container does not grant the Linux namespaces Chrome's sandbox needs, so the
+  container is the isolation boundary. A microsandbox VM
+  (`BOT_COMPUTER_LOCAL=microsandbox`) cannot be opened from the console yet.
 - **Live view is a public URL with a token.** Sandbox ports are reachable by
   anyone with the address, so the gateway admits only single-use tokens that
   expire within a minute. Watching is view-only in the console; the server does
