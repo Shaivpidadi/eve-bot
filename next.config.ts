@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { withEve } from "eve/next";
 import type { NextConfig } from "next";
@@ -78,14 +78,38 @@ interface VercelOutputConfig {
   services?: Record<string, { routes?: VercelRoute[] } & Record<string, unknown>>;
 }
 
+/** The nearest `<ancestor>/<name>` holding `file`, walking up from `start`. */
+function closestDirectoryWithFile(start: string, name: string, file: string): string | null {
+  for (let current = start; ; current = dirname(current)) {
+    const candidate = join(current, name);
+    if (existsSync(join(candidate, file))) return candidate;
+    if (dirname(current) === current) return null;
+  }
+}
+
+/**
+ * Where withEve writes the Build Output config, resolved the way eve resolves
+ * it: the build's own output directory when there is one (on Vercel's builders
+ * that is /vercel/output, found by its builds.json), else the linked project's
+ * .vercel/output, else this app's.
+ */
+function vercelOutputConfigPath(root: string): string {
+  const output = closestDirectoryWithFile(root, "output", "builds.json");
+  if (output !== null) return join(output, "config.json");
+  const linked = closestDirectoryWithFile(root, ".vercel", "project.json");
+  return join(linked ?? join(root, ".vercel"), "output", "config.json");
+}
+
 /**
  * On Vercel, withEve writes Build Output routes that send /eve/v1 to the eve
  * service, plus a service route that keeps the request path. This adds the same
  * pair for the console API, next to eve's own.
  */
 function routeConsoleToAgentService(): void {
-  const path = join(process.cwd(), ".vercel", "output", "config.json");
-  if (!existsSync(path)) return;
+  const path = vercelOutputConfigPath(process.cwd());
+  const missing = (why: string) =>
+    console.warn(`[bot] ${CONSOLE_API} is not routed to the agent (${why}); the console API will answer 404.`);
+  if (!existsSync(path)) return missing(`no Build Output config at ${path}`);
 
   const config = JSON.parse(readFileSync(path, "utf8")) as VercelOutputConfig;
   const eveSrc = `^${EVE_API}/(.*)$`;
@@ -93,9 +117,9 @@ function routeConsoleToAgentService(): void {
   const routes = config.routes ?? [];
   const eveRoute = routes.find((route) => route.src === eveSrc && route.destination?.type === "service");
   const serviceName = eveRoute?.destination?.service;
-  if (eveRoute === undefined || serviceName === undefined) return;
+  if (eveRoute === undefined || serviceName === undefined) return missing(`no ${EVE_API} service route in ${path}`);
   const service = config.services?.[serviceName];
-  if (service === undefined) return;
+  if (service === undefined) return missing(`no "${serviceName}" service in ${path}`);
 
   if (!routes.some((route) => route.src === consoleSrc)) {
     routes.splice(routes.indexOf(eveRoute), 0, { src: consoleSrc, destination: eveRoute.destination });
