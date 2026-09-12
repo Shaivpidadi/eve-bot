@@ -9,6 +9,12 @@ This is a working replica of the Grok Bot product idea, built on Vercel's
 Sandbox for each bot's computer, [agent-browser](https://github.com/vercel-labs/agent-browser)
 for its browser, and Vercel Blob for memory and persistent data.
 
+> **Alpha.** It works end to end on a Vercel Pro team, but expect rough edges:
+> it has not been tested on the Hobby plan and has no automated test suite yet.
+> Everything your Bots do (models through AI Gateway, the Sandbox computer, Blob
+> storage) is billed to your own Vercel account, and HQ defaults to
+> `anthropic/claude-sonnet-5`. See [Known limits](#known-limits).
+
 ```
 you ──▶ HQ ──assign──▶ job queue ──dispatch──▶ teammate ──▶ browser + shell + files
          │                  ▲                      │
@@ -27,7 +33,7 @@ you ──▶ HQ ──assign──▶ job queue ──dispatch──▶ teammat
 | **Keeps working 24/7** | Jobs run as durable Workflow runs. A run survives redeploys and crashes, and a bot waiting on a human holds no compute. `agent/tools/run_job.ts`. |
 | **Only comes back for approval** | Irreversible actions are gated on a person (`approval: always()`), and a deliverable can require sign-off that stays pending for a day. Answer one with `POST /bot/v1/rooms/:room/respond` — a plain message starts a new turn instead of resolving the request. |
 | **Message them like a colleague** | HQ's desk plus a thread per bot, each a durable conversation that is still there tomorrow. A Next.js console at `/bot` shows the roster with live presence, each bot's chat, its screen, and its routines. `agent/channels/ops.ts`. |
-| **They remember and get sharper** | Three memory slots (per-person, per-workspace, per-craft) plus a per-bot playbook replayed into every brief. |
+| **They remember and get sharper** | Three eve memory slots (per-person, per-workspace, per-craft) plus a per-bot playbook replayed into every brief. Open **Memory** in the sidebar to see what they remember and add or forget an entry. `agent/lib/memory.ts`. |
 | **Finishes end to end** | Every job carries explicit success criteria, the bot must verify its own work, and results record whether they were verified. |
 
 ## Quickstart
@@ -330,7 +336,7 @@ three drivers:
 
 | Driver | Used when | Concurrency |
 | --- | --- | --- |
-| Vercel Blob | on Vercel, or when Blob credentials are set | ETag `ifMatch` — a true compare-and-set across instances |
+| Vercel Blob | on Vercel, or when Blob credentials are set | ETag `ifMatch` — a true compare-and-set across instances (read ETags are normalized to their strong form, which `ifMatch` requires) |
 | Local disk | `eve dev` (`.data/`) | in-process key locking; single-process only |
 | In-memory | tests, throwaway | in-process key locking |
 
@@ -385,6 +391,19 @@ model.
 
 ## Known limits
 
+- **Alpha, tested on Vercel Pro only.** On Hobby, Vercel Sandbox's monthly CPU
+  and data-transfer quotas pause the team's computer until the next cycle, and
+  the watchdog for scheduled jobs runs once a day.
+- **A redeploy may not reach a thread that is already running.** eve gives an
+  existing thread's next turn the new deployment's instructions, model, and
+  tools, but in testing a thread kept running an older build's code until it
+  was started over. If a thread keeps failing after you upgrade, start it over:
+  `curl -X POST -H "authorization: Bearer $BOT_CONSOLE_TOKEN"
+  https://<your-app>/bot/v1/rooms/desk/reset` for HQ, or `rooms/bot-<botId>` for
+  a Bot. That clears the thread's conversation and cancels its open jobs; the
+  roster, finished work, and memory stay.
+- **No automated tests yet.** Changes are checked with `npm run typecheck`,
+  `npm run agent:build`, and `npm run build`.
 - **The computer needs Vercel credentials, even locally.** Run `vercel link &&
   vercel env pull`. `BOT_COMPUTER=local` runs it in a VM on your machine instead,
   but the console cannot show that computer live yet.
@@ -402,8 +421,9 @@ model.
   awake; otherwise it shows the last still frame, marked asleep.
 - **The console API rides on eve's Vercel routing.** `withEve` only routes
   `/eve/v1` to the agent, so `next.config.ts` adds `/bot/v1` to the same
-  forwarding: a rewrite locally, and a route in the generated Build Output
-  config on Vercel.
+  forwarding: a rewrite locally, and a route in the Build Output config eve
+  generates on Vercel (under `/vercel/output` on Vercel's builders). If an eve
+  upgrade moves that config, the build log warns that `/bot/v1` is not routed.
 - **In a Bot's thread, HQ answers in that Bot's voice.** It is one agent with
   the Bot's persona and playbook, delegating the actual work to the teammate.
 - **The computer is shared, by design.** Every Bot, and every workspace on one
@@ -440,3 +460,7 @@ model.
 - **Egress and page content are untrusted.** Web pages can contain text that
   looks like instructions; the teammate's instructions say to treat it as data,
   but an allow-list is the control that actually holds.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
