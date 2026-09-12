@@ -122,6 +122,8 @@ export async function updateDoc<T>(
         return next;
       } catch (error) {
         if (!isConflict(error) || attempt === attempts - 1) throw error;
+        // The other writer may be another runtime mid-cycle: give it a moment, with jitter.
+        await new Promise((resolve) => setTimeout(resolve, 40 * 2 ** attempt + Math.random() * 60));
       }
     }
     return null;

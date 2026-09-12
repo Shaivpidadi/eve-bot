@@ -1,4 +1,4 @@
-import { del, get, list, put } from "@vercel/blob";
+import { BlobError, BlobPreconditionFailedError, del, get, list, put } from "@vercel/blob";
 
 import { KvConflictError, isConflict, type Kv, type KvPutOptions } from "./kv";
 
@@ -11,6 +11,17 @@ import { KvConflictError, isConflict, type Kv, type KvPutOptions } from "./kv";
  * version token. ETags are the version tokens, so `ifMatch` gives us a real
  * compare-and-set across concurrent runtimes.
  */
+/**
+ * Whether a failed write lost a compare-and-set. @vercel/blob's errors do not
+ * set `name`, so they are matched by class: a stale `ifMatch` throws
+ * BlobPreconditionFailedError, and a create-only write to a key that already
+ * exists throws a plain BlobError saying so.
+ */
+function isBlobConflict(error: unknown, expectedVersion: string | null | undefined): boolean {
+  if (error instanceof BlobPreconditionFailedError) return true;
+  return expectedVersion === null && error instanceof BlobError && /already exists/i.test(error.message);
+}
+
 /** Large uploads, such as computer backups, go up in parts. */
 const MULTIPART_BYTES = 50 * 1024 * 1024;
 
@@ -37,7 +48,7 @@ export function blobKv(prefix: string): Kv {
         });
         return result.etag;
       } catch (error) {
-        if (isConflict(error)) throw new KvConflictError(key);
+        if (isConflict(error) || isBlobConflict(error, expectedVersion)) throw new KvConflictError(key);
         throw error;
       }
     },
