@@ -129,7 +129,6 @@ export function Console() {
           <DetailsPanel
             member={member}
             members={members}
-            live={computer === null}
             view={panelView}
             onView={setPanelView}
             onClose={() => showPanel(false)}

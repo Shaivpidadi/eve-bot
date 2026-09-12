@@ -75,12 +75,9 @@ export function DetailsPanel({
   onTakeover,
   onChanged,
   onHover,
-  live,
 }: {
   member: Member;
   members: readonly Member[];
-  /** Whether the thumbnail may stream; off while the full computer is open. */
-  live: boolean;
   view: PanelView;
   onView: (view: PanelView) => void;
   onClose: () => void;
@@ -110,11 +107,11 @@ export function DetailsPanel({
       </div>
       <div className="panel-body">
         {member.kind === "hq" ? (
-          <HqPanel member={member} members={members} live={live} onTakeover={onTakeover} onSelect={onSelect} onHover={onHover} />
+          <HqPanel member={member} members={members} onTakeover={onTakeover} onSelect={onSelect} onHover={onHover} />
         ) : settings ? (
           <SettingsPanel key={member.id} member={member} onChanged={onChanged} />
         ) : (
-          <BotPanel member={member} members={members} live={live} onTakeover={onTakeover} />
+          <BotPanel member={member} members={members} onTakeover={onTakeover} />
         )}
       </div>
     </aside>
@@ -128,19 +125,17 @@ function usingScreen(member: Member, members: readonly Member[]): Member | null 
 }
 
 /**
- * The team's one screen, from any thread: a still of the browser, live while it
- * is running, and the way into the full computer. HQ's desk and every Bot's
+ * The team's one screen, from any thread: a still of the browser, and the way
+ * into the full computer, where it is live. HQ's desk and every Bot's
  * panel show the same browser, so a sign-in made for one Bot is there for all.
  */
 function ScreenPreview({
   member,
   members,
-  live,
   onTakeover,
 }: {
   member: Member;
   members: readonly Member[];
-  live: boolean;
   onTakeover: () => void;
 }) {
   // The still frame of this member's own tab, refreshed as it works. The shared
@@ -181,19 +176,17 @@ function ScreenPreview({
 function BotPanel({
   member,
   members,
-  live,
   onTakeover,
 }: {
   member: Member;
   members: readonly Member[];
-  live: boolean;
   onTakeover: () => void;
 }) {
   const paused = member.status === "paused";
 
   return (
     <>
-      <ScreenPreview member={member} members={members} live={live} onTakeover={onTakeover} />
+      <ScreenPreview member={member} members={members} onTakeover={onTakeover} />
 
       <div className="section">
         <h3>Routines</h3>
@@ -316,14 +309,12 @@ function SettingsPanel({ member, onChanged }: { member: Member; onChanged: () =>
 function HqPanel({
   member,
   members,
-  live,
   onTakeover,
   onSelect,
   onHover,
 }: {
   member: Member;
   members: readonly Member[];
-  live: boolean;
   onTakeover: () => void;
   onSelect: (id: string) => void;
   onHover: (hover: Hover | null) => void;
@@ -333,7 +324,7 @@ function HqPanel({
 
   return (
     <>
-      <ScreenPreview member={member} members={members} live={live} onTakeover={onTakeover} />
+      <ScreenPreview member={member} members={members} onTakeover={onTakeover} />
 
       <div className="section">
         <h3>Team</h3>
