@@ -21,5 +21,7 @@ declare module "@novnc/novnc" {
     focus(options?: FocusOptions): void;
     blur(): void;
     clipboardPasteFrom(text: string): void;
+    /** Presses (`down` true) or releases one X keysym on the remote side. */
+    sendKey(keysym: number, code: string | null, down?: boolean): void;
   }
 }

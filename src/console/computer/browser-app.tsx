@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { SignedOutError } from "../api";
 import type { Member } from "../types";
 import { backoff, botPath, requestConnection, type RelayConnection } from "./connection";
+import { forwardMacShortcuts, PASTE, sendChord } from "./shortcuts";
 
 type Status =
   | { readonly kind: "connecting" }
@@ -20,6 +21,7 @@ interface Viewer {
   disconnect(): void;
   focus(): void;
   clipboardPasteFrom(text: string): void;
+  sendKey(keysym: number, code: string | null, down?: boolean): void;
 }
 
 /** How often a thumbnail checks again on a browser the board says is running. */
@@ -183,12 +185,23 @@ export function BrowserApp({
         // Tokens are single use, so every reconnect asks for a new one.
         retry(backoff(failures));
       });
+      client.addEventListener("clipboard", (event) => {
+        // What you copy on the computer lands on your own clipboard while you are in control.
+        const copied = (event as CustomEvent<{ text?: unknown }>).detail?.text;
+        if (controllingNow.current && typeof copied === "string") {
+          void navigator.clipboard?.writeText(copied).catch(() => undefined);
+        }
+      });
+      stopShortcuts();
+      stopShortcuts = forwardMacShortcuts(target, client, () => controllingNow.current);
       viewer.current = client;
     }
 
+    let stopShortcuts = () => {};
     void connect();
     return () => {
       disposed = true;
+      stopShortcuts();
       window.clearTimeout(timer);
       viewer.current?.disconnect();
       viewer.current = null;
@@ -231,9 +244,14 @@ export function BrowserApp({
     <div
       className={className}
       onPaste={(event) => {
-        // Lets you paste into the page with your own clipboard while in control.
+        // Pastes your own clipboard into the page while in control: hand it to the computer, then
+        // press Ctrl+V there, since the computer's browser runs on Linux.
         const pasted = event.clipboardData.getData("text/plain");
-        if (controlling && pasted !== "") viewer.current?.clipboardPasteFrom(pasted);
+        const client = viewer.current;
+        if (!controlling || client === null || pasted === "") return;
+        event.preventDefault();
+        client.clipboardPasteFrom(pasted);
+        sendChord(client, PASTE);
       }}
     >
       {/* A live, authenticated, uncached frame: next/image would only get in the way. */}
