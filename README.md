@@ -1,19 +1,8 @@
-# Bot
+# EVE BOT
 
 A team of always-on AI teammates. Each one has its own computer, works inside the
 apps you already use, and keeps going after you close the laptop — coming back
 only when something needs your approval.
-
-This is a working replica of the Grok Bot product idea, built on Vercel's
-[eve](https://eve.dev) agent framework: eve for the durable runtime, Vercel
-Sandbox for each bot's computer, [agent-browser](https://github.com/vercel-labs/agent-browser)
-for its browser, and Vercel Blob for memory and persistent data.
-
-> **Alpha.** It works end to end on a Vercel Pro team, but expect rough edges:
-> it has not been tested on the Hobby plan and has no automated test suite yet.
-> Everything your Bots do (models through AI Gateway, the Sandbox computer, Blob
-> storage) is billed to your own Vercel account, and HQ defaults to
-> `anthropic/claude-sonnet-5`. See [Known limits](#known-limits).
 
 ```
 you ──▶ HQ ──assign──▶ job queue ──dispatch──▶ teammate ──▶ browser + shell + files
@@ -21,20 +10,6 @@ you ──▶ HQ ──assign──▶ job queue ──dispatch──▶ teammat
          │                  └── waits until due ────┤
          └──◀ result, or an approval you must sign ─┘
 ```
-
-## What is actually here
-
-| The claim | How it works |
-| --- | --- |
-| **A computer the team keeps** | One persistent Linux microVM (Vercel Sandbox) shared by HQ and every Bot, like Grok Bot's Agent Computer: one browser the whole team works in, a terminal, and files. One Chrome profile means one set of tabs and sign-ins, so what you sign in to for one Bot is there for the next. It is backed up while Bots work and restored if it is ever replaced. `agent/sandbox/`, `agent/lib/computer*`. |
-| **Watch it work, take over when it needs you** | The team's screen sits in the right panel of every thread, HQ's desk included; open it to watch the browser live. When a Bot hits a sign-in, 2FA, or CAPTCHA it asks you to take over; you do that step in the browser and hand it back. Passwords go straight to the page, never through chat. `agent/lib/computer/`, `src/console/computer/`. |
-| **A strong default Bot** | Every workspace starts with Atlas, a generalist on the strongest model with the deepest reasoning. Any Bot can create new Bots when you ask. `agent/lib/default-bot.ts`. |
-| **Works inside apps, no API needed** | A real Google Chrome on the team's screen, driven through accessibility snapshots with stable `@ref` handles. `agent/subagents/teammate/tools/page_*.ts`. |
-| **Keeps working 24/7** | Jobs run as durable Workflow runs. A run survives redeploys and crashes, and a bot waiting on a human holds no compute. `agent/tools/run_job.ts`. |
-| **Only comes back for approval** | Irreversible actions are gated on a person (`approval: always()`), and a deliverable can require sign-off that stays pending for a day. Answer one with `POST /bot/v1/rooms/:room/respond` — a plain message starts a new turn instead of resolving the request. |
-| **Message them like a colleague** | HQ's desk plus a thread per bot, each a durable conversation that is still there tomorrow. A Next.js console at `/bot` shows the roster with live presence, each bot's chat, its screen, and its routines. `agent/channels/ops.ts`. |
-| **They remember and get sharper** | Three eve memory slots (per-person, per-workspace, per-craft) plus a per-bot playbook replayed into every brief. Open **Memory** in the sidebar to see what they remember and add or forget an entry. `agent/lib/memory.ts`. |
-| **Finishes end to end** | Every job carries explicit success criteria, the bot must verify its own work, and results record whether they were verified. |
 
 ## Quickstart
 
@@ -127,6 +102,20 @@ It deploys as one Vercel project: `withEve` builds the agent as a service next
 to the Next.js app. Schedules become Cron Jobs and sandboxes become Vercel
 Sandboxes. Cron expressions are evaluated in UTC.
 
+## What is actually here
+
+| The claim | How it works |
+| --- | --- |
+| **A computer the team keeps** | One persistent Linux microVM (Vercel Sandbox) shared by HQ and every Bot: one browser the whole team works in, a terminal, and files. One Chrome profile means one set of tabs and sign-ins, so what you sign in to for one Bot is there for the next. It is backed up while Bots work and restored if it is ever replaced. `agent/sandbox/`, `agent/lib/computer*`. |
+| **Watch it work, take over when it needs you** | The team's screen sits in the right panel of every thread, HQ's desk included; open it to watch the browser live. When a Bot hits a sign-in, 2FA, or CAPTCHA it asks you to take over; you do that step in the browser and hand it back. Passwords go straight to the page, never through chat. `agent/lib/computer/`, `src/console/computer/`. |
+| **A strong default Bot** | Every workspace starts with Atlas, a generalist on the strongest model with the deepest reasoning. Any Bot can create new Bots when you ask. `agent/lib/default-bot.ts`. |
+| **Works inside apps, no API needed** | A real Google Chrome on the team's screen, driven through accessibility snapshots with stable `@ref` handles. `agent/subagents/teammate/tools/page_*.ts`. |
+| **Keeps working 24/7** | Jobs run as durable Workflow runs. A run survives redeploys and crashes, and a bot waiting on a human holds no compute. `agent/tools/run_job.ts`. |
+| **Only comes back for approval** | Irreversible actions are gated on a person (`approval: always()`), and a deliverable can require sign-off that stays pending for a day. Answer one with `POST /bot/v1/rooms/:room/respond` — a plain message starts a new turn instead of resolving the request. |
+| **Message them like a colleague** | HQ's desk plus a thread per bot, each a durable conversation that is still there tomorrow. A Next.js console at `/bot` shows the roster with live presence, each bot's chat, its screen, and its routines. `agent/channels/ops.ts`. |
+| **They remember and get sharper** | Three eve memory slots (per-person, per-workspace, per-craft) plus a per-bot playbook replayed into every brief. Open **Memory** in the sidebar to see what they remember and add or forget an entry. `agent/lib/memory.ts`. |
+| **Finishes end to end** | Every job carries explicit success criteria, the bot must verify its own work, and results record whether they were verified. |
+
 ## The console
 
 The console is a Next.js App Router app written in TypeScript, in `src/`.
@@ -158,8 +147,7 @@ posts answers to `/respond`.
 
 ## Plugins
 
-Plugins work the way they do in Grok Bot: connect a service once and every Bot
-can use it. Open **Plugins** in the console sidebar and add an MCP server by its
+Connect a service once and every Bot can use it. Open **Plugins** in the console sidebar and add an MCP server by its
 address, with no key, a bearer key, or a key in a custom header. The console
 reaches the server first and saves it only if it answers with its tools. Keys
 are stored encrypted and unsealed only inside a Bot's connection; the model
@@ -173,7 +161,7 @@ uses it in a job** for services that can change or send things.
 `agent/lib/plugins.ts` holds the store and the connection check;
 `agent/subagents/teammate/connections/plugins.ts` hands the enabled plugins to
 each job. v1 connects servers that speak Streamable HTTP. Sign-in with OAuth
-(the catalog connectors Grok offers, such as Google Drive or Notion) is not
+(catalog connectors such as Google Drive or Notion) is not
 built yet.
 
 ## Talking to it over HTTP
@@ -295,7 +283,7 @@ latest archive restored before the next job starts.
 
 **A screen you can watch and take over.** The team has one screen on the
 computer, shared by HQ and every Bot and shown on every thread: a TigerVNC
-display with a small desktop, like Grok Bot's. Openbox manages the
+display with a small desktop. Openbox manages the
 windows, a tint2 dock opens the Browser (Google Chrome, with DevTools on
 localhost), Files (pcmanfm), and a Terminal (xfce4-terminal), and there is
 nothing else: no menus, no desktop icons. agent-browser attaches to that Chrome,
@@ -391,9 +379,6 @@ model.
 
 ## Known limits
 
-- **Alpha, tested on Vercel Pro only.** On Hobby, Vercel Sandbox's monthly CPU
-  and data-transfer quotas pause the team's computer until the next cycle, and
-  the watchdog for scheduled jobs runs once a day.
 - **A redeploy may not reach a thread that is already running.** eve gives an
   existing thread's next turn the new deployment's instructions, model, and
   tools, but in testing a thread kept running an older build's code until it
