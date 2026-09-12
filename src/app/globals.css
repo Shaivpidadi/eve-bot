@@ -71,9 +71,10 @@ button:disabled { cursor: default; opacity: 0.5; }
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
-  grid-template-columns: 264px minmax(0, 1fr) 300px;
+  /* The panel's column follows the panel slot's width, which is what slides (see .panel-slot). */
+  grid-template-columns: 264px minmax(0, 1fr) auto;
 }
-.app[data-panel="closed"] { grid-template-columns: 264px minmax(0, 1fr); }
+.app[data-resizing] { cursor: col-resize; user-select: none; }
 .app-loading { height: 100vh; height: 100dvh; background: var(--bg); }
 
 .icon-btn {
@@ -284,6 +285,20 @@ button:disabled { cursor: default; opacity: 0.5; }
 .panel-head { height: 44px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--line); }
 .panel-head .spacer { flex: 1; }
 .panel-body { flex: 1; overflow-y: auto; padding: 12px; }
+/* The panel slides open and closed by animating its slot's width: grid columns sized in fr do not
+   animate. PANEL_SLIDE_MS in panel-frame.tsx matches. The panel keeps its own width and is clipped
+   by the slot, so it slides rather than squeezes. */
+.panel-slot {
+  position: relative; min-width: 0; min-height: 0; overflow: hidden;
+  width: var(--panel-w, 300px); transition: width 0.24s cubic-bezier(0.2, 0, 0, 1);
+}
+.app[data-panel="closed"] .panel-slot { width: 0; }
+.app[data-resizing] .panel-slot { transition: none; }
+.panel-slot > .panel { position: absolute; top: 0; right: 0; bottom: 0; width: var(--panel-w, 300px); }
+.panel-resize { position: absolute; top: 0; bottom: 0; left: 0; width: 7px; z-index: 5; cursor: col-resize; touch-action: none; }
+.panel-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: transparent; transition: background 0.15s; }
+.panel-resize:hover::after, .panel-resize:focus-visible::after, .app[data-resizing] .panel-resize::after { background: var(--purple); }
+.panel-resize:focus-visible { outline: none; }
 
 .screen {
   position: relative; display: block; width: 100%; aspect-ratio: 16 / 10; border-radius: 10px; overflow: hidden;
@@ -586,7 +601,16 @@ dialog label.plugin-toggle, dialog label.plugin-check { flex-direction: row; ali
 
 @media (max-width: 1080px) {
   .app, .app[data-panel="closed"] { grid-template-columns: 240px minmax(0, 1fr); }
-  .panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(100%, 340px); z-index: 30; box-shadow: var(--shadow); }
+  .panel-slot {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(100%, 340px); z-index: 30; overflow: visible;
+    transition: transform 0.24s cubic-bezier(0.2, 0, 0, 1), visibility 0s;
+  }
+  .app[data-panel="closed"] .panel-slot { width: min(100%, 340px); transform: translateX(100%); visibility: hidden; transition-delay: 0s, 0.24s; }
+  .panel-slot > .panel { width: 100%; box-shadow: var(--shadow); }
+  .panel-resize { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app, .panel-slot { transition: none !important; }
 }
 @media (max-width: 760px) {
   .app, .app[data-panel="closed"] { grid-template-columns: minmax(0, 1fr); }

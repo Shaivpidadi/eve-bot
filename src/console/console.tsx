@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 
 import { Avatar } from "./avatar";
 import { ChatPane } from "./chat";
@@ -8,6 +8,7 @@ import { ComputerView } from "./computer/computer-view";
 import { PRESENCE_LABEL } from "./format";
 import { HireDialog } from "./hire-dialog";
 import { DetailsPanel, type PanelView } from "./panel";
+import { PANEL_SLIDE_MS, PanelResizer, usePanelWidth } from "./panel-frame";
 import { PluginsDialog } from "./plugins-dialog";
 import { Sidebar } from "./sidebar";
 import type { Hover, Member } from "./types";
@@ -63,6 +64,10 @@ export function Console() {
   const [hiring, setHiring] = useState(false);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [hover, setHover] = useState<Hover | null>(null);
+  const [panelWidth, setPanelWidth] = usePanelWidth();
+  const [resizing, setResizing] = useState(false);
+  // The panel slides closed, so what it shows stays until the slide has finished.
+  const [panelMounted, setPanelMounted] = useState(panelOpen);
 
   const members = board?.members ?? [];
   const member = members.find((entry) => entry.id === selectedId) ?? members.find((entry) => entry.id === HQ_ID);
@@ -96,11 +101,26 @@ export function Console() {
           : "Bot";
   }, [pending, needed]);
 
+  useEffect(() => {
+    if (panelOpen) {
+      setPanelMounted(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setPanelMounted(false), PANEL_SLIDE_MS);
+    return () => window.clearTimeout(timer);
+  }, [panelOpen]);
+
   if (board === null || member === undefined) return <div className="app-loading" aria-busy="true" />;
 
   return (
     <>
-      <div className="app" data-panel={panelOpen ? "open" : "closed"} data-view={view}>
+      <div
+        className="app"
+        data-panel={panelOpen ? "open" : "closed"}
+        data-view={view}
+        data-resizing={resizing ? "" : undefined}
+        style={{ "--panel-w": `${panelWidth}px` } as CSSProperties}
+      >
         <Sidebar
           members={members}
           selectedId={member.id}
@@ -125,22 +145,27 @@ export function Console() {
           onOpenComputer={(requestId) => setComputer({ botId: computerFor(member, members).id, requestId })}
           onHover={setHover}
         />
-        {panelOpen ? (
-          <DetailsPanel
-            member={member}
-            members={members}
-            view={panelView}
-            onView={setPanelView}
-            onClose={() => showPanel(false)}
-            onSelect={(id) => {
-              select(id);
-              if (window.innerWidth <= 1080) showPanel(false);
-            }}
-            onTakeover={() => setComputer({ botId: computerFor(member, members).id, requestId: null })}
-            onChanged={refresh}
-            onHover={setHover}
-          />
-        ) : null}
+        <div className="panel-slot" inert={!panelOpen}>
+          {panelOpen || panelMounted ? (
+            <>
+              <PanelResizer width={panelWidth} onWidth={setPanelWidth} onResizing={setResizing} />
+              <DetailsPanel
+                member={member}
+                members={members}
+                view={panelView}
+                onView={setPanelView}
+                onClose={() => showPanel(false)}
+                onSelect={(id) => {
+                  select(id);
+                  if (window.innerWidth <= 1080) showPanel(false);
+                }}
+                onTakeover={() => setComputer({ botId: computerFor(member, members).id, requestId: null })}
+                onChanged={refresh}
+                onHover={setHover}
+              />
+            </>
+          ) : null}
+        </div>
       </div>
 
       {needed.length > 0 && computer === null ? (
