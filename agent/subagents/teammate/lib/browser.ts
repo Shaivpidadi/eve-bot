@@ -56,14 +56,28 @@ const runSessionName = (ctx: ToolContext) => `run-${ctx.session.id.replace(/[^A-
 const openedTabs = new Map<string, { targetId: string; at: number }>();
 const TAB_TRUSTED_MS = 60_000;
 
-async function labelledTab(ctx: ToolContext, cdp: number, session: string, label: string): Promise<string | null> {
+/**
+ * The run's tab: by its label, or else by the target id recorded when it opened.
+ * agent-browser forgets labels when its background process restarts, while the
+ * session stays pinned to the same tab, so the id is what finds it again then.
+ */
+async function labelledTab(
+  ctx: ToolContext,
+  cdp: number,
+  session: string,
+  label: string,
+  knownTargetId?: string,
+): Promise<string | null> {
   try {
-    const listed = await runAgentBrowser<{ data?: { tabs?: { label?: string; targetId?: string }[] } }>(
+    const listed = await runAgentBrowser<{ data?: { tabs?: { label?: string | null; targetId?: string }[] } }>(
       ctx,
       ["--cdp", String(cdp), "tab", "list", "--json"],
       { session, env: environment(await sessionDirectory(ctx)), abortSignal: ctx.abortSignal },
     );
-    const tab = listed.json?.data?.tabs?.find((entry) => entry.label === label);
+    const tabs = listed.json?.data?.tabs ?? [];
+    const tab =
+      tabs.find((entry) => entry.label === label) ??
+      (knownTargetId === undefined ? undefined : tabs.find((entry) => entry.targetId === knownTargetId));
     return tab?.targetId ?? null;
   } catch {
     return null;
@@ -82,7 +96,7 @@ async function ensureRunTab(ctx: ToolContext, binding: SessionBinding, n: number
   const session = runSessionName(ctx);
   const label = binding.tabLabel ?? session;
 
-  let targetId = await labelledTab(ctx, cdp, session, label);
+  let targetId = await labelledTab(ctx, cdp, session, label, binding.targetId);
   if (targetId === null) {
     try {
       const opened = await runAgentBrowser<{ data?: { targetId?: string } }>(
