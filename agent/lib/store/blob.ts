@@ -22,6 +22,14 @@ function isBlobConflict(error: unknown, expectedVersion: string | null | undefin
   return expectedVersion === null && error instanceof BlobError && /already exists/i.test(error.message);
 }
 
+/**
+ * The version token for a read. Reads of larger documents come back with a
+ * weak ETag (`W/"…"`, the same hash marked weak by compression in transit),
+ * while writes and `ifMatch` use the strong form. Passing the weak form back
+ * never matches, so every update to such a document would fail as a conflict.
+ */
+const strongEtag = (etag: string) => etag.replace(/^W\//, "");
+
 /** Large uploads, such as computer backups, go up in parts. */
 const MULTIPART_BYTES = 50 * 1024 * 1024;
 
@@ -33,7 +41,7 @@ export function blobKv(prefix: string): Kv {
     async get(key) {
       const result = await get(pathFor(key), { access: "private", useCache: false });
       if (result === null || result.statusCode !== 200) return null;
-      return { value: await new Response(result.stream).text(), version: result.blob.etag };
+      return { value: await new Response(result.stream).text(), version: strongEtag(result.blob.etag) };
     },
     async put(key, value, options: KvPutOptions = {}) {
       const { expectedVersion } = options;
