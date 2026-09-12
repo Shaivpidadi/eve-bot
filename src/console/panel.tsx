@@ -232,8 +232,33 @@ function BotPanel({
 function SettingsPanel({ member, onChanged }: { member: Member; onChanged: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
   const profile = member.profile;
   const paused = member.status === "paused";
+
+  /** Saves the Bot's name, job, and instructions. The next message and the next job use them. */
+  const saveProfile = async (form: HTMLFormElement) => {
+    const data = new FormData(form);
+    const field = (name: string) => String(data.get(name) ?? "").trim();
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await api(`/bot/v1/bots/${encodeURIComponent(member.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: field("name"), role: field("role"), persona: field("persona") }),
+      });
+      if (response.ok) {
+        await onChanged();
+        setEditing(false);
+      } else {
+        setError(await errorMessage(response, "Could not save the profile."));
+      }
+    } catch (caught) {
+      if (!(caught instanceof SignedOutError)) setError("Could not save the profile.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const toggle = async () => {
     setBusy(true);
@@ -252,6 +277,50 @@ function SettingsPanel({ member, onChanged }: { member: Member; onChanged: () =>
     }
   };
 
+  if (editing && profile !== null) {
+    return (
+      <form
+        className="edit-profile"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void saveProfile(event.currentTarget);
+        }}
+      >
+        <h3>Edit profile</h3>
+        <label>
+          Name
+          <input name="name" defaultValue={member.name} maxLength={40} required autoComplete="off" />
+        </label>
+        <label>
+          Job
+          <input name="role" defaultValue={member.title} maxLength={120} required autoComplete="off" />
+        </label>
+        <label>
+          How it should work
+          <textarea name="persona" defaultValue={profile.persona} rows={12} minLength={20} maxLength={4000} required />
+        </label>
+        <p className="faint">Applies from the next message and the next job. A job already running keeps what it started with.</p>
+        {error === null ? null : <p className="error-text">{error}</p>}
+        <div className="actions">
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => {
+              setEditing(false);
+              setError(null);
+            }}
+          >
+            Cancel
+          </button>
+          <button type="submit" className="btn primary" disabled={busy}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </form>
+    );
+  }
+
   return (
     <>
       <div className="profile">
@@ -262,6 +331,11 @@ function SettingsPanel({ member, onChanged }: { member: Member; onChanged: () =>
           {paused ? "Paused" : PRESENCE_LABEL[member.presence]}
           {member.action ? ` · ${member.action}` : ""}
         </p>
+        {profile === null ? null : (
+          <button type="button" className="btn profile-edit" onClick={() => setEditing(true)}>
+            Edit profile
+          </button>
+        )}
       </div>
 
       {profile === null ? null : (

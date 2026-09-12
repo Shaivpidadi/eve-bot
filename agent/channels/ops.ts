@@ -411,25 +411,57 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return json({ bot: { id: bot.id, name: bot.name, room: roomForBot(bot.id) } }, 201);
     }),
 
-    /** Pause or resume. Retiring stays a conversation, because it needs approval. */
+    /**
+     * Pause or resume a Bot, or edit its profile: name, job, and how it should
+     * work. Retiring stays a conversation, because it needs approval.
+     */
     PATCH("/bot/v1/bots/:botId", async (request, { params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
+      const workspaceId = gate.access.workspaceId;
       const botId = params.botId;
       const body = await readJson(request);
       const status = body?.status;
-      if (botId === undefined || (status !== "active" && status !== "paused")) {
+      if (status !== undefined && status !== "active" && status !== "paused") {
         return json({ error: 'status must be "active" or "paused"' }, 400);
       }
-      const bot = await patchBot(gate.access.workspaceId, botId, (current) => ({ ...current, status }));
+      const name = body?.name === undefined ? undefined : text(body.name, 1, 40);
+      const role = body?.role === undefined ? undefined : text(body.role, 1, 120);
+      const persona = body?.persona === undefined ? undefined : text(body.persona, 20, 4_000);
+      if (name === null || role === null || persona === null) {
+        return json(
+          { error: "A name (1–40), a job (1–120), and how it should work (20–4000 characters) are required." },
+          400,
+        );
+      }
+      if (status === undefined && name === undefined && role === undefined && persona === undefined) {
+        return json({ error: "nothing to change" }, 400);
+      }
+      const before = botId === undefined ? null : await getBot(workspaceId, botId);
+      if (before === null) return json({ error: "no such bot" }, 404);
+      if (name !== undefined) {
+        // Bots are addressed by name, so two with the same name would be ambiguous.
+        const clash = await findBot(workspaceId, name);
+        if (clash !== null && clash.id !== before.id) return json({ error: `${clash.name} is already on the team.` }, 409);
+      }
+
+      const bot = await patchBot(workspaceId, before.id, (current) => ({
+        ...current,
+        status: status ?? current.status,
+        name: name ?? current.name,
+        role: role ?? current.role,
+        persona: persona ?? current.persona,
+      }));
       if (bot === null) return json({ error: "no such bot" }, 404);
-      await record({
-        workspaceId: gate.access.workspaceId,
-        kind: "bot.updated",
-        botId: bot.id,
-        text: `${bot.name} was ${status === "paused" ? "paused" : "resumed"}.`,
-      });
-      return json({ bot: { id: bot.id, status: bot.status } });
+      const changes = [
+        before.name === bot.name ? null : `${before.name} is now called ${bot.name}.`,
+        before.role === bot.role && before.persona === bot.persona ? null : `${bot.name}'s profile was updated.`,
+        before.status === bot.status ? null : `${bot.name} was ${bot.status === "paused" ? "paused" : "resumed"}.`,
+      ].filter((line) => line !== null);
+      if (changes.length > 0) {
+        await record({ workspaceId, kind: "bot.updated", botId: bot.id, text: changes.join(" ") });
+      }
+      return json({ bot: { id: bot.id, name: bot.name, role: bot.role, status: bot.status } });
     }),
 
     // The team's computer (see lib/computer/http.ts). Each Bot has a screen with a
