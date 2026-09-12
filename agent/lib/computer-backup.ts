@@ -2,6 +2,7 @@ import type { ToolContext } from "eve/tools";
 
 import { record } from "./activity";
 import { COMPUTER_NAME, COMPUTER_PATHS } from "./computer";
+import { computerMode, localComputer } from "./computer-config";
 import { exportIdentity, sandboxIo } from "./computer/runtime";
 import { sessionBinding } from "./computer/screens";
 import { operator } from "./session";
@@ -28,9 +29,18 @@ interface Manifest {
   readonly at: string;
   readonly bytes: number;
   readonly archiveKey: string;
+  /** The CPU architecture the archive was taken on (`uname -m`). Older manifests lack it. */
+  readonly arch?: string;
 }
 
-const PREFIX = `computer/${COMPUTER_NAME}`;
+/**
+ * Backups belong to one kind of computer. A local container and a Vercel sandbox
+ * are different machines, often on different CPUs, and each has its own saved
+ * sign-ins, so one's archive never restores onto the other. Vercel keeps the
+ * original location, so existing deployments keep their backups.
+ */
+const PREFIX =
+  computerMode() === "vercel" ? `computer/${COMPUTER_NAME}` : `computer/${COMPUTER_NAME}/local-${localComputer()}`;
 const MANIFEST_KEY = `${PREFIX}/manifest.json`;
 const MARKER_PATH = `${COMPUTER_PATHS.state}/generation`;
 const ARCHIVE_PATH = "/tmp/bot-computer-backup.tgz";
@@ -59,6 +69,10 @@ function archiveCommand(generation: string): string {
     "$HOME_REL/.cache",
     "$HOME_REL/.npm",
     "$HOME_REL/.agents",
+    // Installed tools such as agent-browser are built for one CPU and are
+    // reinstalled on use; restoring them could leave a binary that cannot run.
+    "$HOME_REL/.local/lib/node_modules",
+    "$HOME_REL/.local/bin",
   ]
     .map((pattern) => `--exclude="${pattern}"`)
     .join(" ");
@@ -75,7 +89,20 @@ function archiveCommand(generation: string): string {
   ].join("\n");
 }
 
-const RESTORE_COMMAND = ["set -e", `tar -xzf ${RESTORE_PATH} -C /`, `rm -f ${RESTORE_PATH}`].join("\n");
+const RESTORE_COMMAND = [
+  "set -e",
+  // Some images leave parts of the home directory to root, and tar then cannot recreate what is inside.
+  'sudo -n chown "$(id -u):$(id -g)" "$HOME/.local" "$HOME/.local/share" 2>/dev/null || true',
+  `tar -xzf ${RESTORE_PATH} -C /`,
+  `rm -f ${RESTORE_PATH}`,
+].join("\n");
+
+/** The computer's CPU architecture, or null when it cannot be read. */
+async function architecture(computer: Computer): Promise<string | null> {
+  const result = await computer.run({ command: "uname -m" });
+  const arch = result.stdout.trim();
+  return result.exitCode === 0 && arch !== "" ? arch : null;
+}
 
 let verifiedAt = 0;
 let restoring: Promise<void> | null = null;
@@ -128,6 +155,16 @@ async function restoreIfReplaced(ctx: ToolContext): Promise<void> {
     const computer = await ctx.getSandbox();
     if ((await currentGeneration(computer)) !== null) {
       verifiedAt = Date.now();
+      return;
+    }
+    const arch = await architecture(computer);
+    if (manifest.arch !== undefined && arch !== null && arch !== manifest.arch) {
+      // Programs in the archive would not run here; start clean instead of half-broken.
+      verifiedAt = Date.now();
+      await noteFailure(
+        ctx,
+        `Skipped restoring the computer: its backup from ${manifest.at} was taken on ${manifest.arch}, and this computer is ${arch}.`,
+      );
       return;
     }
 
@@ -185,7 +222,14 @@ async function checkpoint(ctx: ToolContext, minIntervalMs: number): Promise<void
     const archiveKey = `${PREFIX}/archives/${generation}.tgz`;
     // Archive first, manifest second: the manifest never points at a missing file.
     await writeBytes(archiveKey, bytes);
-    const manifest: Manifest = { generation, at: new Date().toISOString(), bytes: bytes.byteLength, archiveKey };
+    const arch = await architecture(computer);
+    const manifest: Manifest = {
+      generation,
+      at: new Date().toISOString(),
+      bytes: bytes.byteLength,
+      archiveKey,
+      ...(arch === null ? {} : { arch }),
+    };
     await writeDoc(MANIFEST_KEY, manifest);
     if (previous !== null && previous.archiveKey !== archiveKey) await deleteDoc(previous.archiveKey);
     await computer.run({ command: `rm -f ${ARCHIVE_PATH}` });
