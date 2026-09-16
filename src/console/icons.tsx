@@ -29,6 +29,12 @@ const PATHS = {
   ),
   up: <path d="M12 19V5.5M6 11.5l6-6 6 6" />,
   stop: <rect x="7.5" y="7.5" width="9" height="9" rx="1.5" fill="currentColor" stroke="none" />,
+  copy: (
+    <>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+    </>
+  ),
   check: (
     <>
       <circle cx="12" cy="12" r="8.5" />

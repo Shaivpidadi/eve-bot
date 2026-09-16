@@ -7,6 +7,7 @@ import { ChatPane } from "./chat";
 import { ComputerView } from "./computer/computer-view";
 import { PRESENCE_LABEL } from "./format";
 import { HireDialog } from "./hire-dialog";
+import { Icon } from "./icons";
 import { MemoryDialog } from "./memory-dialog";
 import { DetailsPanel, type PanelView } from "./panel";
 import { PANEL_SLIDE_MS, PanelResizer, usePanelWidth } from "./panel-frame";
@@ -93,6 +94,12 @@ export function Console() {
 
   const pending = members.reduce((count, entry) => count + entry.pending, 0);
   const needed = members.filter((entry) => entry.kind === "bot" && entry.computer.handover !== null);
+  // Banners a person closed, by the request they were for: a later handover shows again.
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  const banners = needed.filter((entry) => !dismissed.has(entry.computer.handover?.requestId ?? ""));
+  const dismiss = useCallback((requestId: string) => {
+    setDismissed((current) => new Set(current).add(requestId));
+  }, []);
   useEffect(() => {
     const first = needed[0];
     document.title =
@@ -171,12 +178,12 @@ export function Console() {
         </div>
       </div>
 
-      {needed.length > 0 && computer === null ? (
+      {banners.length > 0 && computer === null ? (
         <div className="needs-you" role="status">
-          {needed.slice(0, 3).map((bot) => (
+          {banners.slice(0, 3).map((bot) => (
             <div key={bot.id} className="needs-you-row">
               <Avatar member={bot} size={20} />
-              <span>
+              <span className="needs-you-text">
                 <b>{`${bot.name} needs you`}</b>
                 {bot.computer.handover === null ? null : <span className="faint">{bot.computer.handover.reason}</span>}
               </span>
@@ -186,6 +193,17 @@ export function Console() {
                 onClick={() => setComputer({ botId: bot.id, requestId: null })}
               >
                 Open computer
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Dismiss"
+                title="Dismiss. The Bot keeps waiting; open its computer from the roster."
+                onClick={() => {
+                  if (bot.computer.handover !== null) dismiss(bot.computer.handover.requestId);
+                }}
+              >
+                <Icon name="x" size={14} />
               </button>
             </div>
           ))}

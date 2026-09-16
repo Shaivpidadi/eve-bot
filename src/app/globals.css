@@ -178,6 +178,48 @@ button:disabled { cursor: default; opacity: 0.5; }
 .msg code { font: 12px ui-monospace, "SF Mono", Menlo, monospace; background: rgba(127, 127, 127, 0.16); padding: 1px 4px; border-radius: 4px; }
 .msg a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
+/* Rich replies: a table or code block needs the room, so the bubble may take the full column. */
+.msg.bot:has(table, .codeblock) { max-width: 100%; }
+.msg ol { margin: 4px 0; padding-left: 20px; }
+.msg li + li { margin-top: 2px; }
+.msg li > p { margin: 0; }
+.msg blockquote { margin: 4px 0; padding: 2px 10px; border-left: 2px solid var(--line-2); color: var(--muted); }
+.msg hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0; }
+.msg em { font-style: italic; }
+.msg del { color: var(--muted); }
+.msg input[type="checkbox"] { vertical-align: -1px; margin: 0 5px 0 0; pointer-events: none; }
+
+.table-wrap { margin: 6px 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+.msg table { border-collapse: collapse; width: 100%; font-size: 12.5px; line-height: 1.4; }
+.msg th, .msg td { padding: 6px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.msg th { font-weight: 600; background: rgba(127, 127, 127, 0.1); white-space: nowrap; }
+.msg tbody tr:last-child td { border-bottom: 0; }
+.msg tbody tr:nth-child(even) td { background: rgba(127, 127, 127, 0.05); }
+.msg td > p, .msg th > p { margin: 0; }
+
+/* On a phone, a two-column table reads better as stacked label/body rows. */
+@media (max-width: 760px) {
+  .msg table.kv thead { display: none; }
+  .msg table.kv, .msg table.kv tbody, .msg table.kv tr, .msg table.kv td { display: block; width: 100%; }
+  .msg table.kv td { border-bottom: 0; padding: 2px 10px; background: none !important; }
+  .msg table.kv td:first-child { font-weight: 600; padding-top: 8px; }
+  .msg table.kv td:last-child { padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .msg table.kv tr:last-child td:last-child { border-bottom: 0; }
+}
+
+.codeblock { margin: 6px 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: rgba(127, 127, 127, 0.08); }
+.codeblock-bar {
+  display: flex; align-items: center; justify-content: space-between; padding: 3px 6px 3px 10px;
+  font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line);
+}
+.codeblock-bar button {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border: 0; border-radius: 5px;
+  background: transparent; color: var(--muted); font: inherit; cursor: pointer;
+}
+.codeblock-bar button:hover { background: rgba(127, 127, 127, 0.16); color: var(--text); }
+.codeblock pre { margin: 0; padding: 8px 10px; overflow-x: auto; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+.codeblock pre code { background: none; padding: 0; font: inherit; }
+
 .notice {
   align-self: center; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center;
   color: var(--faint); font-size: 11.5px; margin: 10px 0; text-align: center;
@@ -452,8 +494,9 @@ button:disabled { cursor: default; opacity: 0.5; }
   display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; border-radius: 12px;
   background: var(--card); border: 1px solid var(--line-2); box-shadow: var(--shadow); font-size: 12.5px;
 }
-.needs-you-row > span { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.needs-you-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .needs-you-row .faint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.needs-you-row .icon-btn { width: 24px; height: 24px; flex: none; margin-left: -2px; }
 
 .files-app { display: flex; flex-direction: column; color: #e6e6e8; font-size: 12.5px; }
 .files-bar { height: 40px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 1px solid #222; }
