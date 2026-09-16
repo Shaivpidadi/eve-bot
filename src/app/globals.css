@@ -404,10 +404,11 @@ button:disabled { cursor: default; opacity: 0.5; }
 .computer-bar .what { flex: 1; min-width: 0; font-size: 12.5px; color: #9b9ba2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .computer-bar .error-text { max-width: 32%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .computer-close {
-  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none;
-  background: #ff5f57; color: rgba(0, 0, 0, 0.55);
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  background: #ff5f57; color: rgba(0, 0, 0, 0.7);
 }
-.computer-close .i { opacity: 0; }
+.computer-close .i { opacity: 0.85; stroke-width: 2.2; }
+.computer-close:hover { filter: brightness(1.08); }
 .computer-close:hover .i { opacity: 1; }
 .computer .btn { background: #2a2a2e; color: #eee; display: inline-flex; align-items: center; gap: 6px; }
 .computer .btn.primary { background: #f1f1f2; color: #111; }
