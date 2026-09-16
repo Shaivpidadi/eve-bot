@@ -111,7 +111,10 @@ every connection still needs a single-use token.
 
 Pick a model that handles tool calls well; HQ and the Bots do almost everything
 through tools. eve's built-in web search runs through AI Gateway, so on your own
-endpoint Bots research with their browser instead.
+endpoint give Bots a search service of yours: `BOT_SEARCH_PROVIDER=searxng` with
+`BOT_SEARCH_URL` pointing at a SearXNG instance keeps searches on your network,
+and `brave`, `tavily`, or `exa` with `BOT_SEARCH_API_KEY` use a hosted one.
+With none configured, Bots research with their browser.
 
 The USD spend caps hold on your own endpoint once Bot knows what a model costs:
 on OpenRouter it reads the price list itself, and anywhere else you set
@@ -422,6 +425,7 @@ worth knowing:
 | `BOT_BROWSER_ALLOWED_DOMAINS` | fence the browser to specific hosts |
 | `BOT_EMAIL_WEBHOOK` | where approved email actually goes; unset returns drafts |
 | `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`); a job started from a thread also draws on what the thread has left |
+| `BOT_SEARCH_PROVIDER` / `BOT_SEARCH_URL` / `BOT_SEARCH_API_KEY` | web search on your own endpoint: `searxng` at your own URL, or `brave`, `tavily`, `exa` with a key; unset, Bots search in their browser |
 | `BOT_MODEL_PRICES` | what models on your own endpoint cost, `model=in/out` in USD per million tokens, so the caps hold there; OpenRouter's list is read on its own |
 | `BOT_HQ_INPUT_TOKEN_LIMIT` / `BOT_HQ_OUTPUT_TOKEN_LIMIT` / `BOT_JOB_INPUT_TOKEN_LIMIT` / `BOT_JOB_OUTPUT_TOKEN_LIMIT` | per-session token caps on your own endpoint (40M / 2M / 10M / 500k), the backstop for a model nothing prices; `off` uncaps one |
 

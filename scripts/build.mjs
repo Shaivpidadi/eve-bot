@@ -8,6 +8,13 @@
  */
 import { spawnSync } from "node:child_process";
 
+import nextEnv from "@next/env";
+
+// eve build does not read .env on its own, and the agent decides a few things
+// (which web_search, which model endpoint) when its modules load, so the build
+// must see the same environment the server will. Next.js loads .env itself.
+if (!process.env.VERCEL) nextEnv.loadEnvConfig(process.cwd(), false);
+
 const steps = process.env.VERCEL ? [["next", "build"]] : [["eve", "build"], ["next", "build"]];
 
 for (const [bin, ...args] of steps) {
