@@ -3,6 +3,7 @@ import { posix } from "node:path";
 import type { Access } from "../access";
 import { record } from "../activity";
 import { getBot } from "../bots";
+import { requestHost } from "../protection";
 import { posterKey, readScreen } from "../screens";
 import { computerControl } from "./control";
 import { computerKey } from "./keys";
@@ -161,12 +162,12 @@ async function connection(
   botId: string,
   screen: ScreenAllocation,
   access: ComputerAccess,
-  options: { keepAlive?: boolean } = {},
+  options: { keepAlive?: boolean; host?: string | null } = {},
 ): Promise<Response> {
   const computer = computerControl();
   let gateway: string | null;
   try {
-    gateway = await computer.gatewayUrl();
+    gateway = await computer.gatewayUrl({ host: options.host });
   } catch (error) {
     return json({ mode: "unavailable", error: message(error) }, 502);
   }
@@ -194,7 +195,8 @@ export async function openBrowser(request: Request, access: Access, botId: strin
   const bot = await botFor(access, botId);
   if (bot === null) return noBot();
   const body = await readBody(request);
-  if (body?.wake === false) return watchBrowser(access, bot.id);
+  const host = requestHost(request);
+  if (body?.wake === false) return watchBrowser(access, bot.id, host);
   const screen = await allocateScreen(access.workspaceId);
   const control = liveControl(screen);
   const wantsControl = body?.access === "control";
@@ -206,7 +208,7 @@ export async function openBrowser(request: Request, access: Access, botId: strin
   if (started.value.started || screen.browser.state !== "on") await setBrowserState(screen.n, "on");
   // Watching this member: bring its tab to the front so the live picture is its work.
   await activateFor(access.workspaceId, bot.id, screen.n);
-  return connection(bot.id, screen, wantsControl ? "control" : "view");
+  return connection(bot.id, screen, wantsControl ? "control" : "view", { host });
 }
 
 /**
@@ -215,11 +217,11 @@ export async function openBrowser(request: Request, access: Access, botId: strin
  * computer, or keep either from going idle. Anything else is `asleep`, and the
  * console shows the last still frame.
  */
-async function watchBrowser(access: Access, botId: string): Promise<Response> {
+async function watchBrowser(access: Access, botId: string, host: string | null): Promise<Response> {
   const screen = await teamScreen(access.workspaceId);
   if (screen === null || screen.browser.state !== "on") return json({ mode: "asleep" });
   if ((await computerControl().availability()).state !== "running") return json({ mode: "asleep" });
-  return connection(botId, screen, "view", { keepAlive: false });
+  return connection(botId, screen, "view", { keepAlive: false, host });
 }
 
 /** Take control of the team's browser. Every Bot's browser tools wait until it is released. */
@@ -259,7 +261,7 @@ export async function takeControl(request: Request, access: Access, botId: strin
     await withComputer((io) => openUrl(io, screen.n, url, { ifBlank: true }));
   }
   const held = (await teamScreen(access.workspaceId)) ?? screen;
-  return connection(bot.id, held, "control");
+  return connection(bot.id, held, "control", { host: requestHost(request) });
 }
 
 /**

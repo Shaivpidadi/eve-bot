@@ -122,7 +122,11 @@ The first time a Bot or you opens the computer, eve builds its container and the
 computer installs Chrome and a small desktop, which takes a few minutes; after
 that it starts in seconds. You watch and take over it in the console as usual: a
 small forwarder container publishes its screen on `127.0.0.1:16080` only, and
-every connection still needs a single-use token.
+every connection still needs a single-use token. To watch from another device,
+set `BOT_COMPUTER_LOCAL_BIND=0.0.0.0` (or one of the server's addresses); the
+screen is then offered at the name you opened the console by. Serve the console
+over plain http for that, or put the gateway behind TLS, since a browser will
+not open a `ws://` connection from an `https://` page.
 
 Pick a model that handles tool calls well; HQ and the Bots do almost everything
 through tools. eve's built-in web search runs through AI Gateway, so on your own
@@ -449,6 +453,7 @@ worth knowing:
 | `BOT_DEFAULT_BOT_NAME` | name of the generalist every workspace starts with (default `Atlas`) |
 | `BOT_COMPUTER` | where the computer runs: `vercel` (default, in development too) or `local` (Docker on this machine, for a standalone server or development) |
 | `BOT_COMPUTER_NAME` | the shared computer's name; a new name starts a new machine |
+| `BOT_COMPUTER_LOCAL_BIND` / `BOT_COMPUTER_LOCAL_PORT` | where a local computer's live view is published: `127.0.0.1` (default) and `16080`; `0.0.0.0` lets other devices watch |
 | `BOT_COMPUTER_MAX_SCREENS` / `BOT_COMPUTER_IDLE_MINUTES` | how many Bot browsers run at once, and when an unused one stops |
 | `BOT_COMPUTER_KEY` | pins the key live-view tokens are signed with (generated and stored otherwise) |
 | `BOT_BACKUP_EVERY_MINUTES` / `BOT_BACKUP_MAX_MB` | how often the computer is archived while Bots work, and the archive size limit |

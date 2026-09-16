@@ -30,8 +30,10 @@ export interface ComputerControl {
   /**
    * The gateway's WebSocket address, ending in `?token=`. Null when this backend
    * cannot take live connections, in which case the console relays frames.
+   * `host` is the name the browser reached the console by, for a gateway that
+   * is published on this machine's own interfaces.
    */
-  gatewayUrl(): Promise<string | null>;
+  gatewayUrl(options?: { readonly host?: string | null }): Promise<string | null>;
   /** Keeps a computer someone is looking at from idling out. */
   keepAlive(): Promise<void>;
 }
@@ -156,22 +158,38 @@ function vmControl(): ComputerControl {
 /** The computer's port for live connections, inside the container. */
 const CONTAINER_GATEWAY_PORT = 6080;
 
+/** Addresses that mean "this machine only". */
+const LOOPBACK = /^(127\.\d+\.\d+\.\d+|::1|localhost)$/i;
+/** Addresses that mean "every interface", where the browser's own host name is the one to use. */
+const ANY_INTERFACE = /^(0\.0\.0\.0|::|\*)$/;
+
 /**
  * A computer in a Docker container on this machine (`BOT_COMPUTER=local`).
  *
  * eve runs the team's computer as a container named after it, and the console
  * reaches the same container through the Docker CLI. Live view needs the
  * computer's gateway on this machine, but eve publishes no ports, so a small
- * forwarder container on a private network publishes it on 127.0.0.1 only.
- * The gateway still admits nothing but single-use tokens, as on Vercel.
+ * forwarder container on a private network publishes it: on 127.0.0.1 by
+ * default, or on `BOT_COMPUTER_LOCAL_BIND` (`0.0.0.0` for every interface, or
+ * one address) so people on other devices can watch too. The gateway still
+ * admits nothing but single-use tokens, as on Vercel.
  */
 function dockerControl(): ComputerControl {
   const cli = process.env.EVE_DOCKER_PATH?.trim() || "docker";
   const network = `${COMPUTER_NAME}-console`;
   const forwarder = `${COMPUTER_NAME}-gateway`;
   const hostPort = Number(process.env.BOT_COMPUTER_LOCAL_PORT ?? 16080);
+  const bind = process.env.BOT_COMPUTER_LOCAL_BIND?.trim() || "127.0.0.1";
   const forwarderImage = process.env.BOT_COMPUTER_FORWARDER_IMAGE?.trim() || "alpine/socat";
   let forwarding: Promise<void> | null = null;
+
+  /** The host a browser should connect to, given the one it reached the console by. */
+  function gatewayHost(reachedBy: string | null | undefined): string {
+    if (LOOPBACK.test(bind)) return "127.0.0.1";
+    if (!ANY_INTERFACE.test(bind)) return bind.includes(":") ? `[${bind}]` : bind;
+    const name = reachedBy?.replace(/:\d+$/, "") ?? "";
+    return name === "" ? "127.0.0.1" : name;
+  }
 
   async function state(): Promise<"running" | "stopped" | "missing"> {
     const inspected = await docker(cli, ["container", "inspect", "--format", "{{.State.Running}}", COMPUTER_NAME]);
@@ -204,15 +222,19 @@ function dockerControl(): ComputerControl {
         );
       }
     }
-    const running = await docker(cli, ["container", "inspect", "--format", "{{.State.Running}}", forwarder]);
-    if (running.exitCode === 0 && running.stdout.toString("utf8").trim() === "true") return;
+    // A forwarder from before the bind address or port changed is replaced.
+    const running = await docker(cli, [
+      "container", "inspect", "--format", "{{.State.Running}} {{json .HostConfig.PortBindings}}", forwarder,
+    ]);
+    const current = running.stdout.toString("utf8").trim();
+    if (running.exitCode === 0 && current.startsWith("true ") && current.includes(`"HostIp":"${bind}","HostPort":"${hostPort}"`)) return;
     await docker(cli, ["rm", "-f", forwarder]);
     expectDocker(
       await docker(
         cli,
         [
           "run", "-d", "--name", forwarder, "--label", "eve-bot.console=1", "--network", network,
-          "--restart", "unless-stopped", "-p", `127.0.0.1:${hostPort}:${CONTAINER_GATEWAY_PORT}`,
+          "--restart", "unless-stopped", "-p", `${bind}:${hostPort}:${CONTAINER_GATEWAY_PORT}`,
           forwarderImage, `TCP-LISTEN:${CONTAINER_GATEWAY_PORT},fork,reuseaddr`, `TCP:${COMPUTER_NAME}:${CONTAINER_GATEWAY_PORT}`,
         ],
         { timeoutMs: 300_000 },
@@ -257,14 +279,14 @@ function dockerControl(): ComputerControl {
     async io() {
       return (await awake()) ? io : null;
     },
-    async gatewayUrl() {
+    async gatewayUrl(options = {}) {
       if (!(await awake())) return null;
       // Concurrent opens share one setup instead of racing to create the forwarder.
       forwarding ??= forward().finally(() => {
         forwarding = null;
       });
       await forwarding;
-      return `ws://127.0.0.1:${hostPort}/websockify?token=`;
+      return `ws://${gatewayHost(options.host)}:${hostPort}/websockify?token=`;
     },
     keepAlive: async () => undefined,
   };
