@@ -105,8 +105,10 @@ npm start         # both, on http://localhost:3000; PORT changes the port
 
 `npm start` runs two processes as one service: the agent, which listens on
 `127.0.0.1:4274` only and runs HQ, the Bots, the console API, and the schedules,
-and the Next.js console, which proxies to it. Stopping the service stops the
-team's computer; the next start picks it back up with its files. Run it under
+and the Next.js console, which proxies to it. Before that it provisions the
+team's computer's template, a Docker image with Chrome and a small desktop
+installed: a few minutes the first time, seconds after. Stopping the service
+stops the team's computer; the next start picks it back up with its files. Run it under
 whatever keeps your other Node services alive, and keep three things on storage
 that survives a restart: `.data/` (the roster, jobs, feed, and memory),
 `.eve/.workflow-data/` (running jobs and threads), and the Docker volume of the

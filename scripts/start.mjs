@@ -13,6 +13,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import nextEnv from "@next/env";
 
@@ -35,6 +36,25 @@ if (process.env.BOT_BUILD_ON_START === "1" || !existsSync(agentEntry)) {
 if (!existsSync(agentEntry)) {
   console.error("[bot] No agent build at .output/. Run `npm run build` first.");
   process.exit(1);
+}
+
+// A production server never builds a sandbox template on demand; eve expects
+// them provisioned before it serves traffic, and `eve build` does that only
+// for Vercel. So the team's computer's template is built here, with the same
+// API eve's own build hook uses: minutes the first time (Chrome and a desktop
+// are installed into it), seconds after, since it is a cached Docker image.
+// BOT_PREWARM_ON_START=0 skips it, for a host that provisions another way.
+if (process.env.BOT_PREWARM_ON_START !== "0" && process.env.BOT_COMPUTER === "local") {
+  console.log("[bot] Provisioning the team's computer template...");
+  try {
+    const { prewarmBuiltAppSandboxes } = await import(
+      pathToFileURL(join(process.cwd(), "node_modules", "eve", "dist", "src", "execution", "sandbox", "prewarm.js")).href
+    );
+    await prewarmBuiltAppSandboxes({ appRoot: process.cwd(), log: (line) => console.log(`[bot] ${line}`) });
+  } catch (error) {
+    console.error(`[bot] Could not provision the computer template: ${error instanceof Error ? error.message : String(error)}`);
+    console.error("[bot] The first job will fail until it exists. Is Docker running?");
+  }
 }
 
 const agentPort = process.env.EVE_NEXT_PRODUCTION_PORT?.trim() || "4274";
