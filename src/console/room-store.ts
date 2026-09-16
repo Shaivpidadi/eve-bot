@@ -5,11 +5,33 @@ import { withoutEmoji } from "./format";
 import type { IconName } from "./icons";
 import type { ActivityEvent, Member } from "./types";
 
+/** How long a sent message may go unacknowledged by its thread before the console says so. */
+const NO_REPLY_MS = 60_000;
+
 export interface Notice {
   readonly icon: IconName;
   readonly label: string;
   readonly detail?: string;
   readonly tone?: "error";
+  /** Something the person can do about it, offered as a button. */
+  readonly action?: "start-over";
+}
+
+/**
+ * A failed turn, in words for the person reading the thread. eve's own
+ * message is kept for anything not recognised here.
+ */
+function failureNotice(message: string): Omit<Notice, "icon"> {
+  if (/generation-bound delivery/.test(message)) {
+    return {
+      label: "This thread cannot continue here",
+      detail:
+        "It was started under the development server (npm run dev), and this server cannot pick it up. Start it over to keep talking; the roster, finished work, and memory stay.",
+      tone: "error",
+      action: "start-over",
+    };
+  }
+  return { label: "Something went wrong", detail: message, tone: "error" };
 }
 
 export type RoomItem =
@@ -121,6 +143,8 @@ export class RoomStore {
   private resolutions = new Map<string, InputResolution>();
   private answering = new Set<string>();
   private optimistic: string[] = [];
+  /** Sent messages the thread has not picked up yet, each with a deadline. */
+  private readonly unanswered = new Map<string, ReturnType<typeof setTimeout>>();
   private live = false;
   private liveLabel: string | null = null;
   private loaded = false;
@@ -166,6 +190,7 @@ export class RoomStore {
       if (!response.ok) throw new Error(await errorMessage(response, "Could not send"));
       void this.follow();
       this.poke();
+      this.expectReply(message);
       return true;
     } catch (error) {
       const pending = this.optimistic.indexOf(message);
@@ -174,6 +199,45 @@ export class RoomStore {
       else this.pushError("Not sent", error instanceof Error ? error.message : undefined);
       return false;
     }
+  }
+
+  /**
+   * A message the server accepted but the thread never picks up hangs
+   * otherwise: eve emits nothing when a turn cannot start, which is what
+   * happens to a thread the development server made once a production server
+   * takes over. After a while the message is taken back and the thread offers
+   * to start over.
+   */
+  private expectReply(message: string): void {
+    this.replied(message);
+    this.unanswered.set(
+      message,
+      setTimeout(() => {
+        this.unanswered.delete(message);
+        const pending = this.optimistic.indexOf(message);
+        if (pending < 0) return;
+        this.optimistic.splice(pending, 1);
+        this.items.push({
+          kind: "notice",
+          key: `unanswered:${Date.now()}:${this.items.length}`,
+          at: new Date().toISOString(),
+          icon: "alert",
+          label: "No reply",
+          detail:
+            "The message was accepted, but this thread never picked it up. If the server was just switched between npm run dev and npm start, the thread cannot continue here: start it over. Otherwise check the server logs.",
+          tone: "error",
+          action: "start-over",
+        });
+        this.settle();
+        this.emit();
+      }, NO_REPLY_MS),
+    );
+  }
+
+  private replied(message: string): void {
+    const timer = this.unanswered.get(message);
+    if (timer !== undefined) clearTimeout(timer);
+    this.unanswered.delete(message);
   }
 
   async answer(requestId: string, optionId: string | undefined, note: string): Promise<boolean> {
@@ -212,6 +276,29 @@ export class RoomStore {
     } catch {
       // The stream still shows whether the turn stopped.
     }
+  }
+
+  /**
+   * Starts the thread over: clears its conversation and cancels its open
+   * one-off jobs on the server, then this store, so the next message opens a
+   * fresh session. The roster, finished work, and memory stay.
+   */
+  async startOver(): Promise<boolean> {
+    try {
+      const response = await api(`/bot/v1/rooms/${encodeURIComponent(this.room)}/reset`, { method: "POST" });
+      if (!response.ok) {
+        this.pushError("Could not start over", await errorMessage(response, "The server refused."));
+        return false;
+      }
+    } catch (error) {
+      if (error instanceof SignedOutError) return false;
+      this.pushError("Could not start over", error instanceof Error ? error.message : String(error));
+      return false;
+    }
+    this.reset();
+    this.sessionId = null;
+    this.emit();
+    return true;
   }
 
   private capture(): RoomSnapshot {
@@ -259,6 +346,8 @@ export class RoomStore {
   }
 
   private reset(): void {
+    for (const timer of this.unanswered.values()) clearTimeout(timer);
+    this.unanswered.clear();
     this.items = [];
     this.drafts.clear();
     this.asks.clear();
@@ -282,6 +371,7 @@ export class RoomStore {
         }
         const pending = this.optimistic.indexOf(message);
         if (pending >= 0) this.optimistic.splice(pending, 1);
+        this.replied(message);
         this.items.push({ kind: "you", key, at, text: message });
         break;
       }
@@ -327,15 +417,7 @@ export class RoomStore {
         this.liveLabel = null;
         break;
       case "turn.failed":
-        this.items.push({
-          kind: "notice",
-          key,
-          at,
-          icon: "alert",
-          label: "Something went wrong",
-          detail: event.data.message,
-          tone: "error",
-        });
+        this.items.push({ kind: "notice", key, at, icon: "alert", ...failureNotice(event.data.message) });
         this.settle();
         break;
       case "session.failed":

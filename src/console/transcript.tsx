@@ -131,6 +131,11 @@ export function Transcript({
               <Icon name={item.icon} size={13} />
               <span>{item.label}</span>
               {item.detail ? <b>{item.detail}</b> : null}
+              {item.action === "start-over" ? (
+                <button type="button" className="btn" onClick={() => void store.startOver()}>
+                  Start over
+                </button>
+              ) : null}
             </div>,
           );
           break;

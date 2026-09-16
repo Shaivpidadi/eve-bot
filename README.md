@@ -509,9 +509,12 @@ model.
   (`BOT_COMPUTER_LOCAL=microsandbox`) is for development only: the console
   cannot open it, and a production server refuses it.
 - **Dev threads do not carry over to a standalone server.** eve binds a thread
-  started under `npm run dev` to the dev server, so `npm start` fails its next
-  turn with "resumed outside a generation-bound delivery". Reset the room, or
-  start the server from an empty `.eve/`.
+  started under `npm run dev` to the dev server, so `npm start` cannot continue
+  it: the first message there ends the thread's session without a reply, and
+  the next one starts a fresh thread. When a message goes unanswered for a
+  minute the console says so and offers **Start over**, which clears that
+  conversation and cancels its open one-off jobs; the roster, finished work,
+  and memory stay. Or start the server from an empty `.eve/`.
 - **Live view is a public URL with a token.** Sandbox ports are reachable by
   anyone with the address, so the gateway admits only single-use tokens that
   expire within a minute. Watching is view-only in the console; the server does
