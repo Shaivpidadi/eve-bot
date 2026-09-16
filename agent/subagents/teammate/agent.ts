@@ -3,7 +3,7 @@ import { defineAgent, defineDynamic } from "eve";
 
 import type { DynamicResolveContext } from "eve";
 
-import { customEndpoint, effortInBrief, endpointModel, modelForEffort, reasoningFor } from "../../lib/models";
+import { customEndpoint, effortInBrief, endpointModel, modelForEffort, reasoningFor, tokenLimits } from "../../lib/models";
 
 /** The brief is the first message a teammate receives. */
 function briefText(messages: readonly ModelMessage[]): string {
@@ -64,5 +64,7 @@ export default defineAgent({
   },
   limits: {
     maxTokenCostUsdPerSession: Number(process.env.BOT_JOB_COST_LIMIT_USD ?? 5),
+    // On a custom endpoint, token caps back the USD cap up for unpriced models.
+    ...tokenLimits("job"),
   },
 });

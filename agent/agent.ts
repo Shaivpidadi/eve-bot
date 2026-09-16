@@ -1,6 +1,6 @@
 import { defineAgent } from "eve";
 
-import { hqModel, reasoningFor } from "./lib/models";
+import { hqModel, reasoningFor, tokenLimits } from "./lib/models";
 
 /**
  * Bot HQ — the teammate you message.
@@ -21,5 +21,7 @@ export default defineAgent({
     // from a thread draw their budget from what the thread has left, so this
     // stays above a job's own limit.
     maxTokenCostUsdPerSession: Number(process.env.BOT_HQ_COST_LIMIT_USD ?? 10),
+    // On a custom endpoint, token caps back the USD cap up for unpriced models.
+    ...tokenLimits("hq"),
   },
 });

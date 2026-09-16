@@ -110,9 +110,14 @@ small forwarder container publishes its screen on `127.0.0.1:16080` only, and
 every connection still needs a single-use token.
 
 Pick a model that handles tool calls well; HQ and the Bots do almost everything
-through tools. Local models are not in AI Gateway's price list, so the USD spend
-caps do not apply to them, and eve's built-in web search runs through AI Gateway,
-so on your own endpoint Bots research with their browser instead.
+through tools. eve's built-in web search runs through AI Gateway, so on your own
+endpoint Bots research with their browser instead.
+
+The USD spend caps hold on your own endpoint once Bot knows what a model costs:
+on OpenRouter it reads the price list itself, and anywhere else you set
+`BOT_MODEL_PRICES` (`model=input/output` in USD per million tokens, `*` for the
+rest). A model with no price counts as free, which is right for one on your own
+hardware; per-session token caps (`BOT_*_TOKEN_LIMIT`) stop a runaway loop there.
 
 The same `.env` also works with `npm run dev` for hacking on Bot itself.
 
@@ -417,6 +422,8 @@ worth knowing:
 | `BOT_BROWSER_ALLOWED_DOMAINS` | fence the browser to specific hosts |
 | `BOT_EMAIL_WEBHOOK` | where approved email actually goes; unset returns drafts |
 | `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`); a job started from a thread also draws on what the thread has left |
+| `BOT_MODEL_PRICES` | what models on your own endpoint cost, `model=in/out` in USD per million tokens, so the caps hold there; OpenRouter's list is read on its own |
+| `BOT_HQ_INPUT_TOKEN_LIMIT` / `BOT_HQ_OUTPUT_TOKEN_LIMIT` / `BOT_JOB_INPUT_TOKEN_LIMIT` / `BOT_JOB_OUTPUT_TOKEN_LIMIT` | per-session token caps on your own endpoint (40M / 2M / 10M / 500k), the backstop for a model nothing prices; `off` uncaps one |
 
 ### Which model does a job
 

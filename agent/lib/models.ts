@@ -1,6 +1,8 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 
+import { pricedModel } from "./pricing";
+
 /**
  * Which model does a job.
  *
@@ -107,7 +109,11 @@ function endpointDefaultModel(): string {
 
 let endpointProvider: { readonly baseURL: string; readonly provider: ReturnType<typeof createOpenAICompatible> } | null = null;
 
-/** A model on the custom endpoint, as the AI SDK model object eve calls directly. */
+/**
+ * A model on the custom endpoint, as the AI SDK model object eve calls directly,
+ * with every step priced from `BOT_MODEL_PRICES` or OpenRouter's list so the USD
+ * caps hold (see `pricing.ts`).
+ */
 export function endpointModel(endpoint: ModelEndpoint, id: string): LanguageModel {
   if (endpointProvider?.baseURL !== endpoint.baseURL) {
     endpointProvider = {
@@ -115,11 +121,47 @@ export function endpointModel(endpoint: ModelEndpoint, id: string): LanguageMode
       provider: createOpenAICompatible({
         name: "custom",
         baseURL: endpoint.baseURL,
+        // Streams carry no token counts unless asked; pricing and the caps need them.
+        includeUsage: true,
         ...(endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey }),
       }),
     };
   }
-  return endpointProvider.provider.chatModel(id);
+  return pricedModel(endpointProvider.provider.chatModel(id), endpoint.baseURL, id);
+}
+
+// ---------------------------------------------------------------------------
+// Spend
+// ---------------------------------------------------------------------------
+
+/**
+ * Token caps for a session on a custom endpoint, the backstop for a model
+ * nothing prices. A runaway loop on a free local model costs electricity, not
+ * dollars, but it still ties up the team's computer; these stop it. On AI
+ * Gateway the USD caps do that job and eve's own defaults apply.
+ */
+const TOKEN_LIMITS = {
+  hq: { input: ["BOT_HQ_INPUT_TOKEN_LIMIT", 40_000_000], output: ["BOT_HQ_OUTPUT_TOKEN_LIMIT", 2_000_000] },
+  job: { input: ["BOT_JOB_INPUT_TOKEN_LIMIT", 10_000_000], output: ["BOT_JOB_OUTPUT_TOKEN_LIMIT", 500_000] },
+} as const satisfies Record<string, Record<"input" | "output", readonly [string, number]>>;
+
+function tokenLimit([name, fallback]: readonly [string, number]): number | false {
+  const value = process.env[name]?.trim();
+  if (value === undefined || value === "") return fallback;
+  if (/^(0|off|false|none)$/i.test(value)) return false;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function tokenLimits(role: keyof typeof TOKEN_LIMITS): {
+  readonly maxInputTokensPerSession?: number | false;
+  readonly maxOutputTokensPerSession?: number | false;
+} {
+  if (customEndpoint() === null) return {};
+  return {
+    maxInputTokensPerSession: tokenLimit(TOKEN_LIMITS[role].input),
+    maxOutputTokensPerSession: tokenLimit(TOKEN_LIMITS[role].output),
+  };
 }
 
 /** HQ's model: a Gateway model name, or a model on the custom endpoint with its context window. */
