@@ -12,7 +12,8 @@
     "start": "node scripts/start.mjs",
     "agent:dev": "eve dev",
     "agent:build": "eve build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@agent-browser/eve": "^0.37.1",
@@ -35,7 +36,8 @@
     "@types/react-dom": "^19.3.0",
     "just-bash": "^3.4.2",
     "microsandbox": "^0.5.10",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^5.0.1"
   },
   "engines": {
     "node": ">=24"

@@ -47,7 +47,7 @@ const isProvider = (value: string): value is SearchProvider => (SEARCH_PROVIDERS
  * How search is configured, or null when it is not. `BOT_SEARCH_URL` alone
  * means a SearXNG instance; a hosted provider needs its key.
  */
-export function searchConfig(env: NodeJS.ProcessEnv = process.env): SearchConfig | null {
+export function searchConfig(env: Readonly<Record<string, string | undefined>> = process.env): SearchConfig | null {
   const named = env.BOT_SEARCH_PROVIDER?.trim().toLowerCase() ?? "";
   const url = env.BOT_SEARCH_URL?.trim().replace(/\/+$/, "") ?? "";
   const apiKey = env.BOT_SEARCH_API_KEY?.trim() || undefined;

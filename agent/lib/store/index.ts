@@ -29,9 +29,9 @@ function select(): Kv {
   if (forced === "fs") return fileKv(process.env.BOT_DATA_DIR ?? ".data");
   if (forced === "memory") return inMemoryKv();
 
-  const hasBlob =
-    process.env.BLOB_READ_WRITE_TOKEN !== undefined || process.env.BLOB_STORE_ID !== undefined;
-  if (hasBlob || process.env.VERCEL === "1") return blobKv(prefix);
+  // An empty `BLOB_READ_WRITE_TOKEN=` line in .env is not a credential.
+  const set = (name: string) => (process.env[name] ?? "").trim() !== "";
+  if (set("BLOB_READ_WRITE_TOKEN") || set("BLOB_STORE_ID") || process.env.VERCEL === "1") return blobKv(prefix);
   return fileKv(process.env.BOT_DATA_DIR ?? ".data");
 }
 

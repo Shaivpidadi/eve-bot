@@ -502,8 +502,12 @@ model.
   https://<your-app>/bot/v1/rooms/desk/reset` for HQ, or `rooms/bot-<botId>` for
   a Bot. That clears the thread's conversation and cancels its open jobs; the
   roster, finished work, and memory stay.
-- **No automated tests yet.** Changes are checked with `npm run typecheck`,
-  `npm run agent:build`, and `npm run build`.
+- **Tests cover the standalone plumbing, not the Bots.** `npm test` runs
+  vitest over `tests/`: the disk store and its compare-and-set, model and
+  effort selection, spend pricing, web search, and console access. None of it
+  needs Vercel, Docker, or a model. Everything else is checked with
+  `npm run typecheck`, `npm run agent:build`, and `npm run build`, and by
+  running a job.
 - **The computer uses Vercel Sandbox by default, even locally.** Run `vercel link
   && vercel env pull`, or set `BOT_COMPUTER=local` to run it in Docker on your
   machine (see [Run it standalone](#run-it-standalone)).

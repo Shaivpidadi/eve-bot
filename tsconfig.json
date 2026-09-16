@@ -38,6 +38,8 @@
     "next-env.d.ts",
     "next.config.ts",
     "agent/**/*.ts",
+    "tests/**/*.ts",
+    "vitest.config.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
     ".next/types/**/*.ts",
