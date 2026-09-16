@@ -13,14 +13,29 @@ you ──▶ HQ ──assign──▶ job queue ──dispatch──▶ teammat
 
 ## Quickstart
 
-Requires **Node 24+**.
+Requires **Node 24+**. Bot runs in one of two places, and the first step is
+choosing which:
 
 ```bash
 npm install
-cp .env.example .env.local     # add AI_GATEWAY_API_KEY
-npx vercel link && npx vercel env pull   # the team's computer runs on Vercel Sandbox, in dev too
-npm run dev                    # Next.js on :3000, with the agent running alongside
+npm run setup    # standalone on your own machine, or Vercel; writes the env file for it
 ```
+
+**Standalone** means everything on a machine you own: the team's computer in
+Docker, models from any OpenAI-compatible API such as Ollama or OpenRouter, and
+storage on disk. After setup, `npm run build && npm start` runs it (see
+[Run it standalone](#run-it-standalone)).
+
+**Vercel** means Vercel Sandbox, AI Gateway, and Blob, deployed with one click
+(see [Deploy](#deploy)). For local development against it:
+
+```bash
+npx vercel link && npx vercel env pull   # the team's computer runs on Vercel Sandbox, in dev too
+npm run dev                              # Next.js on :3000, with the agent running alongside
+```
+
+Without the wizard, `cp .env.example .env.local` and fill in the values it
+describes.
 
 The first time a Bot opens its browser, the computer installs Google Chrome and a
 display, which takes a few minutes; after that screens start in seconds.

@@ -90,8 +90,9 @@ function StandaloneSteps({ setup }: { setup: Setup }) {
   return (
     <ul className="setup-list">
       <Step done={setup.tokens} title="Only you can open it">
-        In <code>.env</code>, set BOT_CONSOLE_TOKEN to a long random password (<code>openssl rand -base64 32</code>{" "}
-        makes a good one), restart the server, and sign in with it.
+        Run <code>npm run setup</code>, which writes <code>.env</code> with a console token, or set BOT_CONSOLE_TOKEN
+        there yourself to a long random password (<code>openssl rand -base64 32</code> makes a good one). Then
+        restart the server and sign in with it.
       </Step>
       <Step done={setup.storage.ready} title="Storage">
         The roster, jobs, and memory are kept on disk in <code>.data</code>. Keep that folder on storage that
