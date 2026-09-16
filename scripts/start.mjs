@@ -10,7 +10,7 @@
  * and the agent stops the team's computer on the way out and reattaches to it
  * on the next start.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -19,6 +19,19 @@ import nextEnv from "@next/env";
 nextEnv.loadEnvConfig(process.cwd(), false);
 
 const agentEntry = join(process.cwd(), ".output", "server", "index.mjs");
+
+// In a container the agent builds here rather than in the image, because it
+// decides a few things (which web search, which model endpoint) from the
+// environment it starts with. BOT_BUILD_ON_START=1 asks for that; a missing
+// build gets one either way.
+if (process.env.BOT_BUILD_ON_START === "1" || !existsSync(agentEntry)) {
+  console.log("[bot] Building the agent...");
+  const built = spawnSync(join(process.cwd(), "node_modules", ".bin", "eve"), ["build"], { stdio: "inherit" });
+  if (built.status !== 0) {
+    console.error("[bot] The agent did not build; see above.");
+    process.exit(built.status ?? 1);
+  }
+}
 if (!existsSync(agentEntry)) {
   console.error("[bot] No agent build at .output/. Run `npm run build` first.");
   process.exit(1);

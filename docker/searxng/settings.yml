@@ -1,0 +1,16 @@
+# SearXNG for the Bots (docker-compose.yml). Everything else is SearXNG's default.
+use_default_settings: true
+
+server:
+  # Overridden by SEARXNG_SECRET from docker-compose.yml.
+  secret_key: "bot-searxng-change-me"
+  # Only Bot reaches this instance, from inside the compose network.
+  limiter: false
+  image_proxy: false
+
+search:
+  # Bot reads results as JSON.
+  formats:
+    - html
+    - json
+  safe_search: 1

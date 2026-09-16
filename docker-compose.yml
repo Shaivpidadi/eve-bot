@@ -1,0 +1,64 @@
+# A standalone Bot on one machine: the server, a SearXNG the Bots search
+# with, and, with `--profile ollama`, a model server too.
+#
+#   npm run setup                       # writes .env; pick Standalone
+#   docker compose up -d --build        # http://localhost:3000/bot
+#   docker compose --profile ollama up -d --build   # with Ollama alongside
+#
+# The team's computer is a sibling container that the server starts on this
+# machine's Docker daemon through /var/run/docker.sock; its live view is
+# published on 127.0.0.1:16080 of this machine, so open the console from here
+# (or see BOT_COMPUTER_LOCAL_BIND in the README for other devices).
+#
+# In .env, address other services by name rather than localhost: a model
+# server on this machine is http://host.docker.internal:11434/v1, the Ollama
+# from the profile is http://ollama:11434/v1, and SearXNG is already set below.
+
+services:
+  bot:
+    build: .
+    env_file: .env
+    environment:
+      BOT_COMPUTER: local
+      BOT_STORE: fs
+      BOT_DATA_DIR: /app/.data
+      # SearXNG from this file, unless .env picks a hosted provider.
+      BOT_SEARCH_URL: http://searxng:8080
+    ports:
+      - "${BOT_PORT:-3000}:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - bot-data:/app/.data
+      # Only the workflow state persists; eve builds the agent under .eve/builds
+      # and renames it into place, which cannot cross onto a volume.
+      - bot-state:/app/.eve/.workflow-data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - searxng
+    restart: unless-stopped
+
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      # Signs cookies and image-proxy URLs on an instance only Bot reaches; change it anyway.
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-bot-searxng-change-me}
+    volumes:
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    ports:
+      - "127.0.0.1:${SEARXNG_PORT:-8888}:8080"
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: [ollama]
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    restart: unless-stopped
+
+volumes:
+  bot-data:
+  bot-state:
+  ollama:

@@ -68,7 +68,8 @@ export function searchConfig(env: NodeJS.ProcessEnv = process.env): SearchConfig
     console.warn(`[bot] BOT_SEARCH_PROVIDER=${provider} needs BOT_SEARCH_API_KEY; web search is off.`);
     return null;
   }
-  return { provider, url: url || HOSTED_URLS[provider], apiKey };
+  // A hosted provider has one address; BOT_SEARCH_URL only ever names a SearXNG.
+  return { provider, url: HOSTED_URLS[provider], apiKey };
 }
 
 export class SearchError extends Error {}

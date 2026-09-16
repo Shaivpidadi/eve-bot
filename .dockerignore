@@ -1,0 +1,12 @@
+node_modules
+.next
+.output
+.eve
+.data
+.vercel
+.git
+.env
+.env.*
+!.env.example
+certificates
+*.log

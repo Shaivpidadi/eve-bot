@@ -139,6 +139,25 @@ hardware; per-session token caps (`BOT_*_TOKEN_LIMIT`) stop a runaway loop there
 
 The same `.env` also works with `npm run dev` for hacking on Bot itself.
 
+#### With Docker Compose
+
+`docker-compose.yml` runs the whole thing as containers: the server, a SearXNG
+the Bots search with, and, with `--profile ollama`, a model server too.
+
+```bash
+npm run setup                                    # pick Standalone
+docker compose up -d --build                     # http://localhost:3000/bot
+docker compose --profile ollama up -d --build    # with Ollama alongside
+```
+
+The server starts the team's computer as a sibling container through the
+Docker socket, so it needs `/var/run/docker.sock` mounted, which the file does.
+`.data` and `.eve/.workflow-data` live in named volumes. In `.env`, address other services by
+name rather than `localhost`: a model server running on the machine itself is
+`http://host.docker.internal:11434/v1`, the Ollama from the profile is
+`http://ollama:11434/v1`, and SearXNG is set for you. The agent builds when the
+container starts, about ten seconds, because it reads that environment.
+
 ## Deploy
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot&project-name=eve-bot&repository-name=eve-bot&env=BOT_CONSOLE_TOKEN&envDescription=A%20long%20random%20password%20you%20sign%20in%20to%20the%20console%20with&envLink=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot%23sign-in&stores=%5B%7B%22type%22%3A%22blob%22%2C%22access%22%3A%22private%22%7D%5D)
@@ -281,8 +300,10 @@ curl -X PATCH localhost:3000/bot/v1/bots/<botId> -H 'content-type: application/j
 
 ```
 next.config.ts                  withEve, plus forwarding for the console's /bot/v1 API
+scripts/setup.mjs               npm run setup: standalone or Vercel, models, search, token; writes the env file
 scripts/build.mjs               npm run build: the agent, then the console (only the console on Vercel)
 scripts/start.mjs               npm start: the built agent and the console as one standalone server
+Dockerfile, docker-compose.yml  the standalone server as containers, with SearXNG and optionally Ollama
 src/
 ├── app/bot/page.tsx            the console
 ├── app/bot/login/page.tsx      sign-in with a console token
