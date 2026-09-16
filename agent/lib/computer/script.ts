@@ -27,7 +27,7 @@ import { createHash } from "node:crypto";
  */
 
 /** Bump when the programs change in a way a running computer must pick up. */
-const RUNTIME_REVISION = "1";
+const RUNTIME_REVISION = "2";
 
 /**
  * Bump when the installed packages change, so sandbox templates are rebuilt
@@ -273,6 +273,15 @@ PACKAGES="tigervnc-standalone-server websockify xdotool x11-utils x11-xserver-ut
 DESK="__DESKTOP__"
 CHROME_FLAGS="--remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --password-store=basic --disable-dev-shm-usage --window-position=0,0 --start-maximized --restore-last-session --hide-crash-restore-bubble --noerrdialogs --test-type --disable-features=Translate,MediaRouter __EXTRA_CHROME_FLAGS__"
 
+# Chrome keeps its renderers in their own user namespaces. An ordinary Docker
+# container forbids creating those, so Chrome must run without its sandbox
+# there and the container is the boundary; a container started with a seccomp
+# profile that allows them (docker/seccomp-chrome.json) gets the sandbox back.
+# Outside Docker nothing changes.
+chrome_sandbox_flags() {
+  if [ -f /.dockerenv ] && ! unshare -Ur true 2>/dev/null; then echo "--no-sandbox"; fi
+}
+
 mkdir -p "$RUN" "$PROFILES" "$IDENTITY" 2>/dev/null
 chmod 700 "$IDENTITY" 2>/dev/null
 
@@ -497,7 +506,7 @@ cmd_ensure() {
     mkdir -p "$profile"
     # A computer restored from a snapshot still carries the old browser's lock.
     rm -f "$profile/SingletonLock" "$profile/SingletonSocket" "$profile/SingletonCookie"
-    daemon "browser$n" env DISPLAY=":$n" google-chrome $CHROME_FLAGS --user-data-dir="$profile" --remote-debugging-port="$cdp" --window-size="$WIDTH,$HEIGHT"
+    daemon "browser$n" env DISPLAY=":$n" google-chrome $CHROME_FLAGS $(chrome_sandbox_flags) --user-data-dir="$profile" --remote-debugging-port="$cdp" --window-size="$WIDTH,$HEIGHT"
     wait_for 300 cdp_up "$cdp" || fail browser "screen $n's browser did not start: $(grep -v -e dbus -e Fontconfig "$RUN/browser$n.log" | tail -n 4)"
     # A new browser starts signed in to whatever the team is already signed in to.
     # The DevTools helpers log apart from Chrome, which holds its own log open, and never inherit
@@ -581,7 +590,7 @@ cmd_launch() {
     browser)
       if running "browser$n" "$(browser_pattern "$n")"; then
         # The running Chrome takes this and opens a window; the Bot's DevTools connection stays.
-        setsid nohup env DISPLAY=":$n" google-chrome --user-data-dir="$PROFILES/$n" --new-window \
+        setsid nohup env DISPLAY=":$n" google-chrome $(chrome_sandbox_flags) --user-data-dir="$PROFILES/$n" --new-window \
           >/dev/null 2>&1 </dev/null 8>&- 9>&- &
       else
         cmd_ensure "$n" >/dev/null

@@ -24,6 +24,8 @@ services:
       BOT_DATA_DIR: /app/.data
       # SearXNG from this file, unless .env picks a hosted provider.
       BOT_SEARCH_URL: http://searxng:8080
+      # Starts the team's computer with a seccomp profile that keeps Chrome's own sandbox on.
+      EVE_DOCKER_PATH: /app/scripts/docker-chrome-sandbox.sh
     ports:
       - "${BOT_PORT:-3000}:3000"
     volumes:

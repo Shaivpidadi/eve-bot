@@ -312,6 +312,8 @@ scripts/setup.mjs               npm run setup: standalone or Vercel, models, sea
 scripts/build.mjs               npm run build: the agent, then the console (only the console on Vercel)
 scripts/start.mjs               npm start: the built agent and the console as one standalone server
 Dockerfile, docker-compose.yml  the standalone server as containers, with SearXNG and optionally Ollama
+docker/seccomp-chrome.json      Docker's default seccomp profile plus the namespaces Chrome's sandbox needs
+scripts/docker-chrome-sandbox.sh  a docker for EVE_DOCKER_PATH that starts the computer with that profile
 src/
 ├── app/bot/page.tsx            the console
 ├── app/bot/login/page.tsx      sign-in with a console token
@@ -505,11 +507,16 @@ model.
 - **The computer uses Vercel Sandbox by default, even locally.** Run `vercel link
   && vercel env pull`, or set `BOT_COMPUTER=local` to run it in Docker on your
   machine (see [Run it standalone](#run-it-standalone)).
-- **A local computer's Chrome runs without its own sandbox.** An ordinary Docker
-  container does not grant the Linux namespaces Chrome's sandbox needs, so the
-  container is the isolation boundary. A microsandbox VM
-  (`BOT_COMPUTER_LOCAL=microsandbox`) is for development only: the console
-  cannot open it, and a production server refuses it.
+- **A local computer's Chrome keeps its own sandbox only with a seccomp profile.**
+  An ordinary Docker container forbids the user namespaces Chrome sandboxes
+  its renderers in, so there Chrome runs without its sandbox and the container
+  is the isolation boundary. Point `EVE_DOCKER_PATH` at
+  `scripts/docker-chrome-sandbox.sh` and eve starts the computer with
+  `docker/seccomp-chrome.json`, Docker's default profile plus those namespace
+  calls; Chrome then notices at launch and keeps its sandbox. Docker Compose
+  does this by default. A microsandbox VM (`BOT_COMPUTER_LOCAL=microsandbox`)
+  is for development only: the console cannot open it, and a production server
+  refuses it.
 - **Dev threads do not carry over to a standalone server.** eve binds a thread
   started under `npm run dev` to the dev server, so `npm start` cannot continue
   it: the first message there ends the thread's session without a reply, and

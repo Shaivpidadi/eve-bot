@@ -79,9 +79,8 @@ let runtime: ComputerRuntime | null = null;
 function currentRuntime(): ComputerRuntime {
   const flags = [process.env.BOT_COMPUTER_CHROME_FLAGS ?? ""];
   if (process.env.BOT_BROWSER_PROXY) flags.push(`--proxy-server=${process.env.BOT_BROWSER_PROXY}`);
-  // Chrome's own sandbox needs Linux namespaces that an ordinary Docker container does not grant, and
-  // without them the screen's browser exits on start. There the container is the isolation boundary.
-  if (computerMode() === "local" && localComputer() === "docker") flags.push("--no-sandbox");
+  // Whether Chrome may keep its own sandbox is decided on the computer, at launch: an
+  // ordinary Docker container forbids the user namespaces it needs (see `script.ts`).
   runtime ??= computerRuntime({ chromeFlags: flags.join(" "), aptMirror: process.env.BOT_COMPUTER_APT_MIRROR });
   return runtime;
 }
