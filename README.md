@@ -113,7 +113,9 @@ that survives a restart: `.data/` (the roster, jobs, feed, and memory),
 `bot-computer` container.
 
 Schedules run on their cron cadence in the server's time zone: the watchdog,
-the standup, and every routine. During `npm run dev` they do not, and a thread
+the standup, and every routine. The server log shows one `watchdog:` line per
+pass, so you can see it is alive; `BOT_TICK_CRON="* * * * *"` makes that every
+minute. During `npm run dev` they do not run, and a thread
 started under the dev server cannot be continued by the production build (eve
 binds development sessions to the dev server); reset such a room, or start from
 an empty `.eve/`, when you switch.

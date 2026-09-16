@@ -30,9 +30,12 @@ const BATCH = Number(process.env.BOT_TICK_BATCH ?? 10);
 export default defineSchedule({
   cron: process.env.BOT_TICK_CRON ?? "17 6 * * *",
   run({ to, waitUntil, appAuth }) {
+    const started = Date.now();
     waitUntil(
       (async () => {
-        const runnable = await pickRunnable(await dueJobs(Number.POSITIVE_INFINITY));
+        const due = await dueJobs(Number.POSITIVE_INFINITY);
+        const runnable = await pickRunnable(due);
+        let dispatched = 0;
 
         await Promise.all(
           runnable.map(async (job) => {
@@ -55,12 +58,15 @@ export default defineSchedule({
                   auth: { ...appAuth, attributes: roomAttributes(job.workspaceId, job.room) },
                 },
               );
+              dispatched += 1;
             } catch {
               // Could not hand it off — put it back rather than leaving it leased.
               await releaseJob(job.workspaceId, job.id, { token });
             }
           }),
         );
+        // One line per pass, so a server log shows the watchdog is alive.
+        console.log(`[bot] watchdog: ${due.length} due, ${dispatched} dispatched, ${Date.now() - started}ms`);
       })(),
     );
     // Browsers nobody is using are stopped; they start again on the next use.
