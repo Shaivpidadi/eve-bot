@@ -61,13 +61,13 @@ waits for its own start time, but you can run the watchdog by hand:
 curl -X POST http://localhost:3000/eve/v1/dev/schedules/tick
 ```
 
-### Run it fully local
+### Run it standalone
 
-Nothing in the default setup has to leave your machine except the model and the
-computer, and both can stay local too:
+Bot also runs as one server on a machine you own, with nothing on Vercel. Put
+this in `.env`:
 
 ```bash
-# The team's computer in Docker instead of Vercel Sandbox (needs Docker Desktop, OrbStack, or Colima)
+# The team's computer in Docker instead of Vercel Sandbox (Docker Desktop, OrbStack, Colima, or a Docker host)
 BOT_COMPUTER=local
 
 # Models from any API that speaks OpenAI's chat completions format, instead of AI Gateway
@@ -75,19 +75,46 @@ BOT_MODEL_BASE_URL=http://localhost:11434/v1   # Ollama; LM Studio is http://loc
 BOT_MODEL=qwen3:8b                             # used everywhere unless BOT_HQ_MODEL / BOT_MODEL_* override it
 # BOT_MODEL_API_KEY=                           # if your endpoint needs one
 # BOT_MODEL_CONTEXT_TOKENS=128000
+
+# The password you sign in to the console with (openssl rand -base64 32 makes a good one)
+BOT_CONSOLE_TOKEN=
 ```
 
-Storage and memory are already local in development (`.data/`). The first time a
-Bot or you opens the computer, eve builds its container and the computer installs
-Chrome and a small desktop, which takes a few minutes; after that it starts in
-seconds. You watch and take over it in the console as usual: a small forwarder
-container publishes its screen on `127.0.0.1:16080` only, and every connection
-still needs a single-use token.
+Then build and start it:
+
+```bash
+npm install
+npm run build     # the agent (eve build) and the console (next build)
+npm start         # both, on http://localhost:3000; PORT changes the port
+```
+
+`npm start` runs two processes as one service: the agent, which listens on
+`127.0.0.1:4274` only and runs HQ, the Bots, the console API, and the schedules,
+and the Next.js console, which proxies to it. Stopping the service stops the
+team's computer; the next start picks it back up with its files. Run it under
+whatever keeps your other Node services alive, and keep three things on storage
+that survives a restart: `.data/` (the roster, jobs, feed, and memory),
+`.eve/.workflow-data/` (running jobs and threads), and the Docker volume of the
+`bot-computer` container.
+
+Schedules run on their cron cadence in the server's time zone: the watchdog,
+the standup, and every routine. During `npm run dev` they do not, and a thread
+started under the dev server cannot be continued by the production build (eve
+binds development sessions to the dev server); reset such a room, or start from
+an empty `.eve/`, when you switch.
+
+The first time a Bot or you opens the computer, eve builds its container and the
+computer installs Chrome and a small desktop, which takes a few minutes; after
+that it starts in seconds. You watch and take over it in the console as usual: a
+small forwarder container publishes its screen on `127.0.0.1:16080` only, and
+every connection still needs a single-use token.
 
 Pick a model that handles tool calls well; HQ and the Bots do almost everything
 through tools. Local models are not in AI Gateway's price list, so the USD spend
 caps do not apply to them, and eve's built-in web search runs through AI Gateway,
 so on your own endpoint Bots research with their browser instead.
+
+The same `.env` also works with `npm run dev` for hacking on Bot itself.
 
 ## Deploy
 
@@ -231,6 +258,8 @@ curl -X PATCH localhost:3000/bot/v1/bots/<botId> -H 'content-type: application/j
 
 ```
 next.config.ts                  withEve, plus forwarding for the console's /bot/v1 API
+scripts/build.mjs               npm run build: the agent, then the console (only the console on Vercel)
+scripts/start.mjs               npm start: the built agent and the console as one standalone server
 src/
 ├── app/bot/page.tsx            the console
 ├── app/bot/login/page.tsx      sign-in with a console token
@@ -353,7 +382,7 @@ three drivers:
 | Driver | Used when | Concurrency |
 | --- | --- | --- |
 | Vercel Blob | on Vercel, or when Blob credentials are set | ETag `ifMatch` — a true compare-and-set across instances (read ETags are normalized to their strong form, which `ifMatch` requires) |
-| Local disk | `eve dev` (`.data/`) | in-process key locking; single-process only |
+| Local disk | `eve dev` and a standalone server (`.data/`) | in-process key locking; single-process only |
 | In-memory | tests, throwaway | in-process key locking |
 
 Job claims, playbook edits, and stats all go through one read-modify-write helper
@@ -374,7 +403,7 @@ worth knowing:
 | `BOT_TEAMMATE_MODEL` | one model for every job, overriding the effort levels |
 | `BOT_TEAMMATE_REASONING` | teammate reasoning depth: `medium` (default), `low`, `high`, `xhigh` |
 | `BOT_DEFAULT_BOT_NAME` | name of the generalist every workspace starts with (default `Atlas`) |
-| `BOT_COMPUTER` | where the computer runs: `vercel` (default, in development too) or `local` |
+| `BOT_COMPUTER` | where the computer runs: `vercel` (default, in development too) or `local` (Docker on this machine, for a standalone server or development) |
 | `BOT_COMPUTER_NAME` | the shared computer's name; a new name starts a new machine |
 | `BOT_COMPUTER_MAX_SCREENS` / `BOT_COMPUTER_IDLE_MINUTES` | how many Bot browsers run at once, and when an unused one stops |
 | `BOT_COMPUTER_KEY` | pins the key live-view tokens are signed with (generated and stored otherwise) |
@@ -419,11 +448,16 @@ model.
   `npm run agent:build`, and `npm run build`.
 - **The computer uses Vercel Sandbox by default, even locally.** Run `vercel link
   && vercel env pull`, or set `BOT_COMPUTER=local` to run it in Docker on your
-  machine (see [Run it fully local](#run-it-fully-local)).
+  machine (see [Run it standalone](#run-it-standalone)).
 - **A local computer's Chrome runs without its own sandbox.** An ordinary Docker
   container does not grant the Linux namespaces Chrome's sandbox needs, so the
   container is the isolation boundary. A microsandbox VM
-  (`BOT_COMPUTER_LOCAL=microsandbox`) cannot be opened from the console yet.
+  (`BOT_COMPUTER_LOCAL=microsandbox`) is for development only: the console
+  cannot open it, and a production server refuses it.
+- **Dev threads do not carry over to a standalone server.** eve binds a thread
+  started under `npm run dev` to the dev server, so `npm start` fails its next
+  turn with "resumed outside a generation-bound delivery". Reset the room, or
+  start the server from an empty `.eve/`.
 - **Live view is a public URL with a token.** Sandbox ports are reachable by
   anyone with the address, so the gateway admits only single-use tokens that
   expire within a minute. Watching is view-only in the console; the server does

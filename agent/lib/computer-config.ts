@@ -11,10 +11,10 @@ import { sharedComputer } from "./computer";
 /**
  * Where the team's computer runs.
  *
- * `BOT_COMPUTER=vercel` (the default, including local development) runs it on
- * Vercel Sandbox, exactly as in production. `BOT_COMPUTER=local` runs it in a
- * VM on this machine, for working locally; it is pinned to one backend so a
- * Docker daemon starting up can never silently swap the computer out.
+ * `BOT_COMPUTER=vercel` (the default) runs it on Vercel Sandbox, exactly as a
+ * Vercel deployment does. `BOT_COMPUTER=local` runs it on this machine, for a
+ * standalone deployment or for working locally; it is pinned to one backend so
+ * a Docker daemon starting up can never silently swap the computer out.
  */
 export type ComputerMode = "vercel" | "local";
 
@@ -92,12 +92,14 @@ export function computerBackend(): SandboxBackend {
 }
 
 /**
- * In production eve stops and snapshots a local VM after every step, which would
- * kill the browser mid-job. Local mode is for development only.
+ * Docker is the standalone computer: eve keeps its container running between
+ * turns, stops it only when the server shuts down, and reattaches on the next
+ * start. A microsandbox VM is for trying things out; the console cannot open
+ * one, so a production server refuses it rather than run Bots nobody can watch.
  */
 function localModeError(): string | null {
-  return process.env.NODE_ENV === "production"
-    ? "BOT_COMPUTER=local is for development only. Unset it to run the computer on Vercel Sandbox."
+  return process.env.NODE_ENV === "production" && localComputer() === "microsandbox"
+    ? "BOT_COMPUTER_LOCAL=microsandbox is for development only. Unset it to run the computer in Docker."
     : null;
 }
 

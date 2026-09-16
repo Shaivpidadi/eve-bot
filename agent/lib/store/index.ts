@@ -12,8 +12,9 @@ let cached: Kv | undefined;
  *
  * - `BOT_STORE=blob|fs|memory` forces a driver.
  * - Vercel Blob when its credentials are present, or when running on Vercel.
- * - Local disk (`BOT_DATA_DIR`, default `.data`) during `eve dev`.
- * - In-memory as the last resort, which is the only lossy option.
+ * - Local disk (`BOT_DATA_DIR`, default `.data`) everywhere else: a standalone
+ *   server as much as `eve dev`. In-memory, the only lossy option, is never
+ *   picked on its own.
  */
 export function store(): Kv {
   if (cached !== undefined) return cached;
@@ -31,10 +32,7 @@ function select(): Kv {
   const hasBlob =
     process.env.BLOB_READ_WRITE_TOKEN !== undefined || process.env.BLOB_STORE_ID !== undefined;
   if (hasBlob || process.env.VERCEL === "1") return blobKv(prefix);
-  if (process.env.BOT_DATA_DIR !== undefined || process.env.NODE_ENV !== "production") {
-    return fileKv(process.env.BOT_DATA_DIR ?? ".data");
-  }
-  return inMemoryKv();
+  return fileKv(process.env.BOT_DATA_DIR ?? ".data");
 }
 
 export interface Doc<T> {

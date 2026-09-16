@@ -109,7 +109,9 @@ export async function authenticate(request: Request): Promise<Gate> {
       ok: false,
       status: 503,
       error:
-        "This deployment is not protected. Turn on Vercel Authentication for all deployments, or set BOT_CONSOLE_TOKEN.",
+        process.env.VERCEL === "1"
+          ? "This deployment is not protected. Turn on Vercel Authentication for all deployments, or set BOT_CONSOLE_TOKEN."
+          : "This server has no console token. Set BOT_CONSOLE_TOKEN to a long random password and restart it.",
     };
   }
   const workspaceId =

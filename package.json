@@ -7,8 +7,8 @@
   "scripts": {
     "dev": "next dev",
     "dev:https": "next dev --experimental-https",
-    "build": "next build",
-    "start": "next start",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/start.mjs",
     "agent:dev": "eve dev",
     "agent:build": "eve build",
     "typecheck": "tsc --noEmit"
