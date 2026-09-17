@@ -1,6 +1,8 @@
 import { gateway } from "@ai-sdk/gateway";
 import { experimental_evaluate as evaluate } from "ai";
 
+import { customEndpoint } from "./models";
+
 /**
  * Jev, TypeSafe's decision model, as a function Bot can call.
  *
@@ -22,8 +24,12 @@ import { experimental_evaluate as evaluate } from "ai";
 
 const OFF = new Set(["off", "0", "false", "no"]);
 
-/** Whether Bot uses Jev at all. One switch for every decision. */
-export const jevOn = (): boolean => !OFF.has(process.env.BOT_JEV?.trim().toLowerCase() ?? "");
+/**
+ * Whether Bot uses Jev at all. One switch for every decision, and off on its own
+ * when the models come from a custom endpoint, since Jev lives on AI Gateway.
+ */
+export const jevOn = (): boolean =>
+  customEndpoint() === null && !OFF.has(process.env.BOT_JEV?.trim().toLowerCase() ?? "");
 
 export const jevModel = (): string => process.env.BOT_JEV_MODEL?.trim() || "typesafe-ai/jev";
 

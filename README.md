@@ -137,7 +137,10 @@ through tools. eve's built-in web search runs through AI Gateway, so on your own
 endpoint give Bots a search service of yours: `BOT_SEARCH_PROVIDER=searxng` with
 `BOT_SEARCH_URL` pointing at a SearXNG instance keeps searches on your network,
 and `brave`, `tavily`, or `exa` with `BOT_SEARCH_API_KEY` use a hosted one.
-With none configured, Bots research with their browser.
+With none configured, Bots research with their browser. Jev, which makes
+Bot's small decisions on AI Gateway (see below), switches itself off on your
+own endpoint: HQ answers on your model, HQ picks the Bot and rates effort as
+it always did, and teammates browse step by step.
 
 The USD spend caps hold on your own endpoint once Bot knows what a model costs:
 on OpenRouter it reads the price list itself, and anywhere else you set
@@ -519,7 +522,8 @@ with a probability out, in under a second, output free. Bot builds explicit
 state everywhere, so its small decisions go to Jev instead of costing a model
 turn. One switch, `BOT_JEV`, covers all of them, and it is on by default
 because it is the cheaper way; each use keeps a fallback for when Jev is
-unsure or unreachable.
+unsure or unreachable. On a custom model endpoint (`BOT_MODEL_BASE_URL`) it is
+off on its own, since Jev is reached through AI Gateway.
 
 | Decision | What Jev sees and picks | Fallback |
 | --- | --- | --- |
