@@ -29,10 +29,36 @@ const PATHS = {
   ),
   up: <path d="M12 19V5.5M6 11.5l6-6 6 6" />,
   stop: <rect x="7.5" y="7.5" width="9" height="9" rx="1.5" fill="currentColor" stroke="none" />,
+  more: (
+    <>
+      <circle cx="6" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="18" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    </>
+  ),
+  pin: <path d="M9 4h6l-.8 6.2 2.8 2.8v1.5H7v-1.5L9.8 10.2ZM12 14.5V20" />,
   copy: (
     <>
       <rect x="9" y="9" width="11" height="11" rx="2" />
       <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+    </>
+  ),
+  edit: <path d="M4 20h4l11-11a2.1 2.1 0 0 0-3-3L5 17ZM13.5 7.5l3 3" />,
+  eyeoff: (
+    <>
+      <path d="M3 3l18 18M10.6 10.7a2 2 0 0 0 2.8 2.8M6.5 6.6C4.4 8 3 10 3 12c2 3.5 5.3 6 9 6 1.6 0 3.1-.4 4.5-1.2M9.8 5.3C10.5 5.1 11.2 5 12 5c3.7 0 7 2.5 9 7-.6 1-1.3 2-2.1 2.8" />
+    </>
+  ),
+  eraser: (
+    <>
+      <path d="m7.5 20 11.8-11.8a2 2 0 0 0 0-2.8l-2.7-2.7a2 2 0 0 0-2.8 0L3.9 12.6a2 2 0 0 0 0 2.8L8.5 20Z" />
+      <path d="M9.6 6.9 17 14.3M4.5 20h16" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M4 7h16M9.5 7V4.8h5V7M6.5 7l.8 12.2h9.4L17.5 7" />
+      <path d="M10 11v5M14 11v5" />
     </>
   ),
   check: (

@@ -233,7 +233,17 @@ routes on the same origin. It is organised around Bots, not chats:
 
 - **Roster.** Every Bot has a name, a title, and an avatar whose motion shows
   its state: idle, thinking, working, waiting on you, blocked, or done. Hover
-  an avatar to see what it is doing right now. HQ sits at the top.
+  an avatar to see what it is doing right now. HQ sits at the top. Right-click
+  a Bot, or use the **⋯** that appears on hover, for its menu: pin it to the
+  top, move it into a named section, mark its thread unread, clear its chat
+  (the thread starts over; the Bot, its finished work, and its memory stay),
+  rename it, edit its profile, duplicate it (same job, instructions, and
+  playbook, its own thread), copy its conversation id, hide it from the
+  roster, or delete it.
+  Pins, sections, and hiding are saved on the Bot, so every device sees the
+  same roster; unread is yours alone. Delete asks first: it cancels the Bot's
+  open jobs and discards what it learned, the way `retire_bot` does from a
+  thread.
 - **Chat.** Each Bot has one durable thread. The transcript mixes messages
   with events — routines created, jobs handed off, a collapsible list of the
   steps a Bot logged — and inline cards: an email waiting to be sent, a
@@ -305,6 +315,11 @@ curl localhost:3000/bot/v1/state
 curl -X POST localhost:3000/bot/v1/bots -H 'content-type: application/json' \
   -d '{"name":"Ava","role":"Inbound sales follow-up","persona":"Warm and brief. Never promises a discount."}'
 curl -X PATCH localhost:3000/bot/v1/bots/<botId> -H 'content-type: application/json' -d '{"status":"paused"}'
+
+# Roster placement, a copy, or removal (what the roster menu does)
+curl -X PATCH localhost:3000/bot/v1/bots/<botId> -H 'content-type: application/json' -d '{"pinned":true,"section":"Sales","hidden":false}'
+curl -X POST localhost:3000/bot/v1/bots/<botId>/duplicate
+curl -X DELETE localhost:3000/bot/v1/bots/<botId>
 ```
 
 ## Layout

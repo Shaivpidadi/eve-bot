@@ -87,6 +87,10 @@ export interface Member {
   readonly computer: MemberComputer;
   readonly routines: readonly Routine[];
   readonly files: readonly FileRef[];
+  /** Roster placement from the row menu: pinned rows first, grouped by section, hidden rows folded away. */
+  readonly pinned: boolean;
+  readonly section: string | null;
+  readonly hidden: boolean;
   readonly profile: {
     readonly persona: string;
     readonly skills: readonly string[];
@@ -176,7 +180,8 @@ export async function buildBoard(
           now,
         ),
       )
-      .sort((left, right) => recency(right).localeCompare(recency(left))),
+      // Pinned Bots first, then the most recently active; sections and hiding are the console's to draw.
+      .sort((left, right) => Number(right.pinned) - Number(left.pinned) || recency(right).localeCompare(recency(left))),
   ];
 
   const failure = recent.find(
@@ -219,6 +224,9 @@ function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAl
     computer: sharedComputer(screen, running, running?.id ?? null, openHandover(screen?.handover ?? null, open)),
     routines: [],
     files: [],
+    pinned: false,
+    section: null,
+    hidden: false,
     profile: null,
   };
 }
@@ -293,6 +301,9 @@ function botMember(
         at: event.at,
         jobId: event.jobId,
       })),
+    pinned: bot.pinned === true,
+    section: bot.section ?? null,
+    hidden: bot.hidden === true,
     profile: {
       persona: bot.persona,
       skills: bot.skills,

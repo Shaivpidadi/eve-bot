@@ -25,6 +25,12 @@ export interface Bot {
   hiredAt: string;
   /** The Bot that created this one at the operator's request, when a Bot did. */
   createdBy?: { readonly botId: string; readonly name: string } | null;
+  /** Roster placement, set from the console's row menu. Absent on older Bots. */
+  pinned?: boolean;
+  /** A named group in the roster, or null for none. */
+  section?: string | null;
+  /** Kept off the roster until unhidden; still on the team. */
+  hidden?: boolean;
   updatedAt: string;
   stats: {
     jobsCompleted: number;
