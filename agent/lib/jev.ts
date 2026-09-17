@@ -7,30 +7,23 @@ import { experimental_evaluate as evaluate } from "ai";
  * Jev takes structured state and answers typed questions with calibrated
  * probabilities, in well under a second and for a fraction of a cent. It never
  * generates text. That makes it the right tool for the many small decisions
- * inside a job that today cost a full model turn: how hard a job is, which
- * element to click next. Each decision here is a `choice` over named options
- * with a description apiece; Jev sees the state, the descriptions, and nothing
- * else, and hands back the option it picked and how sure it is.
+ * inside a job that would otherwise cost a full model turn: which model HQ
+ * should answer on, how hard a job is, which element to click next. Each
+ * decision here is a `choice` over named options with a description apiece;
+ * Jev sees the state, the descriptions, and nothing else, and hands back the
+ * option it picked and how sure it is.
  *
- * Every caller keeps a fallback for when Jev is off, unsure, or unreachable,
- * because a decision service is optional infrastructure, not a dependency.
- * Jev is reached through AI Gateway (`BOT_JEV_MODEL`, default `typesafe-ai/jev`),
- * so it needs the same credentials as the language models.
+ * Jev is on by default, because it is the cheaper way to make these decisions;
+ * `BOT_JEV=off` turns every use of it off at once, and every caller keeps a
+ * fallback for when Jev is off, unsure, or unreachable. It is reached through
+ * AI Gateway (`BOT_JEV_MODEL`, default `typesafe-ai/jev`), so it needs the same
+ * credentials as the language models.
  */
 
-export type JevFeature = "effort" | "pilot";
+const OFF = new Set(["off", "0", "false", "no"]);
 
-const FEATURE_ENV: Readonly<Record<JevFeature, string>> = {
-  effort: "BOT_EFFORT_RATER",
-  pilot: "BOT_BROWSER_PILOT",
-};
-
-const ON = new Set(["jev", "1", "on", "true"]);
-
-/** Whether a Jev-backed decision is switched on. Each is off until asked for. */
-export function jevEnabled(feature: JevFeature): boolean {
-  return ON.has(process.env[FEATURE_ENV[feature]]?.trim().toLowerCase() ?? "");
-}
+/** Whether Bot uses Jev at all. One switch for every decision. */
+export const jevOn = (): boolean => !OFF.has(process.env.BOT_JEV?.trim().toLowerCase() ?? "");
 
 export const jevModel = (): string => process.env.BOT_JEV_MODEL?.trim() || "typesafe-ai/jev";
 

@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { findBot } from "../lib/bots";
-import { decide, jevEnabled, ranked } from "../lib/jev";
+import { decide, jevOn, ranked } from "../lib/jev";
 import { assignJob } from "../lib/jobs";
 import { DEFAULT_EFFORT, EFFORT_DESCRIPTIONS, JOB_EFFORTS, type JobEffort } from "../lib/models";
 import { isRoomName } from "../lib/rooms";
@@ -14,7 +14,7 @@ import type { Bot } from "../lib/types";
  * How sure Jev must be before its rating stands. Below this the job takes
  * HQ's rating, or the default, and the tool result says why.
  */
-const RATER_MIN_CONFIDENCE = Number(process.env.BOT_EFFORT_RATER_MIN_CONFIDENCE ?? 0.55);
+const RATER_MIN_CONFIDENCE = 0.55;
 const BRIEF_STATE_CHARS = 6_000;
 
 type Rating = {
@@ -48,7 +48,7 @@ async function rateEffort(
 ): Promise<Rating> {
   const fallback: Rating =
     input.effort === undefined ? { effort: DEFAULT_EFFORT, by: "default" } : { effort: input.effort, by: "hq" };
-  if (!jevEnabled("effort")) return fallback;
+  if (!jevOn()) return fallback;
 
   try {
     const decision = await decide<JobEffort>({

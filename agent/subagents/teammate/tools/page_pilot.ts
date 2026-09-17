@@ -1,7 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { decide, jevEnabled, ranked, type Decision } from "../../../lib/jev";
+import { decide, jevOn, ranked, type Decision } from "../../../lib/jev";
 import { browser, refreshScreen } from "../lib/browser";
 import {
   actionFor,
@@ -26,10 +26,11 @@ import {
  * back to the Bot with a fresh snapshot, so the Bot's judgment and the approval
  * gates stay where they were.
  *
- * Off unless BOT_BROWSER_PILOT=jev; then it needs AI Gateway like the models.
+ * Present while Jev is on (BOT_JEV, on by default); it needs AI Gateway like the models.
  */
 
-const MIN_CONFIDENCE = Number(process.env.BOT_BROWSER_PILOT_MIN_CONFIDENCE ?? 0.5);
+/** Below this much confidence the pilot stops and hands the page back rather than guess. */
+const MIN_CONFIDENCE = 0.5;
 const DEFAULT_STEPS = 8;
 const MAX_STEPS = 15;
 const SNAPSHOT_STATE_CHARS = 14_000;
@@ -239,6 +240,6 @@ const pilot = defineTool({
 // tool cannot be disabled outright, but a dynamic one may resolve to nothing.
 export default defineDynamic({
   events: {
-    "session.started": () => (jevEnabled("pilot") ? pilot : null),
+    "session.started": () => (jevOn() ? pilot : null),
   },
 });

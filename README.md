@@ -453,7 +453,7 @@ worth knowing:
 | --- | --- |
 | `AI_GATEWAY_API_KEY` | model access (or link a Vercel project and use OIDC) |
 | `BOT_HQ_MODEL` / `BOT_HQ_REASONING` | HQ's model (Sonnet) and reasoning depth (`low`) |
-| `BOT_HQ_ROUTER` | `jev` lets TypeSafe's Jev pick HQ's model per turn, between `BOT_HQ_MODEL_ROUTINE` (Sonnet) and `BOT_HQ_MODEL_HARD` (Opus); off by default, experimental |
+| `BOT_JEV` / `BOT_JEV_MODEL` | Jev, the decision model behind HQ's per-turn model choice, job effort rating, and the browser pilot: `on` (default) or `off`; the model id (`typesafe-ai/jev`) |
 | `BOT_MODEL_QUICK` / `BOT_MODEL_STANDARD` / `BOT_MODEL_DEEP` | the model a job runs on at each effort level (see below) |
 | `BOT_TEAMMATE_MODEL` | one model for every job, overriding the effort levels |
 | `BOT_TEAMMATE_REASONING` | teammate reasoning depth: `medium` (default), `low`, `high`, `xhigh` |
@@ -495,41 +495,45 @@ model.
 
 ### Which model HQ talks on
 
-HQ runs on Sonnet: most of its turns are conversation and routing. Some are
-not, such as planning a hard job or untangling an unclear request. Set
-`BOT_HQ_ROUTER=jev` and a small decision model chooses per turn. At the start
-of each turn, [TypeSafe's Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
-reads the last few messages and picks `BOT_HQ_MODEL_ROUTINE` (Sonnet, low
-reasoning) for conversation and clear requests, or `BOT_HQ_MODEL_HARD` (Opus,
-medium reasoning) for judgment calls. The whole turn, tools included, then runs
-on that model, and the next turn is chosen afresh. Jev sees the two
-descriptions and the messages, never credentials, and answers in well under a
-second for a fraction of a cent.
+Most of HQ's turns are conversation and routing; some are not, such as
+planning a hard job or untangling an unclear request. So HQ's model is chosen
+per turn. At the start of each turn,
+[TypeSafe's Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev),
+a small decision model, reads the last few messages and picks the team's
+`standard` model (Sonnet, low reasoning) for conversation and clear requests,
+or its `deep` model (Opus, medium reasoning) for judgment calls: the same two
+models a job's effort picks between, so `BOT_MODEL_STANDARD` and
+`BOT_MODEL_DEEP` set them for HQ too. The whole turn, tools included, runs on
+that model, and the next turn is chosen afresh. Jev sees the two descriptions
+and the messages, never credentials, and answers in well under a second for a
+fraction of a cent.
 
+`BOT_HQ_MODEL` pins one model and skips the choice; so does `BOT_JEV=off`.
 This uses eve's experimental `autoModel`, and Jev is in early access on AI
-Gateway, so it is off by default and may change between releases. `BOT_HQ_MODEL`
-pins one model and turns routing off. Jobs are unaffected: the teammate keeps
-picking its model from the effort HQ assigned.
+Gateway, so a Gateway account without Jev access should set one of those.
 
 ### Where else Jev decides
 
 Jev is a decision model, not a chat model: structured state in, a typed choice
 with a probability out, in under a second, output free. Bot builds explicit
-state everywhere, so two more of its small decisions can go to Jev instead of
-costing a model turn. Each is off until asked for, and each keeps a fallback
-for when Jev is unsure or unreachable.
+state everywhere, so its small decisions go to Jev instead of costing a model
+turn. One switch, `BOT_JEV`, covers all of them, and it is on by default
+because it is the cheaper way; each use keeps a fallback for when Jev is
+unsure or unreachable.
 
-| Switch | What Jev decides | Fallback |
+| Decision | What Jev sees and picks | Fallback |
 | --- | --- | --- |
-| `BOT_EFFORT_RATER=jev` | A new job's effort, `quick`, `standard`, or `deep`, from its brief, success criteria, schedule, and Bot. A confident rating overrides HQ's, and the `assign_job` result says so. | HQ's level, or `standard`, below `BOT_EFFORT_RATER_MIN_CONFIDENCE` (`0.55`) or on error. |
-| `BOT_BROWSER_PILOT=jev` | Teammates get `page_pilot`: given a goal and any values it may type, it runs the look-and-click loop itself, offering Jev every interactive element on the page as an option and doing what Jev picks, up to a step limit. It never types anything the Bot did not provide, never presses a consequential control (send, pay, delete, publish, sign out), and stops at any sign-in, code, or CAPTCHA. | It hands back to the Bot with a fresh snapshot wherever it stops: goal reached, a person needed, a consequential control next, unsure below `BOT_BROWSER_PILOT_MIN_CONFIDENCE` (`0.5`), no change, or out of steps. |
+| HQ's model, each turn | The last few messages; `standard` or `deep` (above). | `standard`, or `BOT_HQ_MODEL`. |
+| A new job's effort | The brief, success criteria, schedule, and Bot; `quick`, `standard`, or `deep`. A confident rating overrides HQ's, and the `assign_job` result says so. | HQ's level, or `standard`, when Jev is under 55% sure or does not answer. |
+| The next browser step | Teammates get `page_pilot`: given a goal and any values it may type, it runs the look-and-click loop itself, offering Jev every interactive element on the page as an option and doing what Jev picks, up to a step limit. It never types anything the Bot did not provide, never presses a consequential control (send, pay, delete, publish, sign out), and stops at any sign-in, code, or CAPTCHA. | It hands back to the Bot with a fresh snapshot wherever it stops: goal reached, a person needed, a consequential control next, under 50% sure, no change, or out of steps. |
 
 The pilot is where the money is. Browser work re-sends the page on every
 step, and the language model reads it at dollars per million tokens; Jev reads
 the same page at cents. The Bot still plans, still does the step that carries
 consequences, and still asks a person for sign-ins, so the approval gates and
 the judgment stay where they were. `BOT_JEV_MODEL` names the decision model;
-everything here is experimental and needs Jev access on AI Gateway.
+this is experimental and needs Jev access on AI Gateway. Without it, set
+`BOT_JEV=off`.
 
 ## Known limits
 
