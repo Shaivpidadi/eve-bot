@@ -1,24 +1,69 @@
 import type { Metadata } from "next";
 
+import { DEPLOY_URL as DEPLOY, SITE } from "../site/content";
+
+const REPO = SITE.repo;
+const DESCRIPTION =
+  "Always-on AI teammates with a computer of their own. Deploy to your Vercel account in one click, or run the whole thing standalone.";
+
 export const metadata: Metadata = {
-  title: "EVE BOT: run it on Vercel or on your own machine",
-  description: "Always-on AI teammates with a computer of their own. Deploy to your Vercel account in one click, or run the whole thing standalone.",
+  title: { absolute: `${SITE.name}: run it on Vercel or on your own machine` },
+  description: DESCRIPTION,
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: SITE.name,
+    title: `${SITE.name}: run it on Vercel or on your own machine`,
+    description: DESCRIPTION,
+    images: ["/apple-icon.png"],
+  },
+  twitter: { card: "summary", title: SITE.name, description: DESCRIPTION, images: ["/apple-icon.png"] },
 };
 
-const REPO = "https://github.com/Shaivpidadi/eve-bot";
-
-/** One click: copies the repo, creates the project, connects a private Blob store, asks for the console token. */
-const DEPLOY =
-  "https://vercel.com/new/clone?" +
-  new URLSearchParams({
-    "repository-url": REPO,
-    "project-name": "eve-bot",
-    "repository-name": "eve-bot",
-    env: "BOT_CONSOLE_TOKEN",
-    envDescription: "A long random password you sign in to the console with",
-    envLink: `${REPO}#vercel`,
-    stores: JSON.stringify([{ type: "blob", access: "private" }]),
-  }).toString();
+/**
+ * Who this is, for machines: the software, and the project that publishes it.
+ * The project has no office or phone, so it says so by giving only what exists.
+ */
+const STRUCTURED_DATA = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": `${SITE.origin}/#software`,
+      name: SITE.name,
+      alternateName: SITE.shortName,
+      description: DESCRIPTION,
+      url: SITE.origin,
+      applicationCategory: "BusinessApplication",
+      operatingSystem: "Vercel, Linux, macOS (Node 24 and Docker)",
+      softwareVersion: "alpha",
+      license: "https://opensource.org/licenses/MIT",
+      isAccessibleForFree: true,
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      installUrl: DEPLOY,
+      downloadUrl: REPO,
+      sameAs: [REPO],
+      author: { "@id": `${SITE.origin}/#org` },
+    },
+    {
+      "@type": "Organization",
+      "@id": `${SITE.origin}/#org`,
+      name: `${SITE.name} project`,
+      url: SITE.origin,
+      logo: `${SITE.origin}/apple-icon.png`,
+      sameAs: [REPO],
+      contactPoint: [{ "@type": "ContactPoint", contactType: "technical support", url: SITE.issues, availableLanguage: "English" }],
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${SITE.origin}/#site`,
+      name: SITE.name,
+      url: SITE.origin,
+      publisher: { "@id": `${SITE.origin}/#org` },
+    },
+  ],
+};
 
 /**
  * The front door. Two ways to run Bot, and which to pick: on Vercel, where a
@@ -28,6 +73,7 @@ const DEPLOY =
 export default function Home() {
   return (
     <main className="landing">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }} />
       <header className="landing-head">
         <span className="landing-mark" aria-hidden="true">
           🧭
@@ -112,6 +158,12 @@ docker compose up -d --build`}</code>
         <a href="/bot">Already running here? Open the console</a>
         <span aria-hidden="true">·</span>
         <a href={REPO}>Source on GitHub</a>
+        <span aria-hidden="true">·</span>
+        <a href="/about">About</a>
+        <span aria-hidden="true">·</span>
+        <a href="/contact">Contact</a>
+        <span aria-hidden="true">·</span>
+        <a href="/privacy">Privacy</a>
         <span aria-hidden="true">·</span>
         <span>MIT</span>
       </footer>

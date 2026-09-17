@@ -694,6 +694,14 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .landing-foot { display: flex; gap: 10px; flex-wrap: wrap; color: var(--faint); font-size: 12.5px; padding-top: 8px; border-top: 1px solid var(--line); }
 .landing-foot a { color: var(--muted); text-decoration: none; }
 .landing-foot a:hover { color: var(--text); text-decoration: underline; }
+.page { max-width: 680px; gap: 24px; }
+.page-back { color: var(--muted); text-decoration: none; font-size: 13px; }
+.page-back:hover { color: var(--text); }
+.page-body { display: flex; flex-direction: column; gap: 14px; }
+.page-body p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--text); }
+.page-body a { color: var(--text); text-decoration: underline; text-decoration-color: var(--faint); word-break: break-word; }
+.page-links { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 1.5; }
+.page-links a { color: var(--text); }
 @media (max-width: 720px) {
   .landing { padding: 36px 16px 32px; gap: 28px; }
   .landing-paths, .landing-grid { grid-template-columns: minmax(0, 1fr); }
