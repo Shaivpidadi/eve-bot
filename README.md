@@ -1,8 +1,8 @@
 # EVE BOT
 
-A team of always-on AI teammates. Each one has its own computer, works inside the
-apps you already use, and keeps going after you close the laptop — coming back
-only when something needs your approval.
+A team of always-on AI teammates. Each one has its own computer, works inside
+the apps you already use, and keeps going after you close the laptop, coming
+back only when something needs your approval.
 
 ```
 you ──▶ HQ ──assign──▶ job queue ──dispatch──▶ teammate ──▶ browser + shell + files
@@ -11,639 +11,210 @@ you ──▶ HQ ──assign──▶ job queue ──dispatch──▶ teammat
          └──◀ result, or an approval you must sign ─┘
 ```
 
-## Quickstart
+Built on [eve](https://vercel.com/eve) and Next.js. Alpha. MIT.
 
-Requires **Node 24+**. Bot runs in one of two places, and the first step is
-choosing which:
+## Pick where it runs
 
-```bash
-npm install
-npm run setup    # standalone on your own machine, or Vercel; writes the env file for it
-```
+Bot runs in one of two places. Same code, different plumbing.
 
-**Standalone** means everything on a machine you own: the team's computer in
-Docker, models from any OpenAI-compatible API such as Ollama or OpenRouter, and
-storage on disk. After setup, `npm run build && npm start` runs it (see
-[Run it standalone](#run-it-standalone)).
-
-**Vercel** means Vercel Sandbox, AI Gateway, and Blob, deployed with one click
-(see [Deploy](#deploy)). For local development against it:
-
-```bash
-npx vercel link && npx vercel env pull   # the team's computer runs on Vercel Sandbox, in dev too
-npm run dev                              # Next.js on :3000, with the agent running alongside
-```
-
-Without the wizard, `cp .env.example .env.local` and fill in the values it
-describes.
-
-The first time a Bot opens its browser, the computer installs Google Chrome and a
-display, which takes a few minutes; after that screens start in seconds.
-
-Then open **http://localhost:3000/bot** — the console: your Bots on the left,
-the conversation with whichever one you pick in the middle, and its screen and
-routines on the right. Approvals appear as cards you answer in place.
-
-Opening the console from another device (an IP or hostname rather than
-`localhost`) puts the browser in an insecure context, and noVNC logs
-"requires a secure context" when a Bot's screen connects. Run
-`npm run dev:https` instead: Next.js serves `https://localhost:3000` with a
-locally trusted certificate (generated into `certificates/`, which is ignored).
-
-Then talk to HQ:
-
-```
-Hire a bot called Ava who handles inbound sales follow-up. She should be warm
-and brief, and never promise a discount.
-
-Ava: pull yesterday's demo list from the CRM and draft a follow-up for each one.
-Don't send anything — I'll review the drafts.
-```
-
-HQ hires Ava, writes a job with success criteria, and starts it in the
-background. (You can also press **+** to create a Bot, then message Ava in her
-own thread.) Ava opens the CRM in her browser, works the list, logs each step,
-saves a screenshot of what she saw, and comes back with drafts. Ask HQ
-`what happened while I was out?` and it reads the feed back to you.
-
-Prefer the terminal? `npm run agent:dev` runs the agent alone with eve's
-terminal UI on :2000.
-
-The dev server does not fire schedules. Jobs do not need it, since each run
-waits for its own start time, but you can run the watchdog by hand:
-
-```bash
-curl -X POST http://localhost:3000/eve/v1/dev/schedules/tick
-```
-
-### Run it standalone
-
-Bot also runs as one server on a machine you own, with nothing on Vercel. Put
-this in `.env`:
-
-```bash
-# The team's computer in Docker instead of Vercel Sandbox (Docker Desktop, OrbStack, Colima, or a Docker host)
-BOT_COMPUTER=local
-
-# Models from any API that speaks OpenAI's chat completions format, instead of AI Gateway
-BOT_MODEL_BASE_URL=http://localhost:11434/v1   # Ollama; LM Studio is http://localhost:1234/v1
-BOT_MODEL=qwen3:8b                             # used everywhere unless BOT_HQ_MODEL / BOT_MODEL_* override it
-# BOT_MODEL_API_KEY=                           # if your endpoint needs one
-# BOT_MODEL_CONTEXT_TOKENS=128000
-
-# The password you sign in to the console with (openssl rand -base64 32 makes a good one)
-BOT_CONSOLE_TOKEN=
-```
-
-Then build and start it:
-
-```bash
-npm install
-npm run build     # the agent (eve build) and the console (next build)
-npm start         # both, on http://localhost:3000; PORT changes the port
-```
-
-`npm start` runs two processes as one service: the agent, which listens on
-`127.0.0.1:4274` only and runs HQ, the Bots, the console API, and the schedules,
-and the Next.js console, which proxies to it. Before that it provisions the
-team's computer's template, a Docker image with Chrome and a small desktop
-installed: a few minutes the first time, seconds after. Stopping the service
-stops the team's computer; the next start picks it back up with its files. Run it under
-whatever keeps your other Node services alive, and keep three things on storage
-that survives a restart: `.data/` (the roster, jobs, feed, and memory),
-`.eve/.workflow-data/` (running jobs and threads), and the Docker volume of the
-`bot-computer` container.
-
-Schedules run on their cron cadence in the server's time zone: the watchdog,
-the standup, and every routine. The server log shows one `watchdog:` line per
-pass, so you can see it is alive; `BOT_TICK_CRON="* * * * *"` makes that every
-minute. During `npm run dev` they do not run, and a thread
-started under the dev server cannot be continued by the production build (eve
-binds development sessions to the dev server); reset such a room, or start from
-an empty `.eve/`, when you switch.
-
-The first time a Bot or you opens the computer, eve builds its container and the
-computer installs Chrome and a small desktop, which takes a few minutes; after
-that it starts in seconds. You watch and take over it in the console as usual: a
-small forwarder container publishes its screen on `127.0.0.1:16080` only, and
-every connection still needs a single-use token. To watch from another device,
-set `BOT_COMPUTER_LOCAL_BIND=0.0.0.0` (or one of the server's addresses); the
-screen is then offered at the name you opened the console by. Serve the console
-over plain http for that, or put the gateway behind TLS, since a browser will
-not open a `ws://` connection from an `https://` page.
-
-Pick a model that handles tool calls well; HQ and the Bots do almost everything
-through tools. eve's built-in web search runs through AI Gateway, so on your own
-endpoint give Bots a search service of yours: `BOT_SEARCH_PROVIDER=searxng` with
-`BOT_SEARCH_URL` pointing at a SearXNG instance keeps searches on your network,
-and `brave`, `tavily`, or `exa` with `BOT_SEARCH_API_KEY` use a hosted one.
-With none configured, Bots research with their browser. Jev, which makes
-Bot's small decisions on AI Gateway (see below), switches itself off on your
-own endpoint: HQ answers on your model, HQ picks the Bot and rates effort as
-it always did, and teammates browse step by step.
-
-The USD spend caps hold on your own endpoint once Bot knows what a model costs:
-on OpenRouter it reads the price list itself, and anywhere else you set
-`BOT_MODEL_PRICES` (`model=input/output` in USD per million tokens, `*` for the
-rest). A model with no price counts as free, which is right for one on your own
-hardware; per-session token caps (`BOT_*_TOKEN_LIMIT`) stop a runaway loop there.
-
-The same `.env` also works with `npm run dev` for hacking on Bot itself.
-
-#### With Docker Compose
-
-`docker-compose.yml` runs the whole thing as containers: the server, a SearXNG
-the Bots search with, and, with `--profile ollama`, a model server too.
-
-```bash
-npm run setup                                    # pick Standalone
-docker compose up -d --build                     # http://localhost:3000/bot
-docker compose --profile ollama up -d --build    # with Ollama alongside
-```
-
-The server starts the team's computer as a sibling container through the
-Docker socket, so it needs `/var/run/docker.sock` mounted, which the file does.
-`.data` and `.eve/.workflow-data` live in named volumes. In `.env`, address other services by
-name rather than `localhost`: a model server running on the machine itself is
-`http://host.docker.internal:11434/v1`, the Ollama from the profile is
-`http://ollama:11434/v1`, and SearXNG is set for you. The agent builds when the
-container starts, about ten seconds, because it reads that environment.
-
-## Deploy
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot&project-name=eve-bot&repository-name=eve-bot&env=BOT_CONSOLE_TOKEN&envDescription=A%20long%20random%20password%20you%20sign%20in%20to%20the%20console%20with&envLink=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot%23sign-in&stores=%5B%7B%22type%22%3A%22blob%22%2C%22access%22%3A%22private%22%7D%5D)
-
-One click copies this repository to your GitHub, creates the project in your
-Vercel account, connects a private Blob store, and deploys. The one thing to
-type is `BOT_CONSOLE_TOKEN`, a long random password you sign in to the console
-with (`openssl rand -base64 32` makes a good one). AI Gateway, Vercel Sandbox,
-Workflow, and Blob all authenticate with the project's OIDC credentials, and
-Vercel bills your account for what your Bots use.
-
-### Sign in
-
-Open `/bot` on your deployment and sign in with `BOT_CONSOLE_TOKEN`.
-
-You can also put the whole deployment behind your Vercel login: open **Settings
-→ Deployment Protection**, turn on **Vercel Authentication**, and choose **All
-Deployments**. Vercel's default, Standard Protection, leaves the production
-`.vercel.app` address public, so it is not enough on its own. The console checks
-that its own address is protected before it trusts a Vercel login, and the token
-keeps working either way.
-
-| | Hobby | Pro |
+| | Vercel | Standalone |
 | --- | --- | --- |
-| Good for | trying it out | daily use |
-| The team's computer | up to 4 vCPUs; 5 CPU-hours and 20 GB of live view a month, then paused until the next cycle | billed by use |
-| Scheduled jobs | start on time; the watchdog runs daily | start on time; `BOT_TICK_CRON="* * * * *"` makes the watchdog run every minute |
+| Setup | one click | `npm run setup` |
+| The team's computer | Vercel Sandbox | Docker on your machine |
+| Models | AI Gateway, with Jev routing | Ollama, LM Studio, OpenRouter, any OpenAI-compatible API |
+| Storage and memory | Vercel Blob | disk |
+| Schedules | Vercel Cron | the server's own cron |
+| Web search | eve's, through AI Gateway | your SearXNG, or Brave, Tavily, Exa |
+| Costs | billed by Vercel | whatever your endpoint charges; caps still hold |
 
-From the CLI instead:
+### Vercel
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot&project-name=eve-bot&repository-name=eve-bot&env=BOT_CONSOLE_TOKEN&envDescription=A%20long%20random%20password%20you%20sign%20in%20to%20the%20console%20with&envLink=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot%23vercel&stores=%5B%7B%22type%22%3A%22blob%22%2C%22access%22%3A%22private%22%7D%5D)
+
+The button copies this repository to your GitHub, creates the project, connects
+a private Blob store, and deploys. It asks for one thing: `BOT_CONSOLE_TOKEN`,
+the password you sign in with (`openssl rand -base64 32` makes a good one).
+Then open `/bot` on your deployment.
+
+You can put the deployment behind your Vercel login instead: **Settings →
+Deployment Protection → Vercel Authentication → All Deployments**. Standard
+Protection is not enough; it leaves the production address public.
+
+Hobby plans work. On Pro, `BOT_TICK_CRON="* * * * *"` runs the watchdog every
+minute instead of daily.
+
+To develop against it locally:
 
 ```bash
-npx vercel link
-npx vercel blob create-store bot-store --access private --yes   # the roster, jobs, feed, and memory
-npx vercel env add BOT_CONSOLE_TOKEN production                  # your console password
-npx vercel deploy --prod
+npm install
+npx vercel link && npx vercel env pull   # Sandbox and Gateway credentials
+npm run dev                              # http://localhost:3000/bot
 ```
 
-It deploys as one Vercel project: `withEve` builds the agent as a service next
-to the Next.js app. Schedules become Cron Jobs and sandboxes become Vercel
-Sandboxes. Cron expressions are evaluated in UTC.
+### Standalone
 
-## What is actually here
+Requires Node 24, Docker (Desktop, OrbStack, Colima, or a Docker host), and a
+model endpoint.
 
-| The claim | How it works |
-| --- | --- |
-| **A computer the team keeps** | One persistent Linux microVM (Vercel Sandbox) shared by HQ and every Bot: one browser the whole team works in, a terminal, and files. One Chrome profile means one set of tabs and sign-ins, so what you sign in to for one Bot is there for the next. It is backed up while Bots work and restored if it is ever replaced. `agent/sandbox/`, `agent/lib/computer*`. |
-| **Watch it work, take over when it needs you** | The team's screen sits in the right panel of every thread, HQ's desk included; open it to watch the browser live. When a Bot hits a sign-in, 2FA, or CAPTCHA it asks you to take over; you do that step in the browser and hand it back. Passwords go straight to the page, never through chat. `agent/lib/computer/`, `src/console/computer/`. |
-| **A strong default Bot** | Every workspace starts with Atlas, a generalist on the strongest model with the deepest reasoning. Any Bot can create new Bots when you ask. `agent/lib/default-bot.ts`. |
-| **Works inside apps, no API needed** | A real Google Chrome on the team's screen, driven through accessibility snapshots with stable `@ref` handles. `agent/subagents/teammate/tools/page_*.ts`. |
-| **Keeps working 24/7** | Jobs run as durable Workflow runs. A run survives redeploys and crashes, and a bot waiting on a human holds no compute. `agent/tools/run_job.ts`. |
-| **Only comes back for approval** | Irreversible actions are gated on a person (`approval: always()`), and a deliverable can require sign-off that stays pending for a day. Answer one with `POST /bot/v1/rooms/:room/respond` — a plain message starts a new turn instead of resolving the request. |
-| **Message them like a colleague** | HQ's desk plus a thread per bot, each a durable conversation that is still there tomorrow. A Next.js console at `/bot` shows the roster with live presence, each bot's chat, its screen, and its routines. `agent/channels/ops.ts`. |
-| **They remember and get sharper** | Three eve memory slots (per-person, per-workspace, per-craft) plus a per-bot playbook replayed into every brief. Open **Memory** in the sidebar to see what they remember and add or forget an entry. `agent/lib/memory.ts`. |
-| **Finishes end to end** | Every job carries explicit success criteria, the bot must verify its own work, and results record whether they were verified. |
+```bash
+npm install
+npm run setup                 # pick Standalone; writes .env
+npm run build && npm start    # http://localhost:3000/bot
+```
+
+`npm start` runs the agent and the console as one service, provisions the
+computer's Docker image on first run (a few minutes, with Chrome and a small
+desktop), and stops the computer when it stops. Keep `.data/`,
+`.eve/.workflow-data/`, and the `bot-computer` Docker volume on storage that
+survives a restart.
+
+As containers, with a SearXNG for search and an optional Ollama:
+
+```bash
+npm run setup
+docker compose up -d --build                     # add --profile ollama for a model server
+```
+
+In `.env`, address other services by name, not `localhost`: a model server on
+the machine itself is `http://host.docker.internal:11434/v1`, the profile's
+Ollama is `http://ollama:11434/v1`.
+
+Pick a model that handles tool calls well; the Bots do everything through
+tools. Jev is off here on its own, since it lives on AI Gateway.
+
+## What you get
+
+- **HQ.** The teammate you message. It writes a brief with success criteria,
+  hands the job to the right Bot, and reports back. It does no work itself.
+- **Bots.** Each has a name, a job, a persona, a playbook it learns, and its
+  own thread. Every workspace starts with Atlas, a generalist. Retire a Bot and
+  it stays gone; if a job ever finds nobody on the team, Atlas rejoins on his
+  own.
+- **One computer, kept.** A persistent Linux machine with one Chrome, a
+  terminal, and files, shared by the whole team. Sign-ins carry across Bots.
+  It is backed up while Bots work and restored if it is ever replaced.
+- **Watch and take over.** The screen sits in every thread. When a Bot hits a
+  sign-in, code, or CAPTCHA, it asks you; you do the step in its live browser
+  and hand back. Passwords go into the page, never through chat.
+- **Durable jobs.** A run survives restarts and redeploys, waits for its start
+  time with no compute, renews a lease so a dead run is noticed, and can park
+  a day for your sign-off. A daily watchdog re-dispatches anything stranded.
+- **Approvals.** Sending email, retiring a Bot, and anything a plugin marks
+  sensitive stop for a person first.
+- **Memory.** Per-person, per-workspace, and per-craft memory, plus each Bot's
+  playbook. Open **Memory** in the console to see and edit it.
+- **Plugins.** Connect an MCP server once and every Bot can use it.
+
+## Jev
+
+Bot builds explicit state everywhere, so its small decisions go to
+[Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev), a
+decision model: structured state in, a typed choice with a probability out, in
+under a second, for a fraction of a cent. One switch, `BOT_JEV`, on by default.
+
+| Decision | Jev picks | Fallback |
+| --- | --- | --- |
+| HQ's model, each turn | the team's `standard` or `deep` model | `standard`, or `BOT_HQ_MODEL` |
+| Which Bot takes a job | a fitting specialist, else the generalist | the generalist |
+| A job's effort | `quick`, `standard`, or `deep`, which picks the Bot's model | HQ's level |
+| The next browser step | with `page_pilot`, which element to click or type into, or stop | the Bot clicks itself |
+
+The pilot never invents text, never presses anything consequential (send, pay,
+delete, publish, sign out), and stops at any sign-in. The Bot does those steps.
+Jev is in early access on AI Gateway; without access, set `BOT_JEV=off`.
 
 ## The console
 
-The console is a Next.js App Router app written in TypeScript, in `src/`.
-`next.config.ts` wraps it with eve's `withEve`, so one dev server and one deploy
-run both the UI and the agent, and the browser talks to the agent's `/bot/v1`
-routes on the same origin. It is organised around Bots, not chats:
+`/bot`: your Bots on the left, the selected thread in the middle, the team's
+screen and the Bot's routines on the right. Right-click a Bot, or use the **⋯**
+on hover, for its menu: pin, move to a section, mark unread, clear chat,
+rename, edit profile, duplicate, copy conversation id, hide, delete. Pins,
+sections, and hiding are saved on the Bot; unread is yours alone.
 
-- **Roster.** Every Bot has a name, a title, and an avatar whose motion shows
-  its state: idle, thinking, working, waiting on you, blocked, or done. Hover
-  an avatar to see what it is doing right now. HQ sits at the top. Right-click
-  a Bot, or use the **⋯** that appears on hover, for its menu: pin it to the
-  top, move it into a named section, mark its thread unread, clear its chat
-  (the thread starts over; the Bot, its finished work, and its memory stay),
-  rename it, edit its profile, duplicate it (same job, instructions, and
-  playbook, its own thread), copy its conversation id, hide it from the
-  roster, or delete it.
-  Pins, sections, and hiding are saved on the Bot, so every device sees the
-  same roster; unread is yours alone. Delete asks first: it cancels the Bot's
-  open jobs and discards what it learned, the way `retire_bot` does from a
-  thread.
-- **Chat.** Each Bot has one durable thread. The transcript mixes messages
-  with events — routines created, jobs handed off, a collapsible list of the
-  steps a Bot logged — and inline cards: an email waiting to be sent, a
-  deliverable waiting for sign-off, a question.
-- **Computer.** The title-bar icon turns purple while a Bot's computer is
-  working. The panel shows a still of its screen; click it to open the computer
-  full screen: the Bot's own desktop, live, with a dock for its **Browser**
-  (Chrome), **Files**, and **Terminal**. **Take control** to use it yourself;
-  **Return control** hands it back. When a Bot needs you (a sign-in, a code, a
-  CAPTCHA), a banner says so wherever you are in the console, the screen shows
-  what it needs, and returning control, with an optional note, tells it to
-  carry on. **Files** in the top bar uploads to and downloads from the computer.
-- **Routines and files** for the selected Bot, plus its persona, playbook, and
-  a pause switch under settings.
+Opening the console from another device over plain http puts the browser in
+an insecure context, and the live screen will not connect. Use
+`npm run dev:https`, or on a standalone server set `BOT_COMPUTER_LOCAL_BIND=0.0.0.0`
+and serve over http, or put the gateway behind TLS.
 
-The page polls `/bot/v1/state` for the roster and feed, follows the selected
-room's NDJSON stream from its cursor (so a reload replays the thread), and
-posts answers to `/respond`.
+## HTTP
 
-## Plugins
-
-Connect a service once and every Bot can use it. Open **Plugins** in the console sidebar and add an MCP server by its
-address, with no key, a bearer key, or a key in a custom header. The console
-reaches the server first and saves it only if it answers with its tools. Keys
-are stored encrypted and unsealed only inside a Bot's connection; the model
-never sees them.
-
-A Bot finds plugin tools with `connection_search` and calls them as
-`<plugin>__<tool>`. It prefers a plugin over clicking through a website, and
-uses its browser for anything no plugin covers. Tick **Ask me before a Bot first
-uses it in a job** for services that can change or send things.
-
-`agent/lib/plugins.ts` holds the store and the connection check;
-`agent/subagents/teammate/connections/plugins.ts` hands the enabled plugins to
-each job. v1 connects servers that speak Streamable HTTP. Sign-in with OAuth
-(catalog connectors such as Google Drive or Notion) is not
-built yet.
-
-## Talking to it over HTTP
-
-Each console token is bound to one workspace: `BOT_CONSOLE_TOKEN` opens the
-default workspace, and `BOT_CONSOLE_TOKENS="token=workspace,…"` adds more. Send
-it as `Authorization: Bearer <token>`; the browser console signs in once and
-keeps it in an HttpOnly cookie. With no token the routes are open, but only on a
-local dev server; a deployment refuses to serve them unless you set a token (or
-`BOT_CONSOLE_OPEN=1`). Through `npm run dev` these routes are on port 3000.
-
-Rooms are `desk` for HQ and `bot-<botId>` for a Bot's own thread.
+Send `Authorization: Bearer <console token>`. Rooms are `desk` for HQ and
+`bot-<botId>` for a Bot.
 
 ```bash
-# Say something to a room (creates or resumes that room's durable session)
-curl -X POST localhost:3000/bot/v1/rooms/desk/messages \
-  -H 'content-type: application/json' \
-  -H 'x-bot-user: you@example.com' \
-  -d '{"message":"Who is on the team?"}'
-
-# Answer a pending approval or question (requestId comes off the stream)
-curl -X POST localhost:3000/bot/v1/rooms/desk/respond \
-  -H 'content-type: application/json' \
-  -d '{"responses":[{"requestId":"<id>","optionId":"approve"}]}'
-
-# Follow a room live (NDJSON), from an event index
-curl -N 'localhost:3000/bot/v1/rooms/desk/stream?startIndex=0'
-
-# The roster with presence, routines, and files, plus the feed
-curl localhost:3000/bot/v1/state
-
-# Create, pause, or resume a Bot
-curl -X POST localhost:3000/bot/v1/bots -H 'content-type: application/json' \
-  -d '{"name":"Ava","role":"Inbound sales follow-up","persona":"Warm and brief. Never promises a discount."}'
-curl -X PATCH localhost:3000/bot/v1/bots/<botId> -H 'content-type: application/json' -d '{"status":"paused"}'
-
-# Roster placement, a copy, or removal (what the roster menu does)
-curl -X PATCH localhost:3000/bot/v1/bots/<botId> -H 'content-type: application/json' -d '{"pinned":true,"section":"Sales","hidden":false}'
-curl -X POST localhost:3000/bot/v1/bots/<botId>/duplicate
-curl -X DELETE localhost:3000/bot/v1/bots/<botId>
+curl -X POST localhost:3000/bot/v1/rooms/desk/messages -H 'content-type: application/json' -d '{"message":"Who is on the team?"}'
+curl -N 'localhost:3000/bot/v1/rooms/desk/stream?startIndex=0'          # NDJSON, live
+curl -X POST localhost:3000/bot/v1/rooms/desk/respond -H 'content-type: application/json' -d '{"responses":[{"requestId":"<id>","optionId":"approve"}]}'
+curl -X POST localhost:3000/bot/v1/rooms/desk/reset                       # start the thread over
+curl localhost:3000/bot/v1/state                                          # roster, presence, feed
+curl -X POST localhost:3000/bot/v1/bots -H 'content-type: application/json' -d '{"name":"Ava","role":"Inbound sales follow-up","persona":"Warm and brief."}'
+curl -X PATCH localhost:3000/bot/v1/bots/<id> -H 'content-type: application/json' -d '{"status":"paused","pinned":true,"section":"Sales"}'
+curl -X POST localhost:3000/bot/v1/bots/<id>/duplicate
+curl -X DELETE localhost:3000/bot/v1/bots/<id>
 ```
-
-## Layout
-
-```
-next.config.ts                  withEve, plus forwarding for the console's /bot/v1 API
-scripts/setup.mjs               npm run setup: standalone or Vercel, models, search, token; writes the env file
-scripts/build.mjs               npm run build: the agent, then the console (only the console on Vercel)
-scripts/start.mjs               npm start: the built agent and the console as one standalone server
-Dockerfile, docker-compose.yml  the standalone server as containers, with SearXNG and optionally Ollama
-docker/seccomp-chrome.json      Docker's default seccomp profile plus the namespaces Chrome's sandbox needs
-scripts/docker-chrome-sandbox.sh  a docker for EVE_DOCKER_PATH that starts the computer with that profile
-src/
-├── app/bot/page.tsx            the console
-├── app/bot/login/page.tsx      sign-in with a console token
-├── console/                    roster, chat, cards, stream reader
-└── console/computer/           the computer: live desktop (noVNC), takeover, file transfer
-agent/
-├── agent.ts                    HQ: the teammate you message
-├── instructions.md             how HQ behaves
-├── instructions/room.ts        in a Bot's thread, HQ speaks as that Bot
-├── channels/ops.ts             the console API: rooms, streaming, state, approvals
-├── schedules/tick.ts           the watchdog that re-dispatches stranded jobs
-├── schedules/standup.ts        a daily report, written like a person would
-├── hooks/audit.ts              durable record of approvals and failures
-├── memory/profile.ts           how this operator likes things done
-├── memory/team.ts              conventions shared across the workspace
-├── skills/running-the-team.md  loaded when HQ writes a brief
-├── tools/                      hire_bot, assign_job, run_job, job_status, …
-├── sandbox/                    the team's one computer, and what is seeded into it
-├── lib/computer.ts             every session opens the same computer
-├── lib/computer-config.ts      Vercel Sandbox by default, a local VM on request
-├── lib/computer-backup.ts      archive the computer, restore it onto a replacement
-├── lib/computer/script.ts      the software on the computer: screens, desktop, gateway
-├── lib/computer/runtime.ts     start screens, sign-ins, files
-├── lib/computer/screens.ts     the team's screen, who is on it, and who has control
-├── lib/computer/http.ts        the console's live view, takeover, and files
-├── lib/default-bot.ts          the generalist every workspace starts with
-├── lib/                        persistence, job queue, briefs, artifacts
-└── subagents/teammate/         the bot that does the work
-    ├── agent.ts                its model, reasoning depth, and spend limit
-    ├── instructions.md         verify before you claim; the computer; web apps
-    ├── sandbox.ts              works on the parent's computer: the shared one
-    ├── memory/craft.ts         lessons about doing this work well
-    ├── lib/browser.ts          agent-browser on the Bot's own visible Chrome
-    └── tools/                  browse, page_*, request_takeover, log_progress,
-                                save_artifact, learn, send_email, create_bot, finish_job
-```
-
-## How the pieces fit
-
-**Jobs are records, not conversations.** `assign_job` writes a job to durable
-storage with a brief, success criteria, a schedule, and a sign-off flag. That
-record is the contract: a teammate re-reads it with `job_brief` rather than
-trusting the message it was started with.
-
-**Jobs keep their own time.** `run_job` checks the job first. If it is not due,
-the run takes a `wait` lease and sleeps durably until the start time: no poller,
-no compute while it waits, and on time on any Vercel plan. A rescheduled job is
-simply waited on again. A routine's run keeps going on its own: after each cycle
-it posts a report to the thread and waits for the next start, handing off to a
-fresh run after a day so new deployments take over. `tick` is only a watchdog. Daily by default, it reads an index
-of open jobs (never the whole history), finds work that is due with nothing
-waiting on it — a wait that was cancelled, a run whose lease lapsed because it
-really died — claims each one atomically, and wakes HQ in that job's room. A
-claim is a versioned write, not a flag, so nothing double-dispatches. Paused
-Bots' jobs wait quietly until they resume.
-
-**`run_job` is where the durability lives.** It is a background workflow tool, so
-the conversation continues the moment work starts. Inside, it claims the job in a
-step and delegates to the teammate, renewing a short lease on a durable
-heartbeat for as long as the Bot works, so a long job is never mistaken for a
-dead one. If the job needs sign-off, the job parks as blocked under a sign-off
-lease, asks a human, and suspends. Nothing is held open while it waits; the run
-resumes when the answer arrives, minutes or a day later. Sending the work back
-with a note puts the job back in the queue with the note in its brief, next to
-the result it is about, and HQ starts a fresh run for the revision. A run's later
-review cards do not reach the thread, so every review is the first card of its
-run. A run only closes a job
-it still owns, a cancelled job stays cancelled, and a failed or sent-back job
-can be run again.
-
-**One computer, kept.** eve gives every session its own sandbox; Bot wraps the
-backend so every session opens the same persistent machine, while each keeps its
-own browser session and scratch folder. Vercel keeps the machine's snapshots
-without expiry, and on top of that the computer's files are archived to Blob
-every `BOT_BACKUP_EVERY_MINUTES` while Bots work and at the end of every job. A
-marker file tells an original machine from a replacement; a replacement gets the
-latest archive restored before the next job starts.
-
-**A screen you can watch and take over.** The team has one screen on the
-computer, shared by HQ and every Bot and shown on every thread: a TigerVNC
-display with a small desktop. Openbox manages the
-windows, a tint2 dock opens the Browser (Google Chrome, with DevTools on
-localhost), Files (pcmanfm), and a Terminal (xfce4-terminal), and there is
-nothing else: no menus, no desktop icons. agent-browser attaches to that Chrome,
-so everything a Bot does happens where you can see it, and the Bot brings the
-browser back to the front before it acts. Because it is one Chrome profile, the
-tabs and sign-ins a person or a Bot leaves are there for whoever works next;
-the trade-off is that two Bots working at the same moment share that one
-browser and its active tab. The computer exposes a single port, a
-websockify gateway, and it only lets a connection through with a fresh,
-single-use token the console signs after checking who you are. The console shows
-that screen full size over noVNC, view-only until you take control. The screen
-starts on demand, restarts after the computer resumes from a snapshot, and stops
-after `BOT_COMPUTER_IDLE_MINUTES` without use.
-
-**Handing a step to a person.** When a Bot hits a sign-in, a code, or a CAPTCHA
-it calls `request_takeover`, which pauses it on an approval. A hook inside the
-teammate records the handover on the team's screen, so the roster shows the Bot
-waiting on you, a banner says so anywhere in the console, and the screen shows
-what it needs. Taking control sets a lock every Bot's browser tools respect;
-returning control, with an optional note, approves the request, saves whatever
-you signed in to into the team's jar so backups carry it, and gives the Bot your
-note and a fresh look at the page. If the computer slept meanwhile, taking control reopens
-the page the Bot was on.
-
-**Approvals are structural, not advisory.** `send_email` and `retire_bot` are
-gated with `approval: always()`. The prompt surfaces on the operator's channel
-even though the bot that raised it is a subagent two levels down.
-
-**Learning is two layers.** A bot's `playbook` is explicit and inspectable — the
-bot appends to it with `learn`, and it is replayed into every future brief. The
-memory slots are implicit: recalled automatically at the start of a turn, scoped
-so one person's preferences never leak into another's.
-
-## Persistence
-
-One small interface (`get` / `put` / `delete` / `list`, with version tokens) and
-three drivers:
-
-| Driver | Used when | Concurrency |
-| --- | --- | --- |
-| Vercel Blob | on Vercel, or when Blob credentials are set | ETag `ifMatch` — a true compare-and-set across instances (read ETags are normalized to their strong form, which `ifMatch` requires) |
-| Local disk | `eve dev` and a standalone server (`.data/`) | in-process key locking; single-process only |
-| In-memory | tests, throwaway | in-process key locking |
-
-Job claims, playbook edits, and stats all go through one read-modify-write helper
-that serializes cycles per key in-process and re-reads on a version conflict.
-Swapping in Postgres or Redis means implementing four methods in
-`agent/lib/store/`.
 
 ## Configuration
 
-Everything is optional except a model credential. See `.env.example`. The knobs
-worth knowing:
+Everything is optional except a model credential. `.env.example` documents all
+of it; these are the ones that matter.
 
 | Variable | Does |
 | --- | --- |
-| `AI_GATEWAY_API_KEY` | model access (or link a Vercel project and use OIDC) |
-| `BOT_HQ_MODEL` / `BOT_HQ_REASONING` | HQ's model (Sonnet) and reasoning depth (`low`) |
-| `BOT_JEV` / `BOT_JEV_MODEL` | Jev, the decision model behind HQ's per-turn model choice, job effort rating, and the browser pilot: `on` (default) or `off`; the model id (`typesafe-ai/jev`) |
-| `BOT_MODEL_QUICK` / `BOT_MODEL_STANDARD` / `BOT_MODEL_DEEP` | the model a job runs on at each effort level (see below) |
-| `BOT_TEAMMATE_MODEL` | one model for every job, overriding the effort levels |
-| `BOT_TEAMMATE_REASONING` | teammate reasoning depth: `medium` (default), `low`, `high`, `xhigh` |
-| `BOT_DEFAULT_BOT_NAME` | name of the generalist every workspace starts with (default `Atlas`) |
-| `BOT_COMPUTER` | where the computer runs: `vercel` (default, in development too) or `local` (Docker on this machine, for a standalone server or development) |
-| `BOT_COMPUTER_NAME` | the shared computer's name; a new name starts a new machine |
-| `BOT_COMPUTER_LOCAL_BIND` / `BOT_COMPUTER_LOCAL_PORT` | where a local computer's live view is published: `127.0.0.1` (default) and `16080`; `0.0.0.0` lets other devices watch |
-| `BOT_COMPUTER_MAX_SCREENS` / `BOT_COMPUTER_IDLE_MINUTES` | how many Bot browsers run at once, and when an unused one stops |
-| `BOT_COMPUTER_KEY` | pins the key live-view tokens are signed with (generated and stored otherwise) |
-| `BOT_BACKUP_EVERY_MINUTES` / `BOT_BACKUP_MAX_MB` | how often the computer is archived while Bots work, and the archive size limit |
-| `BOT_STORE` | force `blob`, `fs`, or `memory` |
-| `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console tokens, each bound to one workspace |
-| `BOT_CONSOLE_AUTH` | `token` accepts console tokens only, even behind Vercel Authentication |
-| `BOT_TICK_CRON` | how often the watchdog re-dispatches stranded jobs (daily by default; `* * * * *` on Pro) |
-| `BOT_CONSOLE_OPEN` | `1` serves the console without a token on a deployment (not recommended) |
-| `BOT_SANDBOX_ALLOW_DOMAINS` | firewall the bot's computer to an allow-list |
-| `BOT_BROWSER_ALLOWED_DOMAINS` | fence the browser to specific hosts |
-| `BOT_EMAIL_WEBHOOK` | where approved email actually goes; unset returns drafts |
-| `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`); a job started from a thread also draws on what the thread has left |
-| `BOT_SEARCH_PROVIDER` / `BOT_SEARCH_URL` / `BOT_SEARCH_API_KEY` | web search on your own endpoint: `searxng` at your own URL, or `brave`, `tavily`, `exa` with a key; unset, Bots search in their browser |
-| `BOT_MODEL_PRICES` | what models on your own endpoint cost, `model=in/out` in USD per million tokens, so the caps hold there; OpenRouter's list is read on its own |
-| `BOT_HQ_INPUT_TOKEN_LIMIT` / `BOT_HQ_OUTPUT_TOKEN_LIMIT` / `BOT_JOB_INPUT_TOKEN_LIMIT` / `BOT_JOB_OUTPUT_TOKEN_LIMIT` | per-session token caps on your own endpoint (40M / 2M / 10M / 500k), the backstop for a model nothing prices; `off` uncaps one |
+| `AI_GATEWAY_API_KEY` | model access on Vercel (or link the project and use OIDC) |
+| `BOT_MODEL_BASE_URL` / `BOT_MODEL` / `BOT_MODEL_API_KEY` | your own OpenAI-compatible endpoint and the model used everywhere on it |
+| `BOT_MODEL_QUICK` / `BOT_MODEL_STANDARD` / `BOT_MODEL_DEEP` | the model at each effort level; HQ routes between the last two |
+| `BOT_HQ_MODEL` | pin HQ to one model |
+| `BOT_JEV` / `BOT_JEV_MODEL` | Jev on (default) or off; the decision model id |
+| `BOT_COMPUTER` | `vercel` (default) or `local` |
+| `BOT_COMPUTER_LOCAL_BIND` | where a local computer's live view is published; `127.0.0.1` by default |
+| `BOT_SEARCH_PROVIDER` / `BOT_SEARCH_URL` / `BOT_SEARCH_API_KEY` | web search on your own endpoint: `searxng`, `brave`, `tavily`, `exa` |
+| `BOT_MODEL_PRICES` | `model=in/out` USD per million tokens, so spend caps hold off Gateway; OpenRouter is read automatically |
+| `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`) |
+| `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console passwords, each bound to a workspace |
+| `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
+| `BOT_SANDBOX_ALLOW_DOMAINS` / `BOT_BROWSER_ALLOWED_DOMAINS` | fence the computer and the browser |
+| `BOT_EMAIL_WEBHOOK` | where approved email goes; unset returns drafts |
 
-### Which model does a job
+## Development
 
-HQ rates every job's effort when it assigns it, and the job runs on that
-level's model:
+```bash
+npm run dev          # console and agent together
+npm run agent:dev    # the agent alone, with eve's terminal UI
+npm test             # vitest over tests/: store, models, pricing, search, access, handovers
+npm run typecheck && npm run build
+```
 
-| Effort | For | Default model | Per million tokens (in / out) |
-| --- | --- | --- | --- |
-| `quick` | lookups, status checks, simple recurring monitors | `alibaba/qwen3.8-flash` | $0.16 / $0.47 |
-| `standard` | most work: operating web apps, reading, drafting | `anthropic/claude-sonnet-5` | $2 / $10 |
-| `deep` | hard research, analysis, coding, high-stakes work | `anthropic/claude-opus-5` | $5 / $25 |
+Schedules do not fire under `npm run dev`; trigger the watchdog with
+`curl -X POST localhost:3000/eve/v1/dev/schedules/tick`. A thread started under
+the dev server cannot continue under `npm start`; the console offers Start over.
 
-A job that fails re-runs one level up. The defaults are models the AI Gateway
-lists as neither retaining nor training on prompts, because Bots read inboxes
-and documents; check that before pointing a level at a promotional or free
-model.
+```
+agent/                      HQ: agent.ts, instructions.md, tools/, schedules/, memory/
+agent/subagents/teammate/   the Bot that does the work: its tools, browser, and pilot
+agent/lib/                  jobs, board, store drivers, computer, pricing, search, jev
+agent/channels/ops.ts       the console API
+src/console/                the console
+scripts/                    setup, build, start, and the Docker wrapper for Chrome's sandbox
+tests/                      vitest
+```
 
-### Which model HQ talks on
+Swapping storage means implementing four methods in `agent/lib/store/`.
 
-Most of HQ's turns are conversation and routing; some are not, such as
-planning a hard job or untangling an unclear request. So HQ's model is chosen
-per turn. At the start of each turn,
-[TypeSafe's Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev),
-a small decision model, reads the last few messages and picks the team's
-`standard` model (Sonnet, low reasoning) for conversation and clear requests,
-or its `deep` model (Opus, medium reasoning) for judgment calls: the same two
-models a job's effort picks between, so `BOT_MODEL_STANDARD` and
-`BOT_MODEL_DEEP` set them for HQ too. The whole turn, tools included, runs on
-that model, and the next turn is chosen afresh. Jev sees the two descriptions
-and the messages, never credentials, and answers in well under a second for a
-fraction of a cent.
+## Limits
 
-`BOT_HQ_MODEL` pins one model and skips the choice; so does `BOT_JEV=off`.
-This uses eve's experimental `autoModel`, and Jev is in early access on AI
-Gateway, so a Gateway account without Jev access should set one of those.
-
-### Where else Jev decides
-
-Jev is a decision model, not a chat model: structured state in, a typed choice
-with a probability out, in under a second, output free. Bot builds explicit
-state everywhere, so its small decisions go to Jev instead of costing a model
-turn. One switch, `BOT_JEV`, covers all of them, and it is on by default
-because it is the cheaper way; each use keeps a fallback for when Jev is
-unsure or unreachable. On a custom model endpoint (`BOT_MODEL_BASE_URL`) it is
-off on its own, since Jev is reached through AI Gateway.
-
-| Decision | What Jev sees and picks | Fallback |
-| --- | --- | --- |
-| HQ's model, each turn | The last few messages; `standard` or `deep` (above). | `standard`, or `BOT_HQ_MODEL`. |
-| Which Bot takes a job | When HQ names no Bot: the brief and success criteria against every active Bot's job and persona. A specialist whose role fits wins; otherwise the generalist. The `assign_job` result says who and how sure. | The generalist, when Jev is under 50% sure, does not answer, or only one Bot is active. With nobody on the team, the generalist rejoins it on its own. HQ names the Bot only when you did. |
-| A new job's effort | The brief, success criteria, schedule, and Bot; `quick`, `standard`, or `deep`. A confident rating overrides HQ's, and the `assign_job` result says so. | HQ's level, or `standard`, when Jev is under 55% sure or does not answer. |
-| The next browser step | Teammates get `page_pilot`: given a goal and any values it may type, it runs the look-and-click loop itself, offering Jev every interactive element on the page as an option and doing what Jev picks, up to a step limit. It never types anything the Bot did not provide, never presses a consequential control (send, pay, delete, publish, sign out), and stops at any sign-in, code, or CAPTCHA. | It hands back to the Bot with a fresh snapshot wherever it stops: goal reached, a person needed, a consequential control next, under 50% sure, no change, or out of steps. |
-
-The pilot is where the money is. Browser work re-sends the page on every
-step, and the language model reads it at dollars per million tokens; Jev reads
-the same page at cents. The Bot still plans, still does the step that carries
-consequences, and still asks a person for sign-ins, so the approval gates and
-the judgment stay where they were. `BOT_JEV_MODEL` names the decision model;
-this is experimental and needs Jev access on AI Gateway. Without it, set
-`BOT_JEV=off`.
-
-## Known limits
-
-- **A redeploy may not reach a thread that is already running.** eve gives an
-  existing thread's next turn the new deployment's instructions, model, and
-  tools, but in testing a thread kept running an older build's code until it
-  was started over. If a thread keeps failing after you upgrade, start it over:
-  `curl -X POST -H "authorization: Bearer $BOT_CONSOLE_TOKEN"
-  https://<your-app>/bot/v1/rooms/desk/reset` for HQ, or `rooms/bot-<botId>` for
-  a Bot. That clears the thread's conversation and cancels its open jobs; the
-  roster, finished work, and memory stay.
-- **Tests cover the standalone plumbing, not the Bots.** `npm test` runs
-  vitest over `tests/`: the disk store and its compare-and-set, model and
-  effort selection, spend pricing, web search, and console access. None of it
-  needs Vercel, Docker, or a model. Everything else is checked with
-  `npm run typecheck`, `npm run agent:build`, and `npm run build`, and by
-  running a job.
-- **The computer uses Vercel Sandbox by default, even locally.** Run `vercel link
-  && vercel env pull`, or set `BOT_COMPUTER=local` to run it in Docker on your
-  machine (see [Run it standalone](#run-it-standalone)).
-- **A local computer's Chrome keeps its own sandbox only with a seccomp profile.**
-  An ordinary Docker container forbids the user namespaces Chrome sandboxes
-  its renderers in, so there Chrome runs without its sandbox and the container
-  is the isolation boundary. Point `EVE_DOCKER_PATH` at
-  `scripts/docker-chrome-sandbox.sh` and eve starts the computer with
-  `docker/seccomp-chrome.json`, Docker's default profile plus those namespace
-  calls; Chrome then notices at launch and keeps its sandbox. Docker Compose
-  does this by default. A microsandbox VM (`BOT_COMPUTER_LOCAL=microsandbox`)
-  is for development only: the console cannot open it, and a production server
-  refuses it.
-- **Dev threads do not carry over to a standalone server.** eve binds a thread
-  started under `npm run dev` to the dev server, so `npm start` cannot continue
-  it: the first message there ends the thread's session without a reply, and
-  the next one starts a fresh thread. When a message goes unanswered for a
-  minute the console says so and offers **Start over**, which clears that
-  conversation and cancels its open one-off jobs; the roster, finished work,
-  and memory stay. Or start the server from an empty `.eve/`.
-- **Live view is a public URL with a token.** Sandbox ports are reachable by
-  anyone with the address, so the gateway admits only single-use tokens that
-  expire within a minute. Watching is view-only in the console; the server does
-  not yet enforce view-only on a connection.
-- **Some sites challenge sign-ins from cloud machines.** Google and others may
-  ask for extra verification from a sandbox's IP. Take over and complete it, or
-  set `BOT_BROWSER_PROXY`.
-- **Viewing costs a little.** A live view streams from the sandbox, which counts
-  as Vercel Sandbox data transfer. The thumbnail in a Bot's panel streams too,
-  at low picture quality, but only while that Bot's browser is already running
-  and the tab is in view. It never starts a browser or keeps the computer
-  awake; otherwise it shows the last still frame, marked asleep.
-- **The console API rides on eve's Vercel routing.** `withEve` only routes
-  `/eve/v1` to the agent, so `next.config.ts` adds `/bot/v1` to the same
-  forwarding: a rewrite locally, and a route in the Build Output config eve
-  generates on Vercel (under `/vercel/output` on Vercel's builders). If an eve
-  upgrade moves that config, the build log warns that `/bot/v1` is not routed.
-- **In a Bot's thread, HQ answers in that Bot's voice.** It is one agent with
-  the Bot's persona and playbook, delegating the actual work to the teammate.
-- **The computer is shared, by design.** Every Bot, and every workspace on one
-  deployment, works on the same machine. Bots get their own folders and browser
-  sessions, but nothing stops one Bot from reading another's files. Run a
-  separate deployment, or set a different `BOT_COMPUTER_NAME`, for work that
-  must be isolated. Sign-ins are pooled too: once someone signs in on one Bot's
-  browser, every Bot's browser is signed in. Bots have sudo on the computer, so
-  a Bot can read the saved sign-ins; keep egress allow-listed.
-- **Backups can be minutes old.** A replacement computer comes back as of the
-  last backup: up to `BOT_BACKUP_EVERY_MINUTES` of work inside a job can be
-  lost. Browser profiles are not archived; the team's sign-ins are, and a
-  replacement computer's browsers start signed in.
-  Computers over `BOT_BACKUP_MAX_MB` compressed are not backed up; the feed says
-  so. The just-bash fallback has no `tar`, so it cannot be backed up.
-- **A lost wait is caught by the watchdog, not instantly.** If a job's waiting
-  run disappears (its thread was started over while it waited), the job starts
-  on the watchdog's next pass: up to a day later with the daily default.
-- **Owner access is checked every few minutes.** Turning Vercel Authentication
-  off locks the console within about 20 seconds for new checks, but a check that
-  passed is trusted for up to 5 minutes.
-- **Effort is HQ's judgment call.** A job rated too low fails once and re-runs a
-  level up, which costs a retry. Pin a level with `BOT_MODEL_*`, or every job
-  with `BOT_TEAMMATE_MODEL`. Browser work re-sends the page on every step, so
-  it is where the model's price shows most.
-- **Artifacts are capped at 2 MB** and stored as base64 documents. Bigger outputs
-  belong in the destination system, with the bot linking to them.
-- **Egress is open by default** because the browser installs itself on first use.
-  Set an allow-list before pointing a bot at anything sensitive.
-- **`send_email` is a seam, not an integration.** Point it at your sender.
-- **Delivery is at-least-once.** A crash between dispatch and completion re-runs
-  the job, so anything a bot does outwardly should be idempotent or gated on
-  approval.
-- **Egress and page content are untrusted.** Web pages can contain text that
-  looks like instructions; the teammate's instructions say to treat it as data,
-  but an allow-list is the control that actually holds.
+- One computer per deployment, shared by every Bot and workspace. Sign-ins are
+  pooled. Use separate deployments for work that must be isolated.
+- Backups can be up to `BOT_BACKUP_EVERY_MINUTES` old; browser profiles are not
+  archived, the team's sign-ins are.
+- Egress is open by default so the browser can install itself. Set an
+  allow-list before pointing a Bot at anything sensitive.
+- Page content is untrusted. An allow-list is the control that holds, not the
+  instruction to ignore text on a page.
+- A local computer's Chrome runs without its own sandbox unless eve is given
+  the seccomp wrapper in `scripts/`; Docker Compose does this by default.
+- The browser pilot has not yet been exercised against a live browser.
+- Delivery is at-least-once. Anything a Bot does outwardly should be idempotent
+  or gated on approval.
 
 ## License
 
