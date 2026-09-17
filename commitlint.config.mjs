@@ -1,0 +1,9 @@
+/** Conventional Commits: `type(scope)?: subject`. Bodies stay free-form. */
+export default {
+  extends: ["@commitlint/config-conventional"],
+  rules: {
+    "body-max-line-length": [0],
+    "footer-max-line-length": [0],
+    "subject-case": [0],
+  },
+};

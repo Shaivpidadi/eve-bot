@@ -1,0 +1,22 @@
+name: Commit messages
+
+# Every commit subject starts with a Conventional Commits type: feat, fix,
+# docs, chore, refactor, test, ci, build, perf, style, revert.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@v6
+        with:
+          configFile: commitlint.config.mjs

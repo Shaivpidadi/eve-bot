@@ -190,6 +190,10 @@ npm test             # vitest over tests/: store, models, pricing, search, acces
 npm run typecheck && npm run build
 ```
 
+Commit subjects follow [Conventional Commits](https://www.conventionalcommits.org):
+`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, `ci:`. A check on
+every pull request holds them to it.
+
 Schedules do not fire under `npm run dev`; trigger the watchdog with
 `curl -X POST localhost:3000/eve/v1/dev/schedules/tick`. A thread started under
 the dev server cannot continue under `npm start`; the console offers Start over.
