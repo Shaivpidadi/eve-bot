@@ -3,6 +3,7 @@ import { posix } from "node:path";
 import type { Access } from "../access";
 import { record } from "../activity";
 import { getBot } from "../bots";
+import { getJob } from "../jobs";
 import { requestHost } from "../protection";
 import { posterKey, readScreen } from "../screens";
 import { computerControl } from "./control";
@@ -27,6 +28,7 @@ import {
 } from "./runtime";
 import {
   allocateScreen,
+  finishHandover,
   HQ_SCREEN_USER,
   liveControl,
   readBotTabs,
@@ -330,6 +332,14 @@ export async function releaseControl(
   // Wherever the person left the browser is where it reopens after a restart.
   await withComputer((io) => saveTabs(io, screen.n), 20_000);
   await setControl(screen.n, null);
+  if (options.handBack && handover !== null && handover.jobId !== null) {
+    // The Bot's request is answered from the thread once control is back. If the
+    // job that asked has since ended, nobody will answer it: the person did the
+    // step, so the handover is over.
+    const job = await getJob(access.workspaceId, handover.jobId).catch(() => null);
+    const over = job === null || ["done", "failed", "cancelled"].includes(job.status);
+    if (over) await finishHandover(screen.n).catch(() => null);
+  }
   if (options.handBack) {
     await record({
       workspaceId: access.workspaceId,

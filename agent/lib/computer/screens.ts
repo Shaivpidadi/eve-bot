@@ -283,6 +283,20 @@ export async function forgetBot(workspaceId: string, botId: string): Promise<voi
   });
 }
 
+/**
+ * A job that ends while its Bot waits for a person is over too, whether it
+ * finished, failed, or was sent back: its request will never be answered, so
+ * the handover it raised is cleared here rather than left to sit on the screen.
+ */
+export async function forgetJob(workspaceId: string, jobId: string): Promise<void> {
+  await updateDoc<ScreenTable>(TABLE_KEY, (current) => {
+    if (current === null) return null;
+    const screen = workspaceScreen(current, workspaceId);
+    if (screen === null || (screen.handover ?? null)?.jobId !== jobId) return null;
+    return replace(current, { ...screen, handover: null, handoverNote: null });
+  });
+}
+
 /** Whether a handover on the team's screen is this Bot's. */
 export function handoverBelongsTo(handover: Handover | null, botId: string, jobIds: readonly string[] = []): boolean {
   if (handover === null) return false;

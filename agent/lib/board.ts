@@ -216,11 +216,22 @@ function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAl
     preview: room?.preview ?? null,
     pending: pending.length,
     answered: answeredIn(room),
-    computer: sharedComputer(screen, running, running?.id ?? null, screen?.handover ?? null),
+    computer: sharedComputer(screen, running, running?.id ?? null, openHandover(screen?.handover ?? null, open)),
     routines: [],
     files: [],
     profile: null,
   };
+}
+
+/**
+ * A handover is live only while the job that raised it is still open. The
+ * run clears it when the job ends; this keeps a record it missed, or one from
+ * before it did, from holding a Bot in "needs you" for good.
+ */
+function openHandover(handover: ScreenAllocation["handover"], open: readonly Job[]): NonNullable<ScreenAllocation["handover"]> | null {
+  if (handover === undefined || handover === null) return null;
+  if (handover.jobId !== null && !open.some((job) => job.id === handover.jobId)) return null;
+  return handover;
 }
 
 function botMember(
@@ -231,7 +242,7 @@ function botMember(
   screen: ScreenAllocation | null,
   now: number,
 ): Member {
-  const own = screen?.handover ?? null;
+  const own = openHandover(screen?.handover ?? null, jobs);
   const handover = handoverBelongsTo(own, bot.id, jobs.map((job) => job.id)) ? own : null;
   const derived = presenceOf(jobs, room, events, now);
   // A Bot waiting for someone to take over its browser is waiting on you, not stuck.

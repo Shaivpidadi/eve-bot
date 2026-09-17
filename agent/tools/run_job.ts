@@ -6,6 +6,7 @@ import { record } from "../lib/activity";
 import { getBot } from "../lib/bots";
 import { JOB_RESULT_SCHEMA, renderBrief } from "../lib/brief";
 import { reapIdleScreens } from "../lib/computer/reaper";
+import { forgetJob } from "../lib/computer/screens";
 import { newId } from "../lib/ids";
 import {
   blockJob,
@@ -458,6 +459,8 @@ async function markDone(
 ): Promise<{ status: JobStatus | null; nextRunAt: string | null }> {
   "use step";
   const job = await completeJob(workspaceId, jobId, result, { token });
+  // A handover this job raised is over with it.
+  await forgetJob(workspaceId, jobId).catch(() => undefined);
   // Browsers nobody is using are stopped; they start again on the next use.
   await reapIdleScreens().catch(() => 0);
   const repeats = job?.status === "scheduled";
@@ -472,6 +475,7 @@ async function markFailed(
 ): Promise<void> {
   "use step";
   await failJob(workspaceId, jobId, error, { token });
+  await forgetJob(workspaceId, jobId).catch(() => undefined);
   await reapIdleScreens().catch(() => 0);
 }
 
@@ -495,4 +499,5 @@ async function markSentBack(
 ): Promise<void> {
   "use step";
   await sendBack(workspaceId, jobId, note, { token, result });
+  await forgetJob(workspaceId, jobId).catch(() => undefined);
 }
