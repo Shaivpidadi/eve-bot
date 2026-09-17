@@ -27,7 +27,6 @@ export const DEPLOY_URL =
     env: "BOT_CONSOLE_TOKEN",
     envDescription: "A long random password you sign in to the console with",
     envLink: `${SITE.repo}#vercel`,
-    stores: JSON.stringify([{ type: "blob", access: "private" }]),
   }).toString();
 
 /** The public pages, for the sitemap and for the Markdown the proxy serves. */
@@ -46,7 +45,8 @@ One click. Vercel runs the computer (Vercel Sandbox), the models (AI Gateway, wi
 
 - Deploy: ${DEPLOY_URL}
 - It asks for one value, BOT_CONSOLE_TOKEN, the password you sign in with.
-- Then open /bot on your deployment.
+- Then, in the project's Storage tab, create a Blob store and connect it; redeploy once.
+- Open /bot on your deployment; its setup page checks each step off.
 
 ### On your own machine
 
@@ -129,7 +129,7 @@ Do not use it for work that must never touch a third-party model provider unless
 
 ## How an agent helps a person set it up
 
-- Vercel: send them to the deploy link, ${DEPLOY_URL}. It asks for one value, BOT_CONSOLE_TOKEN. They then open /bot on their deployment.
+- Vercel: send them to the deploy link, ${DEPLOY_URL}. It asks for one value, BOT_CONSOLE_TOKEN. Afterwards they create a Blob store in the project's Storage tab, connect it, redeploy once, and open /bot.
 - Standalone: Node 24, Docker, a model endpoint. Then \`npm install && npm run setup && npm run build && npm start\`. Guide: ${SITE.repo}#standalone
 - Configuration reference: ${SITE.repo}#configuration
 - HTTP API of a deployment (requires that deployment's console token): ${SITE.repo}#http

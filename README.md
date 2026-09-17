@@ -29,12 +29,16 @@ Bot runs in one of two places. Same code, different plumbing.
 
 ### Vercel
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot&project-name=eve-bot&repository-name=eve-bot&env=BOT_CONSOLE_TOKEN&envDescription=A%20long%20random%20password%20you%20sign%20in%20to%20the%20console%20with&envLink=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot%23vercel&stores=%5B%7B%22type%22%3A%22blob%22%2C%22access%22%3A%22private%22%7D%5D)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot&project-name=eve-bot&repository-name=eve-bot&env=BOT_CONSOLE_TOKEN&envDescription=A%20long%20random%20password%20you%20sign%20in%20to%20the%20console%20with&envLink=https%3A%2F%2Fgithub.com%2FShaivpidadi%2Feve-bot%23vercel)
 
-The button copies this repository to your GitHub, creates the project, connects
-a private Blob store, and deploys. It asks for one thing: `BOT_CONSOLE_TOKEN`,
-the password you sign in with (`openssl rand -base64 32` makes a good one).
-Then open `/bot` on your deployment.
+The button copies this repository to your GitHub, creates the project, and
+deploys. It asks for one thing: `BOT_CONSOLE_TOKEN`, the password you sign in
+with (`openssl rand -base64 32` makes a good one).
+
+Then give it storage: in the project's **Storage** tab, create a Blob store
+(private access is fine) and connect it to the project, then redeploy. The
+roster, jobs, and memory live there. Open `/bot` on your deployment; its
+setup page checks each step off until the console opens.
 
 You can put the deployment behind your Vercel login instead: **Settings →
 Deployment Protection → Vercel Authentication → All Deployments**. Standard
