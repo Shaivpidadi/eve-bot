@@ -1,7 +1,9 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { defaultBot, findBot, listBots } from "../lib/bots";
+import { record } from "../lib/activity";
+import { defaultBot, findBot, hireBot, listBots } from "../lib/bots";
+import { DEFAULT_BOT } from "../lib/default-bot";
 import { decide, jevOn, ranked } from "../lib/jev";
 import { assignJob } from "../lib/jobs";
 import { DEFAULT_EFFORT, EFFORT_DESCRIPTIONS, JOB_EFFORTS, type JobEffort } from "../lib/models";
@@ -109,8 +111,19 @@ async function pickBot(
   abortSignal: AbortSignal | undefined,
 ): Promise<Pick | null> {
   const active = (await listBots(workspaceId)).filter((bot) => bot.status === "active");
-  const fallback = (await defaultBot(workspaceId)) ?? active[0] ?? null;
-  if (fallback === null) return null;
+  let fallback = (await defaultBot(workspaceId)) ?? active[0] ?? null;
+  if (fallback === null) {
+    // An empty roster brings the generalist back rather than leaving HQ to
+    // improvise a teammate. Retiring it stays deliberate; needing it does not.
+    fallback = await hireBot({ workspaceId, hiredBy: "system", ...DEFAULT_BOT });
+    await record({
+      workspaceId,
+      kind: "bot.hired",
+      botId: fallback.id,
+      text: `${DEFAULT_BOT.emoji} ${fallback.name} rejoined the team: no Bot was left to take a job.`,
+    });
+    return { bot: fallback, by: "default", note: `No Bot was on the team, so ${fallback.name}, the generalist, rejoined it to take this job.` };
+  }
   if (active.length < 2 || !jevOn()) return { bot: fallback, by: "default" };
 
   try {
