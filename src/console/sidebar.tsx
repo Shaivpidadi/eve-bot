@@ -7,6 +7,7 @@ import { Avatar } from "./avatar";
 import { shortWhen, withoutEmoji } from "./format";
 import { Icon, type IconName } from "./icons";
 import { PromptDialog, type Prompt } from "./prompt-dialog";
+import { roomStore } from "./room-store";
 import { useTheme } from "./theme";
 import type { Hover, Member } from "./types";
 
@@ -290,6 +291,30 @@ export function Sidebar({
               })(),
             )
           }
+          onClearChat={(member) =>
+            setPrompt({
+              title: `Clear chat with ${member.name}?`,
+              description:
+                member.kind === "hq"
+                  ? "HQ's desk starts over: the conversation is cleared and its open one-off jobs are cancelled. The roster, finished work, and memory stay."
+                  : `${member.name}'s thread starts over: the conversation is cleared and its open one-off jobs are cancelled. ${member.name}, its finished work, and what it learned stay.`,
+              confirm: "Clear chat",
+              danger: true,
+              onConfirm: async () => {
+                try {
+                  const response = await api(`/bot/v1/rooms/${encodeURIComponent(member.room)}/reset`, { method: "POST" });
+                  if (!response.ok) return await errorMessage(response, "Could not clear the chat.");
+                  // The open transcript, if it is this one, empties at once rather than on the next poll.
+                  roomStore(member.room).restart();
+                  onUnread(member.id, false);
+                  await onChanged();
+                  return null;
+                } catch (caught) {
+                  return caught instanceof SignedOutError ? null : "Could not clear the chat.";
+                }
+              },
+            })
+          }
           onCopyId={(member) =>
             void act(
               navigator.clipboard
@@ -342,6 +367,7 @@ function RowMenu({
   onEditProfile,
   onDuplicate,
   onCopyId,
+  onClearChat,
   onHide,
   onDelete,
 }: {
@@ -357,6 +383,7 @@ function RowMenu({
   onEditProfile: (member: Member) => void;
   onDuplicate: (member: Member) => void;
   onCopyId: (member: Member) => void;
+  onClearChat: (member: Member) => void;
   onHide: (member: Member) => void;
   onDelete: (member: Member) => void;
 }) {
@@ -444,6 +471,7 @@ function RowMenu({
         )
       ) : null}
       {item("mail", isUnread ? "Mark as read" : "Mark as unread", () => onUnread(member))}
+      {item("eraser", "Clear chat", () => onClearChat(member))}
       {bot ? <hr /> : null}
       {bot ? item("edit", "Rename Bot", () => onRename(member)) : null}
       {bot ? item("person", "Edit profile", () => onEditProfile(member)) : null}

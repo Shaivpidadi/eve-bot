@@ -295,10 +295,21 @@ export class RoomStore {
       this.pushError("Could not start over", error instanceof Error ? error.message : String(error));
       return false;
     }
+    this.restart();
+    return true;
+  }
+
+  /** The thread was started over on the server: show it empty and follow whatever comes next. */
+  restart(): void {
+    // The current follower is on the old session's stream; drop it before reading again.
+    this.controller?.abort();
+    this.controller = null;
+    this.following = false;
     this.reset();
     this.sessionId = null;
+    this.loaded = true;
     this.emit();
-    return true;
+    void this.follow();
   }
 
   private capture(): RoomSnapshot {
@@ -517,8 +528,11 @@ export class RoomStore {
         await this.nap(600 * 2 ** this.idle);
       }
     } finally {
-      this.following = false;
-      if (this.controller === controller) this.controller = null;
+      // A follower that was replaced (see `restart`) leaves the new one's state alone.
+      if (this.controller === controller) {
+        this.following = false;
+        this.controller = null;
+      }
       // Someone came back while this reader was unwinding from an abort.
       if (controller.signal.aborted && this.listeners.size > 0 && !this.terminal) void this.follow();
     }
