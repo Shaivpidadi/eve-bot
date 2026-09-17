@@ -71,6 +71,31 @@ export function Console() {
   const [resizing, setResizing] = useState(false);
   // The panel slides closed, so what it shows stays until the slide has finished.
   const [panelMounted, setPanelMounted] = useState(panelOpen);
+  // Rooms marked unread from the roster menu, kept in this browser only.
+  const [unread, setUnread] = useState<ReadonlySet<string>>(() => {
+    try {
+      const saved: unknown = JSON.parse(read("bot.unread") ?? "[]");
+      return new Set(Array.isArray(saved) ? saved.filter((id): id is string => typeof id === "string") : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const markUnread = useCallback((id: string, flag: boolean) => {
+    setUnread((current) => {
+      if (current.has(id) === flag) return current;
+      const next = new Set(current);
+      if (flag) next.add(id);
+      else next.delete(id);
+      write("bot.unread", JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
+  // Bumped when the roster menu asks to edit a profile; the panel opens its form.
+  const [editRequest, setEditRequest] = useState(0);
+  // Opening a room reads it.
+  useEffect(() => {
+    if (selectedId !== null) markUnread(selectedId, false);
+  }, [selectedId, markUnread]);
 
   const members = board?.members ?? [];
   const member = members.find((entry) => entry.id === selectedId) ?? members.find((entry) => entry.id === HQ_ID);
@@ -140,6 +165,15 @@ export function Console() {
           onPlugins={() => setPluginsOpen(true)}
           onMemory={() => setMemoryOpen(true)}
           onHover={setHover}
+          unread={unread}
+          onUnread={markUnread}
+          onChanged={refresh}
+          onEditProfile={(id) => {
+            select(id);
+            showPanel(true);
+            setPanelView("settings");
+            setEditRequest((count) => count + 1);
+          }}
         />
         <ChatPane
           key={member.room}
@@ -172,6 +206,7 @@ export function Console() {
                 onTakeover={() => setComputer({ botId: computerFor(member, members).id, requestId: null })}
                 onChanged={refresh}
                 onHover={setHover}
+                editRequest={editRequest}
               />
             </>
           ) : null}

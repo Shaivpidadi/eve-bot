@@ -75,6 +75,7 @@ export function DetailsPanel({
   onTakeover,
   onChanged,
   onHover,
+  editRequest = 0,
 }: {
   member: Member;
   members: readonly Member[];
@@ -85,6 +86,8 @@ export function DetailsPanel({
   onTakeover: () => void;
   onChanged: () => Promise<void>;
   onHover: (hover: Hover | null) => void;
+  /** Bumped by the roster menu's "Edit profile"; the settings view opens its form. */
+  editRequest?: number;
 }) {
   const settings = member.kind === "bot" && view === "settings";
   return (
@@ -109,7 +112,7 @@ export function DetailsPanel({
         {member.kind === "hq" ? (
           <HqPanel member={member} members={members} onTakeover={onTakeover} onSelect={onSelect} onHover={onHover} />
         ) : settings ? (
-          <SettingsPanel key={member.id} member={member} onChanged={onChanged} />
+          <SettingsPanel key={member.id} member={member} onChanged={onChanged} editRequest={editRequest} />
         ) : (
           <BotPanel member={member} members={members} onTakeover={onTakeover} />
         )}
@@ -229,10 +232,22 @@ function BotPanel({
   );
 }
 
-function SettingsPanel({ member, onChanged }: { member: Member; onChanged: () => Promise<void> }) {
+function SettingsPanel({
+  member,
+  onChanged,
+  editRequest,
+}: {
+  member: Member;
+  onChanged: () => Promise<void>;
+  editRequest: number;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  // "Edit profile" from the roster menu lands straight in the form.
+  useEffect(() => {
+    if (editRequest > 0) setEditing(true);
+  }, [editRequest]);
   const profile = member.profile;
   const paused = member.status === "paused";
 

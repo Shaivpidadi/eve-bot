@@ -13,10 +13,10 @@ import {
 import { record } from "../lib/activity";
 import { readArtifact } from "../lib/artifacts";
 import { buildBoard } from "../lib/board";
-import { findBot, getBot, hireBot, patchBot } from "../lib/bots";
+import { findBot, getBot, hireBot, listBots, patchBot, retireBot } from "../lib/bots";
 import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
-import { clearHandovers, finishHandover, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
+import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
 import { cancelJob, listOpenJobs } from "../lib/jobs";
 import { addMemory, forgetMemory, isMemorySlot, readMemory } from "../lib/memory";
 import {
@@ -446,7 +446,16 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           400,
         );
       }
-      if (status === undefined && name === undefined && role === undefined && persona === undefined) {
+      // Roster placement from the row menu: pin, section, hide. Preferences, so no activity is recorded.
+      const pinned = body?.pinned === undefined ? undefined : body.pinned === true;
+      const hidden = body?.hidden === undefined ? undefined : body.hidden === true;
+      const section =
+        body?.section === undefined ? undefined : body.section === null || body.section === "" ? null : text(body.section, 1, 40);
+      if (section === null && body?.section !== null && body?.section !== "") {
+        return json({ error: "A section name is 1–40 characters." }, 400);
+      }
+      const placement = pinned !== undefined || hidden !== undefined || section !== undefined;
+      if (status === undefined && name === undefined && role === undefined && persona === undefined && !placement) {
         return json({ error: "nothing to change" }, 400);
       }
       const before = botId === undefined ? null : await getBot(workspaceId, botId);
@@ -463,6 +472,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         name: name ?? current.name,
         role: role ?? current.role,
         persona: persona ?? current.persona,
+        ...(pinned === undefined ? {} : { pinned }),
+        ...(hidden === undefined ? {} : { hidden }),
+        ...(section === undefined ? {} : { section }),
       }));
       if (bot === null) return json({ error: "no such bot" }, 404);
       const changes = [
@@ -474,6 +486,60 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         await record({ workspaceId, kind: "bot.updated", botId: bot.id, text: changes.join(" ") });
       }
       return json({ bot: { id: bot.id, name: bot.name, role: bot.role, status: bot.status } });
+    }),
+
+    /**
+     * A copy of a Bot: same job, instructions, skills, and playbook, its own
+     * name and a fresh thread. For a second specialist, or a variant to try.
+     */
+    POST("/bot/v1/bots/:botId/duplicate", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const workspaceId = gate.access.workspaceId;
+      const source = params.botId === undefined ? null : await getBot(workspaceId, params.botId);
+      if (source === null) return json({ error: "no such bot" }, 404);
+      const taken = new Set((await listBots(workspaceId)).map((bot) => bot.name.toLowerCase()));
+      let name = `${source.name} copy`.slice(0, 40);
+      for (let n = 2; taken.has(name.toLowerCase()); n += 1) name = `${source.name} copy ${n}`.slice(0, 40);
+      const hired = await hireBot({ workspaceId, hiredBy: gate.access.user, name, role: source.role, persona: source.persona });
+      const bot =
+        (await patchBot(workspaceId, hired.id, (current) => ({
+          ...current,
+          emoji: source.emoji,
+          skills: [...source.skills],
+          playbook: [...source.playbook],
+          ...(source.section === undefined || source.section === null ? {} : { section: source.section }),
+        }))) ?? hired;
+      await record({ workspaceId, kind: "bot.updated", botId: bot.id, text: `${bot.name} was created as a copy of ${source.name}.` });
+      return json({ bot: { id: bot.id, name: bot.name, room: roomForBot(bot.id) } }, 201);
+    }),
+
+    /**
+     * Remove a Bot from the console, the way `retire_bot` does from a thread: its
+     * open one-off jobs are cancelled, its playbook goes with it, and a handover it
+     * was waiting on is over. The console confirms with the person first.
+     */
+    DELETE("/bot/v1/bots/:botId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const workspaceId = gate.access.workspaceId;
+      const bot = params.botId === undefined ? null : await getBot(workspaceId, params.botId);
+      if (bot === null) return json({ error: "no such bot" }, 404);
+      const open = (await listOpenJobs(workspaceId)).filter((job) => job.botId === bot.id);
+      const cancelled: string[] = [];
+      for (const job of open) {
+        const outcome = await cancelJob(workspaceId, job.id);
+        if (outcome.ok) cancelled.push(job.id);
+      }
+      await retireBot(workspaceId, bot.id);
+      await forgetBot(workspaceId, bot.id);
+      await record({
+        workspaceId,
+        kind: "bot.retired",
+        botId: bot.id,
+        text: `${bot.name} was removed by ${gate.access.user}. ${cancelled.length} open job(s) cancelled.`,
+      });
+      return json({ removed: true, bot: { id: bot.id, name: bot.name }, cancelledJobs: cancelled });
     }),
 
     // The team's computer (see lib/computer/http.ts). Each Bot has a screen with a
