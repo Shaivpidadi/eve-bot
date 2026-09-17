@@ -153,6 +153,11 @@ curl -X POST localhost:3000/bot/v1/bots/<id>/duplicate
 curl -X DELETE localhost:3000/bot/v1/bots/<id>
 ```
 
+The front door is readable by agents too: `/`, `/about`, `/contact`, and
+`/privacy` answer `Accept: text/markdown` with Markdown, unknown paths answer
+404 the same way, `/llms.txt` says when to reach for Bot, and `/sitemap.xml`
+lists the public pages. The console and `/eve` stay out of all of it.
+
 ## Configuration
 
 Everything is optional except a model credential. `.env.example` documents all
@@ -171,6 +176,7 @@ of it; these are the ones that matter.
 | `BOT_MODEL_PRICES` | `model=in/out` USD per million tokens, so spend caps hold off Gateway; OpenRouter is read automatically |
 | `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`) |
 | `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console passwords, each bound to a workspace |
+| `BOT_PUBLIC_URL` | the front door's public origin for canonical URLs and the sitemap; Vercel supplies its own |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
 | `BOT_SANDBOX_ALLOW_DOMAINS` / `BOT_BROWSER_ALLOWED_DOMAINS` | fence the computer and the browser |
 | `BOT_EMAIL_WEBHOOK` | where approved email goes; unset returns drafts |

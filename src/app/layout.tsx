@@ -2,10 +2,13 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
 import "./globals.css";
+import { SITE } from "../site/content";
 
 export const metadata: Metadata = {
-  title: "Bot",
-  description: "Always-on AI teammates with a computer of their own.",
+  metadataBase: new URL(SITE.origin),
+  title: { default: SITE.name, template: `%s · ${SITE.name}` },
+  description: SITE.tagline,
+  applicationName: SITE.name,
 };
 
 export const viewport: Viewport = {

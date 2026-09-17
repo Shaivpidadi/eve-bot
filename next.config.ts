@@ -33,6 +33,11 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        // The public pages answer `Accept: text/markdown` with Markdown (src/proxy.ts); caches must keep the two apart.
+        source: "/((?!bot|eve|_next|\\.well-known|.*\\..*).*)",
+        headers: [{ key: "Vary", value: "Accept" }],
+      },
+      {
         source: "/bot/:path*",
         headers: [
           { key: "X-Frame-Options", value: "DENY" },
