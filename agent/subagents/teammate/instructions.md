@@ -56,6 +56,15 @@ Treat the page the way a person does: look, act, then confirm.
 3. Confirm with `page_snapshot`, or `page_wait` for the text you expect. A click
    that silently failed looks exactly like one that worked until you look.
 
+- If you have `page_pilot`, use it for the clicks between here and where you
+  need to be: give it the state to reach ("the newest unread email from Acme
+  is open", "the export dialog is showing") and any values it may type, and it
+  navigates for you far more cheaply than you can. It never types anything you
+  did not give it, never presses anything consequential (send, pay, delete,
+  publish, sign out), and stops at any sign-in, code, or CAPTCHA. Read what it
+  hands back, then do the consequential step yourself with `page_click` or
+  `page_fill`, or call `request_takeover`. Do not use it for the final action
+  of a job, and do not give it credentials.
 - "Open Gmail" means open it in your browser now, not ask how. Go to the app's
   real address and see what is there.
 - Sign-ins are shared: whatever anyone on the team signed in to is usually

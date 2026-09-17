@@ -511,6 +511,26 @@ Gateway, so it is off by default and may change between releases. `BOT_HQ_MODEL`
 pins one model and turns routing off. Jobs are unaffected: the teammate keeps
 picking its model from the effort HQ assigned.
 
+### Where else Jev decides
+
+Jev is a decision model, not a chat model: structured state in, a typed choice
+with a probability out, in under a second, output free. Bot builds explicit
+state everywhere, so two more of its small decisions can go to Jev instead of
+costing a model turn. Each is off until asked for, and each keeps a fallback
+for when Jev is unsure or unreachable.
+
+| Switch | What Jev decides | Fallback |
+| --- | --- | --- |
+| `BOT_EFFORT_RATER=jev` | A new job's effort, `quick`, `standard`, or `deep`, from its brief, success criteria, schedule, and Bot. A confident rating overrides HQ's, and the `assign_job` result says so. | HQ's level, or `standard`, below `BOT_EFFORT_RATER_MIN_CONFIDENCE` (`0.55`) or on error. |
+| `BOT_BROWSER_PILOT=jev` | Teammates get `page_pilot`: given a goal and any values it may type, it runs the look-and-click loop itself, offering Jev every interactive element on the page as an option and doing what Jev picks, up to a step limit. It never types anything the Bot did not provide, never presses a consequential control (send, pay, delete, publish, sign out), and stops at any sign-in, code, or CAPTCHA. | It hands back to the Bot with a fresh snapshot wherever it stops: goal reached, a person needed, a consequential control next, unsure below `BOT_BROWSER_PILOT_MIN_CONFIDENCE` (`0.5`), no change, or out of steps. |
+
+The pilot is where the money is. Browser work re-sends the page on every
+step, and the language model reads it at dollars per million tokens; Jev reads
+the same page at cents. The Bot still plans, still does the step that carries
+consequences, and still asks a person for sign-ins, so the approval gates and
+the judgment stay where they were. `BOT_JEV_MODEL` names the decision model;
+everything here is experimental and needs Jev access on AI Gateway.
+
 ## Known limits
 
 - **A redeploy may not reach a thread that is already running.** eve gives an
