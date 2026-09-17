@@ -453,6 +453,7 @@ worth knowing:
 | --- | --- |
 | `AI_GATEWAY_API_KEY` | model access (or link a Vercel project and use OIDC) |
 | `BOT_HQ_MODEL` / `BOT_HQ_REASONING` | HQ's model (Sonnet) and reasoning depth (`low`) |
+| `BOT_HQ_ROUTER` | `jev` lets TypeSafe's Jev pick HQ's model per turn, between `BOT_HQ_MODEL_ROUTINE` (Sonnet) and `BOT_HQ_MODEL_HARD` (Opus); off by default, experimental |
 | `BOT_MODEL_QUICK` / `BOT_MODEL_STANDARD` / `BOT_MODEL_DEEP` | the model a job runs on at each effort level (see below) |
 | `BOT_TEAMMATE_MODEL` | one model for every job, overriding the effort levels |
 | `BOT_TEAMMATE_REASONING` | teammate reasoning depth: `medium` (default), `low`, `high`, `xhigh` |
@@ -491,6 +492,24 @@ A job that fails re-runs one level up. The defaults are models the AI Gateway
 lists as neither retaining nor training on prompts, because Bots read inboxes
 and documents; check that before pointing a level at a promotional or free
 model.
+
+### Which model HQ talks on
+
+HQ runs on Sonnet: most of its turns are conversation and routing. Some are
+not, such as planning a hard job or untangling an unclear request. Set
+`BOT_HQ_ROUTER=jev` and a small decision model chooses per turn. At the start
+of each turn, [TypeSafe's Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
+reads the last few messages and picks `BOT_HQ_MODEL_ROUTINE` (Sonnet, low
+reasoning) for conversation and clear requests, or `BOT_HQ_MODEL_HARD` (Opus,
+medium reasoning) for judgment calls. The whole turn, tools included, then runs
+on that model, and the next turn is chosen afresh. Jev sees the two
+descriptions and the messages, never credentials, and answers in well under a
+second for a fraction of a cent.
+
+This uses eve's experimental `autoModel`, and Jev is in early access on AI
+Gateway, so it is off by default and may change between releases. `BOT_HQ_MODEL`
+pins one model and turns routing off. Jobs are unaffected: the teammate keeps
+picking its model from the effort HQ assigned.
 
 ## Known limits
 

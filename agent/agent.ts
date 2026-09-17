@@ -1,14 +1,17 @@
 import { defineAgent } from "eve";
 
-import { hqModel, reasoningFor, tokenLimits } from "./lib/models";
+import { hqModel } from "./lib/hq-model";
+import { reasoningFor, tokenLimits } from "./lib/models";
 
 /**
  * Bot HQ — the teammate you message.
  *
  * HQ routes, delegates, and reports. The actual work happens in the `teammate`
  * subagent, on a model picked per job (see `lib/models.ts`). Sonnet handles the
- * conversation well and cheaply, and light reasoning is enough to write a brief.
- * With `BOT_MODEL_BASE_URL` set, HQ runs on that endpoint's model instead.
+ * conversation well and cheaply, and light reasoning is enough to write a brief;
+ * with `BOT_HQ_ROUTER=jev`, a small decision model picks a more capable one for
+ * the turns that need it. With `BOT_MODEL_BASE_URL` set, HQ runs on that
+ * endpoint's model instead.
  */
 export default defineAgent({
   ...hqModel(),
