@@ -100,6 +100,23 @@ async function seedDefaultBot(workspaceId: string): Promise<void> {
   await writeDoc(seedKey(workspaceId), seeded);
 }
 
+/**
+ * The workspace's generalist: the Bot it was seeded with, or one named like it,
+ * or failing both the longest-serving active Bot. Work nobody is chosen for
+ * goes here.
+ */
+export async function defaultBot(workspaceId: string): Promise<Bot | null> {
+  const bots = await listBots(workspaceId);
+  const seed = await readDoc<SeedRecord>(seedKey(workspaceId));
+  const seeded = seed?.value.botId === undefined ? undefined : bots.find((bot) => bot.id === seed.value.botId);
+  return (
+    seeded ??
+    bots.find((bot) => bot.name.toLowerCase() === DEFAULT_BOT.name.toLowerCase()) ??
+    bots.find((bot) => bot.status === "active") ??
+    null
+  );
+}
+
 /** Resolves "Ava", "ava", or `bot_k3f9x2` to one bot, the way a person would refer to it. */
 export async function findBot(workspaceId: string, reference: string): Promise<Bot | null> {
   const direct = await getBot(workspaceId, reference);

@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { findBot } from "../lib/bots";
+import { defaultBot, findBot, listBots } from "../lib/bots";
 import { decide, jevOn, ranked } from "../lib/jev";
 import { assignJob } from "../lib/jobs";
 import { DEFAULT_EFFORT, EFFORT_DESCRIPTIONS, JOB_EFFORTS, type JobEffort } from "../lib/models";
@@ -89,11 +89,69 @@ async function rateEffort(
   }
 }
 
+/** How sure Jev must be before its pick of Bot stands; below this the generalist takes the job. */
+const PICKER_MIN_CONFIDENCE = 0.5;
+const PERSONA_STATE_CHARS = 400;
+
+type Pick = { readonly bot: Bot; readonly by: "named" | "jev" | "default"; readonly confidence?: number; readonly note?: string };
+
+/**
+ * Which Bot takes a job HQ did not name one for.
+ *
+ * With one active Bot there is nothing to decide. With more, Jev reads the job
+ * and every active Bot's job description and picks; the generalist takes it
+ * when Jev is unsure or does not answer. HQ used to decide this in prose and,
+ * left to itself, tended to hire a new Bot for a one-off instead.
+ */
+async function pickBot(
+  workspaceId: string,
+  job: { readonly title: string; readonly brief: string; readonly successCriteria?: readonly string[] },
+  abortSignal: AbortSignal | undefined,
+): Promise<Pick | null> {
+  const active = (await listBots(workspaceId)).filter((bot) => bot.status === "active");
+  const fallback = (await defaultBot(workspaceId)) ?? active[0] ?? null;
+  if (fallback === null) return null;
+  if (active.length < 2 || !jevOn()) return { bot: fallback, by: "default" };
+
+  try {
+    const options = Object.fromEntries(
+      active.map((bot) => [bot.id, `${bot.name}: ${bot.role}. ${bot.persona.slice(0, PERSONA_STATE_CHARS)}`]),
+    ) as Record<string, string>;
+    const decision = await decide<string>({
+      state: { job: { title: job.title, brief: job.brief.slice(0, BRIEF_STATE_CHARS), successCriteria: job.successCriteria ?? [] } },
+      instructions:
+        "Pick the teammate whose job description fits this work best. A specialist whose role matches wins over a generalist; when no role matches, pick the generalist rather than stretching a specialist. Judge from the brief, not the title alone.",
+      options,
+      ...(abortSignal === undefined ? {} : { abortSignal }),
+    });
+    const chosen = active.find((bot) => bot.id === decision.choice);
+    const confidence = decision.confidence ?? 1;
+    if (chosen === undefined || confidence < PICKER_MIN_CONFIDENCE) {
+      return {
+        bot: fallback,
+        by: "default",
+        note: `Jev leaned ${ranked(decision)
+          .map((entry) => `${active.find((bot) => bot.id === entry.option)?.name ?? entry.option} ${Math.round(entry.p * 100)}%`)
+          .join(", ")} but was not sure enough; ${fallback.name} takes it.`,
+      };
+    }
+    return { bot: chosen, by: "jev", confidence };
+  } catch (error) {
+    console.warn(`[bot] bot picker unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    return { bot: fallback, by: "default", note: `The Bot picker did not answer; ${fallback.name} takes it.` };
+  }
+}
+
 export default defineTool({
   description:
     "Create a job for a bot. Write the brief so a teammate who has not seen this conversation could execute it. Assigning does not start the work — call run_job, or let the schedule pick it up at runAt.",
   inputSchema: z.object({
-    bot: z.string().describe("Bot name or id."),
+    bot: z
+      .string()
+      .optional()
+      .describe(
+        "Bot name or id. Give it only when the operator named the Bot, or the job is in that Bot's own thread. Otherwise leave it out: the teammate whose job fits best is picked from the roster, and the result says who.",
+      ),
     title: z.string().min(1).max(120),
     brief: z
       .string()
@@ -142,10 +200,19 @@ export default defineTool({
   },
   async execute(input, ctx) {
     const who = operator(ctx);
-    const bot = await findBot(who.workspaceId, input.bot);
-    if (bot === null) {
-      return { assigned: false as const, reason: `No bot called ${input.bot}. Hire one first.` };
+    let pick: Pick;
+    if (input.bot !== undefined && input.bot.trim() !== "") {
+      const named = await findBot(who.workspaceId, input.bot);
+      if (named === null) {
+        return { assigned: false as const, reason: `No bot called ${input.bot}. Leave bot out to have one picked, or hire one.` };
+      }
+      pick = { bot: named, by: "named" };
+    } else {
+      const picked = await pickBot(who.workspaceId, input, ctx.abortSignal);
+      if (picked === null) return { assigned: false as const, reason: "There is no Bot on the team. Hire one first." };
+      pick = picked;
     }
+    const bot = pick.bot;
     if (bot.status === "paused") {
       return { assigned: false as const, reason: `${bot.name} is paused. Resume it first.` };
     }
@@ -187,7 +254,13 @@ export default defineTool({
         ...(rating.confidence === undefined ? {} : { effortConfidence: Math.round(rating.confidence * 100) / 100 }),
         ...(rating.note === undefined ? {} : { effortNote: rating.note }),
       },
-      bot: { id: bot.id, name: bot.name },
+      bot: {
+        id: bot.id,
+        name: bot.name,
+        pickedBy: pick.by,
+        ...(pick.confidence === undefined ? {} : { confidence: Math.round(pick.confidence * 100) / 100 }),
+        ...(pick.note === undefined ? {} : { note: pick.note }),
+      },
       nextStep:
         job.status === "queued"
           ? `Call run_job with jobId ${job.id} to start it now.`

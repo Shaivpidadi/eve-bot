@@ -5,7 +5,7 @@ import { browser, refreshScreen } from "../lib/browser";
 
 export default defineTool({
   description:
-    "Open a URL in your browser and read the page. Returns the accessibility tree with @refs — the handles you pass to page_click and page_fill. This is how you work inside apps that have no API.",
+    "Open a URL in your browser and read the page. Returns the accessibility tree with @refs — the handles page_pilot navigates by and you pass to page_click and page_fill. This is how you work inside apps that have no API: browse here, then page_pilot to where you need to be.",
   inputSchema: z.object({
     url: z.string().min(3).describe("Full URL, or a bare domain like app.example.com."),
   }),
