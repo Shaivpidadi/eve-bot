@@ -91,17 +91,20 @@ export default function Home() {
           <h2>On Vercel</h2>
           <p className="landing-lede">One click. Vercel runs the computer, the models, the storage, and the schedules, and bills your account.</p>
           <ul>
-            <li>Copies this repository to your GitHub and creates the project.</li>
-            <li>Connects a private Blob store for the roster, jobs, and memory.</li>
+            <li>Copies this repository to your GitHub, creates the project, and deploys it.</li>
             <li>Asks for one thing: a console password. <code>openssl rand -base64 32</code> makes a good one.</li>
+            <li>
+              Then, in the project&apos;s Storage tab, create a Blob store and connect it. It holds the roster, jobs, and
+              memory. Redeploy once.
+            </li>
             <li>The team&apos;s computer is a Vercel Sandbox; models go through AI Gateway, with Jev routing the small decisions.</li>
           </ul>
           <a className="btn primary landing-cta" href={DEPLOY}>
             Deploy to Vercel
           </a>
           <p className="landing-fine">
-            Then open <code>/bot</code> on your deployment and sign in with the password. Hobby plans work; Pro runs the
-            watchdog every minute.
+            Open <code>/bot</code> on your deployment and sign in with the password; the setup page there checks each
+            step off. Hobby plans work; Pro runs the watchdog every minute.
           </p>
         </article>
 
