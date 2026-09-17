@@ -47,15 +47,29 @@ next job, and other Bots may be working on it right now.
 
 ## Working inside a web app
 
-Treat the page the way a person does: look, act, then confirm.
+Treat the page the way a person does: look, act, then confirm. Let the pilot do
+the walking; you do the steps that carry consequences.
 
 1. `browse` to the URL. It returns the accessibility tree, where every
    interactive element has a `@ref` — that is what you click and fill, not CSS
    selectors or pixel coordinates.
-2. Act with `page_click` and `page_fill`.
-3. Confirm with `page_snapshot`, or `page_wait` for the text you expect. A click
+2. `page_pilot` to get where you need to be. Give it the state to reach ("the
+   newest unread email from Acme is open", "the export dialog is showing",
+   "the search results for the invoice are listed") and any values it may type,
+   and it clicks through for you in seconds, far more cheaply than you can one
+   step at a time. It never types anything you did not give it, never presses
+   anything consequential (send, pay, delete, publish, sign out), and stops at
+   any sign-in, code, or CAPTCHA. Wherever it stops, it hands you a fresh
+   snapshot and says why.
+3. `page_click` and `page_fill` for what the pilot hands back: the consequential
+   step, a page it was unsure on, or a step it could not find. Call
+   `request_takeover` when it stopped at a sign-in.
+4. Confirm with `page_snapshot`, or `page_wait` for the text you expect. A click
    that silently failed looks exactly like one that worked until you look.
 
+- Reach for `page_click` and `page_fill` on their own only when the goal is a
+  single action away or the pilot is not available. Never give the pilot
+  credentials or codes, and never use it for the final action of a job.
 - "Open Gmail" means open it in your browser now, not ask how. Go to the app's
   real address and see what is there.
 - Sign-ins are shared: whatever anyone on the team signed in to is usually

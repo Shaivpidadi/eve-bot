@@ -5,7 +5,7 @@ import { browser, refreshScreen } from "../lib/browser";
 
 export default defineTool({
   description:
-    "Click something on the page. Prefer an @ref from the latest snapshot; a CSS selector also works. Returns a fresh snapshot so you can see what the click did.",
+    "Click one thing on the page: the consequential step page_pilot handed back to you, or a single action when the goal is one click away. Prefer an @ref from the latest snapshot; a CSS selector also works. Returns a fresh snapshot so you can see what the click did. For getting from here to there, use page_pilot.",
   inputSchema: z.object({
     target: z.string().min(1).describe("An @ref like @e12, or a CSS selector."),
   }),

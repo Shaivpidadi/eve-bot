@@ -47,6 +47,8 @@ export async function assignJob(input: {
   requiresSignoff?: boolean;
   priority?: "normal" | "high";
   effort?: JobEffort;
+  effortBy?: Job["effortBy"];
+  effortConfidence?: number;
   room?: string;
 }): Promise<Job> {
   const now = new Date().toISOString();
@@ -61,6 +63,8 @@ export async function assignJob(input: {
     status: Date.parse(runAt) > Date.now() ? "scheduled" : "queued",
     priority: input.priority ?? "normal",
     effort: input.effort ?? DEFAULT_EFFORT,
+    effortBy: input.effortBy ?? (input.effort === undefined ? "default" : "hq"),
+    ...(input.effortConfidence === undefined ? {} : { effortConfidence: input.effortConfidence }),
     runAt,
     everyMinutes: input.everyMinutes ?? null,
     requiresSignoff: input.requiresSignoff ?? false,

@@ -30,6 +30,18 @@ const DEFAULT_MODELS: Readonly<Record<JobEffort, string>> = {
   deep: "anthropic/claude-opus-5",
 };
 
+/**
+ * What each level is for, in words HQ reads when it rates a job and Jev reads
+ * when it rates one instead (see `tools/assign_job.ts`).
+ */
+export const EFFORT_DESCRIPTIONS: Readonly<Record<JobEffort, string>> = {
+  quick:
+    "Lookups, status checks, and simple routine monitors: one page or one query, a short answer, nothing to judge. The cheapest model, about a tenth of standard.",
+  standard:
+    "Most work: operating a web app, reading and summarising, drafting, following a clear multi-step brief. The default.",
+  deep: "Hard multi-step research or analysis, coding, ambiguous instructions, or anything high-stakes where a mistake is costly. The most capable model, about 2.5 times standard.",
+};
+
 const MODEL_ENV: Readonly<Record<JobEffort, string>> = {
   quick: "BOT_MODEL_QUICK",
   standard: "BOT_MODEL_STANDARD",

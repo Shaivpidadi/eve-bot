@@ -137,7 +137,10 @@ through tools. eve's built-in web search runs through AI Gateway, so on your own
 endpoint give Bots a search service of yours: `BOT_SEARCH_PROVIDER=searxng` with
 `BOT_SEARCH_URL` pointing at a SearXNG instance keeps searches on your network,
 and `brave`, `tavily`, or `exa` with `BOT_SEARCH_API_KEY` use a hosted one.
-With none configured, Bots research with their browser.
+With none configured, Bots research with their browser. Jev, which makes
+Bot's small decisions on AI Gateway (see below), switches itself off on your
+own endpoint: HQ answers on your model, HQ picks the Bot and rates effort as
+it always did, and teammates browse step by step.
 
 The USD spend caps hold on your own endpoint once Bot knows what a model costs:
 on OpenRouter it reads the price list itself, and anywhere else you set
@@ -453,6 +456,7 @@ worth knowing:
 | --- | --- |
 | `AI_GATEWAY_API_KEY` | model access (or link a Vercel project and use OIDC) |
 | `BOT_HQ_MODEL` / `BOT_HQ_REASONING` | HQ's model (Sonnet) and reasoning depth (`low`) |
+| `BOT_JEV` / `BOT_JEV_MODEL` | Jev, the decision model behind HQ's per-turn model choice, job effort rating, and the browser pilot: `on` (default) or `off`; the model id (`typesafe-ai/jev`) |
 | `BOT_MODEL_QUICK` / `BOT_MODEL_STANDARD` / `BOT_MODEL_DEEP` | the model a job runs on at each effort level (see below) |
 | `BOT_TEAMMATE_MODEL` | one model for every job, overriding the effort levels |
 | `BOT_TEAMMATE_REASONING` | teammate reasoning depth: `medium` (default), `low`, `high`, `xhigh` |
@@ -491,6 +495,50 @@ A job that fails re-runs one level up. The defaults are models the AI Gateway
 lists as neither retaining nor training on prompts, because Bots read inboxes
 and documents; check that before pointing a level at a promotional or free
 model.
+
+### Which model HQ talks on
+
+Most of HQ's turns are conversation and routing; some are not, such as
+planning a hard job or untangling an unclear request. So HQ's model is chosen
+per turn. At the start of each turn,
+[TypeSafe's Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev),
+a small decision model, reads the last few messages and picks the team's
+`standard` model (Sonnet, low reasoning) for conversation and clear requests,
+or its `deep` model (Opus, medium reasoning) for judgment calls: the same two
+models a job's effort picks between, so `BOT_MODEL_STANDARD` and
+`BOT_MODEL_DEEP` set them for HQ too. The whole turn, tools included, runs on
+that model, and the next turn is chosen afresh. Jev sees the two descriptions
+and the messages, never credentials, and answers in well under a second for a
+fraction of a cent.
+
+`BOT_HQ_MODEL` pins one model and skips the choice; so does `BOT_JEV=off`.
+This uses eve's experimental `autoModel`, and Jev is in early access on AI
+Gateway, so a Gateway account without Jev access should set one of those.
+
+### Where else Jev decides
+
+Jev is a decision model, not a chat model: structured state in, a typed choice
+with a probability out, in under a second, output free. Bot builds explicit
+state everywhere, so its small decisions go to Jev instead of costing a model
+turn. One switch, `BOT_JEV`, covers all of them, and it is on by default
+because it is the cheaper way; each use keeps a fallback for when Jev is
+unsure or unreachable. On a custom model endpoint (`BOT_MODEL_BASE_URL`) it is
+off on its own, since Jev is reached through AI Gateway.
+
+| Decision | What Jev sees and picks | Fallback |
+| --- | --- | --- |
+| HQ's model, each turn | The last few messages; `standard` or `deep` (above). | `standard`, or `BOT_HQ_MODEL`. |
+| Which Bot takes a job | When HQ names no Bot: the brief and success criteria against every active Bot's job and persona. A specialist whose role fits wins; otherwise the generalist. The `assign_job` result says who and how sure. | The generalist, when Jev is under 50% sure, does not answer, or only one Bot is active. With nobody on the team, the generalist rejoins it on its own. HQ names the Bot only when you did. |
+| A new job's effort | The brief, success criteria, schedule, and Bot; `quick`, `standard`, or `deep`. A confident rating overrides HQ's, and the `assign_job` result says so. | HQ's level, or `standard`, when Jev is under 55% sure or does not answer. |
+| The next browser step | Teammates get `page_pilot`: given a goal and any values it may type, it runs the look-and-click loop itself, offering Jev every interactive element on the page as an option and doing what Jev picks, up to a step limit. It never types anything the Bot did not provide, never presses a consequential control (send, pay, delete, publish, sign out), and stops at any sign-in, code, or CAPTCHA. | It hands back to the Bot with a fresh snapshot wherever it stops: goal reached, a person needed, a consequential control next, under 50% sure, no change, or out of steps. |
+
+The pilot is where the money is. Browser work re-sends the page on every
+step, and the language model reads it at dollars per million tokens; Jev reads
+the same page at cents. The Bot still plans, still does the step that carries
+consequences, and still asks a person for sign-ins, so the approval gates and
+the judgment stay where they were. `BOT_JEV_MODEL` names the decision model;
+this is experimental and needs Jev access on AI Gateway. Without it, set
+`BOT_JEV=off`.
 
 ## Known limits
 
