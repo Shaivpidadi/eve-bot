@@ -18,8 +18,14 @@ export const isRoomName = (value: string): boolean => ROOM_NAME.test(value);
 /**
  * Rooms are addressed per workspace. Without the prefix, every workspace's
  * `desk` would resolve to one shared durable session.
+ *
+ * A room's generation counts how many times it was started over. Each bump
+ * gives the room a new address, so the next message opens a fresh session and
+ * the old one is simply left behind; generation 0 keeps the address rooms have
+ * always had. Starting over no longer depends on the old session cooperating.
  */
-export const roomAddress = (workspaceId: string, room: string): string => `${workspaceId}:${room}`;
+export const roomAddress = (workspaceId: string, room: string, generation = 0): string =>
+  generation > 0 ? `${workspaceId}:${room}#${generation}` : `${workspaceId}:${room}`;
 
 /** The dispatcher's wake-up line, written by `schedules/tick.ts`. */
 export const DUE_JOB_MESSAGE = /^Job (job_[a-z0-9]+) is due: "(.*)"\./;

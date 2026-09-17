@@ -1,4 +1,4 @@
-import { readDoc, updateDoc, writeDoc } from "./store";
+import { readDoc, updateDoc } from "./store";
 
 /**
  * What the roster needs to know about a room without replaying its stream: the
@@ -37,6 +37,8 @@ export interface RoomState {
    * address no longer resolves to it, and this is how its thread still reads back.
    */
   sessionId?: string | null;
+  /** How many times the room was started over; part of its session address (see `rooms.ts`). */
+  generation?: number;
   updatedAt: string;
 }
 
@@ -63,18 +65,32 @@ async function updateRoom(
   }));
 }
 
-/** A room started over: no session, no thread to read back, nothing waiting. */
-export async function resetRoom(workspaceId: string, room: string): Promise<void> {
-  await writeDoc<RoomState>(key(workspaceId, room), {
-    workspaceId,
-    room,
-    preview: null,
-    pending: [],
-    answered: [],
-    active: false,
-    sessionId: null,
-    updatedAt: new Date().toISOString(),
+/** Which generation of the room's address is current. Zero until it is first started over. */
+export async function roomGeneration(workspaceId: string, room: string): Promise<number> {
+  return (await getRoomState(workspaceId, room))?.generation ?? 0;
+}
+
+/**
+ * A room started over: no session, no thread to read back, nothing waiting, and
+ * a new generation, so the next message opens a fresh session at a new address.
+ */
+export async function resetRoom(workspaceId: string, room: string): Promise<number> {
+  let generation = 1;
+  await updateDoc<RoomState>(key(workspaceId, room), (current) => {
+    generation = (current?.generation ?? 0) + 1;
+    return {
+      workspaceId,
+      room,
+      preview: null,
+      pending: [],
+      answered: [],
+      active: false,
+      sessionId: null,
+      generation,
+      updatedAt: new Date().toISOString(),
+    };
   });
+  return generation;
 }
 
 export function notePreview(

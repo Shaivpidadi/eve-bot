@@ -30,7 +30,7 @@ import {
 } from "../lib/plugins";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
-import { getRoomState, noteAnswered, resetRoom } from "../lib/roomstate";
+import { getRoomState, noteAnswered, resetRoom, roomGeneration } from "../lib/roomstate";
 import { store } from "../lib/store";
 
 /**
@@ -102,6 +102,10 @@ async function resolveRoom(access: Access, raw: string | undefined): Promise<str
   }
   return raw;
 }
+
+/** The room's current session address: its generation changes each time it is started over. */
+const addressOf = async (workspaceId: string, room: string): Promise<string> =>
+  roomAddress(workspaceId, room, await roomGeneration(workspaceId, room));
 
 export default defineChannel<undefined, void, { workspaceId: string; room: string }>({
   // A bot is mid-job more often than not; queueing keeps a new instruction from
@@ -176,7 +180,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       }
       if (message.length > MAX_MESSAGE_CHARS) return json({ error: "message is too long" }, 413);
 
-      const session = await from(roomAddress(gate.access.workspaceId, room)).send(message, {
+      const session = await from(await addressOf(gate.access.workspaceId, room)).send(message, {
         auth: principal(gate.access, room),
       });
       return json({ room, sessionId: session.id });
@@ -211,7 +215,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       }
       if (responses.length === 0) return json({ error: "no responses" }, 400);
 
-      const session = await from(roomAddress(gate.access.workspaceId, room)).respond(responses, {
+      const session = await from(await addressOf(gate.access.workspaceId, room)).respond(responses, {
         auth: principal(gate.access, room),
       });
       await noteAnswered(gate.access.workspaceId, room, responses);
@@ -224,7 +228,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (!gate.ok) return denied(gate);
       const room = await resolveRoom(gate.access, params.room);
       if (room instanceof Response) return room;
-      return json(await from(roomAddress(gate.access.workspaceId, room)).cancel());
+      return json(await from(await addressOf(gate.access.workspaceId, room)).cancel());
     }),
 
     /**
@@ -234,12 +238,24 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * playbook and files, and the team's sign-ins are left as they are.
      */
     POST("/bot/v1/rooms/:room/reset", async (request, { attachSession, from, params, resolveSession }) => {
+      try {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const room = await resolveRoom(gate.access, params.room);
       if (room instanceof Response) return room;
       const { workspaceId, user } = gate.access;
-      const address = roomAddress(workspaceId, room);
+      // Starting over is a change of address, not a negotiation with the old
+      // session: the room's generation is bumped first, so the next message opens a
+      // fresh session and the console's stream finds nothing to replay. Whatever
+      // eve can do to the old session and the jobs' sessions happens after, bounded,
+      // because on eve 0.58 a session reset can hang and the person is waiting.
+      const address = await addressOf(workspaceId, room);
+      const live = await resolveSession(address).catch(() => undefined);
+      const recorded = (await getRoomState(workspaceId, room))?.sessionId ?? null;
+      const generation = await resetRoom(workspaceId, room);
+
+      const within = <T>(work: Promise<T>, ms = 8_000): Promise<T> =>
+        Promise.race([work, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timed out")), ms))]);
       const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
       const cancelledJobs: string[] = [];
@@ -251,21 +267,15 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         // The teammate's own session holds its open requests, such as a cost-limit card.
         if (job.sessionId) {
           const child = attachSession(job.sessionId);
-          await quietly(child.cancel({ tasks: true }));
-          await quietly(child.reset({ reason: "Room reset" }));
+          await quietly(within(child.cancel({ tasks: true })));
+          await quietly(within(child.reset({ reason: "Room reset" })));
         }
       }
-
-      const live = await resolveSession(address);
-      const recorded = (await getRoomState(workspaceId, room))?.sessionId ?? null;
-      for (const id of new Set([live?.id ?? null, recorded])) {
-        if (id !== null) await quietly(attachSession(id).cancel({ tasks: true }));
-      }
-      const reset = await from(address).reset({ reason: `Started over from the console by ${user}` });
-      if (recorded !== null && recorded !== live?.id) {
-        await quietly(attachSession(recorded).reset({ reason: "Room reset" }));
-      }
-      await resetRoom(workspaceId, room);
+      const old = [...new Set([live?.id ?? null, recorded].filter((id): id is string => id !== null))];
+      for (const id of old) await quietly(within(attachSession(id).cancel({ tasks: true })));
+      // eve's own reset of the old address is left to finish, or not, on its own.
+      void quietly(from(address).reset({ reason: `Started over from the console by ${user}` }));
+      const reset = { status: `generation ${generation}` };
 
       const botId = botIdForRoom(room);
       const bot = botId === null ? null : await getBot(workspaceId, botId);
@@ -281,12 +291,13 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         botId: bot?.id ?? null,
         text: `${user} started ${bot === null ? "HQ's desk" : `${bot.name}'s thread`} over.`,
       });
-      return json({
-        room,
-        reset: reset.status,
-        sessions: [...new Set([live?.id, recorded].filter((id): id is string => typeof id === "string"))],
-        cancelledJobs,
-      });
+      return json({ room, reset: reset.status, sessions: old, cancelledJobs });
+      } catch (error) {
+        // A failed reset must say why; the console shows this in the thread.
+        const message = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error);
+        console.error(`[bot] reset failed: ${message}`);
+        return json({ error: `Could not start over: ${message.split("\n")[0]}`, detail: message.slice(0, 2_000) }, 500);
+      }
     }),
 
     /**
@@ -305,7 +316,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       // The room's live session, or the last one it had once that session
       // ended, so the thread still reads back. The fallback id comes from this
       // workspace's own room record, never from the request.
-      const live = await resolveSession(roomAddress(gate.access.workspaceId, room));
+      const live = await resolveSession(await addressOf(gate.access.workspaceId, room));
       const sessionId =
         live?.id ?? (await getRoomState(gate.access.workspaceId, room))?.sessionId ?? null;
       if (sessionId === null) return none();
@@ -657,7 +668,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
   /** Schedule hand-offs land here. The workspace and room are the address. */
   async receive(input, { from }) {
-    return from(roomAddress(input.target.workspaceId, input.target.room)).send(input.message, {
+    return from(await addressOf(input.target.workspaceId, input.target.room)).send(input.message, {
       auth: input.auth,
     });
   },
