@@ -18,18 +18,24 @@ import { customEndpoint } from "./models";
  * Jev is on by default, because it is the cheaper way to make these decisions;
  * `BOT_JEV=off` turns every use of it off at once, and every caller keeps a
  * fallback for when Jev is off, unsure, or unreachable. It is reached through
- * AI Gateway (`BOT_JEV_MODEL`, default `typesafe-ai/jev`), so it needs the same
- * credentials as the language models.
+ * AI Gateway (`BOT_JEV_MODEL`, default `typesafe-ai/jev`). The language models
+ * may come from anywhere: a standalone Bot on Ollama still gets Jev when
+ * `AI_GATEWAY_API_KEY` is set, and goes without it on its own when not.
  */
 
 const OFF = new Set(["off", "0", "false", "no"]);
 
+/** Whether a call to AI Gateway can be signed: a key, or Vercel's own identity. */
+const gatewayReachable = (): boolean =>
+  Boolean(process.env.AI_GATEWAY_API_KEY?.trim() || process.env.VERCEL_OIDC_TOKEN?.trim() || process.env.VERCEL === "1");
+
 /**
- * Whether Bot uses Jev at all. One switch for every decision, and off on its own
- * when the models come from a custom endpoint, since Jev lives on AI Gateway.
+ * Whether Bot uses Jev at all. One switch for every decision. On a custom model
+ * endpoint it stays on only while Gateway is reachable for it, since Jev lives
+ * there; with Gateway models, Gateway is reachable by definition.
  */
 export const jevOn = (): boolean =>
-  customEndpoint() === null && !OFF.has(process.env.BOT_JEV?.trim().toLowerCase() ?? "");
+  !OFF.has(process.env.BOT_JEV?.trim().toLowerCase() ?? "") && (customEndpoint() === null || gatewayReachable());
 
 export const jevModel = (): string => process.env.BOT_JEV_MODEL?.trim() || "typesafe-ai/jev";
 

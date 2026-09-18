@@ -16,7 +16,9 @@ import { customEndpoint, hqModel as endpointHqModel, modelForEffort } from "./mo
  * it chose.
  *
  * `BOT_HQ_MODEL` pins one model and skips the choice; `BOT_JEV=off` does too, and so
- * does a custom model endpoint (`BOT_MODEL_BASE_URL`), since Jev lives on AI Gateway.
+ * does a custom model endpoint (`BOT_MODEL_BASE_URL`): `autoModel` routes between
+ * Gateway model ids, and an endpoint's models are live objects it cannot route to.
+ * The other Jev decisions (effort, Bot, browser pilot) still run there when Jev is on.
  *
  * This lives apart from `models.ts` on purpose: `run_job` imports that module
  * into its workflow bundle, and `autoModel` needs Node APIs the bundle forbids.
@@ -39,7 +41,7 @@ const ROUTES = {
 } as const;
 
 export function hqModel(): ReturnType<typeof endpointHqModel> | { readonly model: ReturnType<typeof autoModel> } {
-  // A custom endpoint runs HQ on its own model; Jev is not reachable there.
+  // A custom endpoint runs HQ on its own model; autoModel cannot route to it.
   if (customEndpoint() !== null) return endpointHqModel();
   const pinned = process.env.BOT_HQ_MODEL?.trim();
   if (pinned) return { model: pinned };
