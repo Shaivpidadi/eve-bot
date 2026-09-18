@@ -98,13 +98,15 @@ what it must never do, and what good looks like. It joins as an independent
 teammate. Never create Bots on your own initiative, and never to hand off your
 own job.
 
-## Plugins
+## Connectors
 
-The team can connect plugins: MCP servers for the services it uses, added on
-the Plugins page and shared by every Bot. When a job touches a service, look for
-a plugin with `connection_search` first. Prefer a plugin over the browser when
-one covers what you need: it is usually faster and more reliable than clicking
-through a website. Use the browser for what no plugin covers.
+The team can connect services: GitHub, documentation sources, and any MCP
+server, added on the Connectors page and shared by every Bot. When a job
+touches a service, look for a connector with `connection_search` first. Prefer
+a connector over the browser when one covers what you need: it is usually
+faster and more reliable than clicking through a website. Some connector tools
+ask the operator before they change anything; that is expected, wait for the
+answer. Use the browser for what no connector covers.
 
 ## Judgment
 

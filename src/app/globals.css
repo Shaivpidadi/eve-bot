@@ -180,10 +180,6 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
   box-shadow: var(--shadow); padding: 6px;
 }
 .popover h4 { margin: 4px 8px 6px; font-size: 11.5px; font-weight: 500; color: var(--faint); }
-.plugin { display: flex; gap: 10px; padding: 7px 8px; border-radius: 8px; }
-.plugin .i { color: var(--muted); margin-top: 1px; }
-.plugin b { display: block; font-weight: 500; font-size: 12.5px; }
-.plugin span { color: var(--muted); font-size: 11.5px; }
 
 /* -------------------------------------------------------------------- chat */
 
@@ -600,18 +596,19 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
 dialog select {
   font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
 }
-dialog.plugins-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; }
-.plugins-section { display: flex; flex-direction: column; gap: 10px; }
-.plugins-section h3 { margin: 4px 0 0; font-size: 12px; font-weight: 500; color: var(--faint); }
-.plugin-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.plugin-list li { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; }
-.plugin-list li.off { opacity: 0.55; }
-.plugin-list .i { color: var(--muted); flex: none; }
-.plugin-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.plugin-main b { font-weight: 500; font-size: 12.5px; }
-.plugin-main span { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-dialog label.plugin-toggle, dialog label.plugin-check { flex-direction: row; align-items: center; gap: 6px; }
-.plugin-suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
+dialog.connectors-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; }
+.connectors-section { display: flex; flex-direction: column; gap: 10px; }
+.connectors-section h3 { margin: 4px 0 0; font-size: 12px; font-weight: 500; color: var(--faint); }
+.connector-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.connector-list li { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; }
+.connector-list li.off { opacity: 0.55; }
+.connector-list .i { color: var(--muted); flex: none; }
+.connector-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.connector-main b { font-weight: 500; font-size: 12.5px; }
+.connector-main span { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dialog label.connector-toggle, dialog label.connector-check { flex-direction: row; align-items: center; gap: 6px; }
+.connector-gate { font-size: 11.5px; padding: 3px 6px; max-width: 160px; }
+.connector-custom { align-self: flex-start; }
 dialog.memory-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; }
 dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
 .memory-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -620,7 +617,7 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .memory-list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; padding-top: 5px; }
 .memory-add { display: flex; gap: 6px; }
 .memory-add input { flex: 1; min-width: 0; }
-@media (max-width: 520px) { .plugin-list li { flex-wrap: wrap; } }
+@media (max-width: 520px) { .connector-list li { flex-wrap: wrap; } }
 .error-text { color: var(--bad); font-size: 12px; margin: 0; }
 
 .hovercard {

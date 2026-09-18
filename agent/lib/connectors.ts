@@ -1,60 +1,67 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
+import { type CatalogEntry, catalogEntry, type ConnectorGate, type ConnectorKeyKind } from "./catalog";
 import { computerKey } from "./computer/keys";
 import { newId } from "./ids";
 import { deleteDoc, listDocs, readDoc, updateDoc, writeDoc } from "./store";
 
 /**
- * Plugins: MCP servers the team connected, the way Grok Bot has them.
+ * Connectors: the services the team connected, for every Bot.
  *
  * They are account-wide: every Bot in the workspace can use every enabled
- * plugin, and a Bot prefers a plugin over clicking through a website that
- * offers one. v1 connects any MCP server that speaks Streamable HTTP, with no
- * key, a bearer key, or a key in a custom header. Keys are stored encrypted and
- * decrypted only inside a Bot's connection; the model never sees them.
+ * connector, and a Bot prefers a connector over clicking through a website
+ * that offers one. A connector is an MCP server that speaks Streamable HTTP,
+ * either a built-in one from the catalog (`catalog.ts`), added by name, or a
+ * custom address the team pastes, with no key, a bearer key, or a key in a
+ * custom header. Keys are stored encrypted and decrypted only inside a Bot's
+ * connection; the model never sees them.
  */
-export type PluginKeyKind = "none" | "bearer" | "header";
+export type { ConnectorGate, ConnectorKeyKind };
 
 type SealedAuth =
   | { readonly kind: "none" }
   | { readonly kind: "bearer"; readonly sealed: string }
   | { readonly kind: "header"; readonly header: string; readonly sealed: string };
 
-export interface PluginCheck {
+export interface ConnectorCheck {
   readonly ok: boolean;
   readonly at: string;
   readonly tools: readonly string[];
   readonly error: string | null;
 }
 
-export interface Plugin {
+export interface Connector {
   readonly id: string;
   readonly workspaceId: string;
   /** The connection name a Bot calls tools under: `<name>__<tool>`. */
   readonly name: string;
   readonly label: string;
+  /** The catalog entry this came from, or null for a custom server. */
+  readonly catalog: string | null;
   readonly url: string;
   readonly description: string;
   readonly auth: SealedAuth;
   readonly enabled: boolean;
-  /** Ask a person before a Bot first uses this plugin in a job. */
-  readonly askFirst: boolean;
-  readonly check: PluginCheck;
+  /** When a person is asked before a Bot uses it: never, before changes, or before every first use. */
+  readonly gate: ConnectorGate;
+  readonly check: ConnectorCheck;
   readonly createdAt: string;
   readonly createdBy: string;
 }
 
 /** What the console sees: which kind of key, never the key. */
-export type PublicPlugin = Omit<Plugin, "auth"> & {
-  readonly auth: { readonly kind: PluginKeyKind; readonly header?: string };
+export type PublicConnector = Omit<Connector, "auth"> & {
+  readonly auth: { readonly kind: ConnectorKeyKind; readonly header?: string };
 };
 
-export interface PluginInput {
-  readonly label: string;
-  readonly url: string;
+export interface ConnectorInput {
+  /** A catalog id fills in the address, key kind, and description; the rest is custom. */
+  readonly catalog?: string;
+  readonly label?: string;
+  readonly url?: string;
   readonly description?: string;
-  readonly key: { readonly kind: PluginKeyKind; readonly header?: string; readonly secret?: string };
-  readonly askFirst?: boolean;
+  readonly key?: { readonly kind?: ConnectorKeyKind; readonly header?: string; readonly secret?: string };
+  readonly gate?: ConnectorGate;
 }
 
 const LABEL_MAX = 60;
@@ -63,104 +70,122 @@ const SECRET_MAX = 4_000;
 const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
 const PROBE_TIMEOUT_MS = 15_000;
 
-const key = (workspaceId: string, id: string) => `plugins/${workspaceId}/${id}.json`;
+const key = (workspaceId: string, id: string) => `connectors/${workspaceId}/${id}.json`;
 
-export async function listPlugins(workspaceId: string): Promise<Plugin[]> {
-  const plugins = await listDocs<Plugin>(`plugins/${workspaceId}/`);
-  return plugins.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+export async function listConnectors(workspaceId: string): Promise<Connector[]> {
+  const connectors = await listDocs<Connector>(`connectors/${workspaceId}/`);
+  return connectors.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
-export async function getPlugin(workspaceId: string, id: string): Promise<Plugin | null> {
-  return (await readDoc<Plugin>(key(workspaceId, id)))?.value ?? null;
+export async function getConnector(workspaceId: string, id: string): Promise<Connector | null> {
+  return (await readDoc<Connector>(key(workspaceId, id)))?.value ?? null;
 }
 
-export function publicPlugin(plugin: Plugin): PublicPlugin {
-  const auth = plugin.auth.kind === "header" ? { kind: "header" as const, header: plugin.auth.header } : { kind: plugin.auth.kind };
-  return { ...plugin, auth };
+export function publicConnector(connector: Connector): PublicConnector {
+  const auth =
+    connector.auth.kind === "header" ? { kind: "header" as const, header: connector.auth.header } : { kind: connector.auth.kind };
+  return { ...connector, auth };
 }
 
-/** Checks the input, reaches the server with it, and stores the plugin only if that worked. */
-export async function addPlugin(
+const GATES: readonly ConnectorGate[] = ["none", "writes", "all"];
+
+/**
+ * Checks the input, reaches the server with it, and stores the connector only
+ * if that worked. A catalog id supplies the address, key kind, description,
+ * and default gate; a custom server supplies them itself.
+ */
+export async function addConnector(
   workspaceId: string,
   createdBy: string,
-  input: PluginInput,
-): Promise<{ ok: true; plugin: Plugin } | { ok: false; error: string }> {
-  const label = input.label.trim().slice(0, LABEL_MAX);
-  if (label === "") return { ok: false, error: "Give the plugin a name." };
-  const url = checkUrl(input.url);
+  input: ConnectorInput,
+): Promise<{ ok: true; connector: Connector } | { ok: false; error: string }> {
+  const entry: CatalogEntry | undefined = input.catalog === undefined ? undefined : catalogEntry(input.catalog);
+  if (input.catalog !== undefined && entry === undefined) return { ok: false, error: "That is not a connector Bot knows." };
+
+  const label = (input.label ?? entry?.label ?? "").trim().slice(0, LABEL_MAX);
+  if (label === "") return { ok: false, error: "Give the connector a name." };
+  const url = checkUrl(entry?.url ?? input.url ?? "");
   if (typeof url !== "string") return { ok: false, error: url.error };
-  const secret = input.key.secret?.trim() ?? "";
-  if (input.key.kind !== "none" && (secret === "" || secret.length > SECRET_MAX)) {
-    return { ok: false, error: "Paste the key the server expects." };
+  const kind: ConnectorKeyKind = entry?.key.kind ?? input.key?.kind ?? "none";
+  const header = entry?.key.header ?? input.key?.header ?? "";
+  const secret = input.key?.secret?.trim() ?? "";
+  if (kind !== "none" && (secret === "" || secret.length > SECRET_MAX)) {
+    return { ok: false, error: entry === undefined ? "Paste the key the server expects." : `Paste a ${entry.label} key.` };
   }
-  if (input.key.kind === "header" && !HEADER_NAME.test(input.key.header ?? "")) {
+  if (kind === "header" && !HEADER_NAME.test(header)) {
     return { ok: false, error: "Header names use letters, digits, and dashes, such as X-Api-Key." };
   }
+  const gate: ConnectorGate = input.gate !== undefined && GATES.includes(input.gate) ? input.gate : (entry?.gate ?? "none");
 
-  const headers = headersFor(input.key.kind, input.key.header ?? "", secret);
+  const headers = headersFor(kind, header, secret);
   const probe = await probeMcp(url, headers);
   if (!probe.ok) return { ok: false, error: probe.error ?? "The server did not answer like an MCP server." };
 
-  const existing = await listPlugins(workspaceId);
+  const existing = await listConnectors(workspaceId);
+  if (entry !== undefined && existing.some((current) => current.catalog === entry.id)) {
+    return { ok: false, error: `${entry.label} is already connected.` };
+  }
   const now = new Date().toISOString();
-  const plugin: Plugin = {
-    id: newId("plugin"),
+  const connector: Connector = {
+    id: newId("conn"),
     workspaceId,
-    name: uniqueName(label, existing.map((entry) => entry.name)),
+    name: uniqueName(entry?.id ?? label, existing.map((current) => current.name)),
     label,
+    catalog: entry?.id ?? null,
     url,
     description:
       input.description?.trim().slice(0, DESCRIPTION_MAX) ||
+      entry?.description ||
       `${label}: tools from ${new URL(url).host}. ${probe.tools.slice(0, 8).join(", ")}`.slice(0, DESCRIPTION_MAX),
-    auth: await seal(input.key.kind, input.key.header ?? "", secret),
+    auth: await seal(kind, header, secret),
     enabled: true,
-    askFirst: input.askFirst === true,
+    gate,
     check: probe,
     createdAt: now,
     createdBy,
   };
-  await writeDoc(key(workspaceId, plugin.id), plugin);
-  return { ok: true, plugin };
+  await writeDoc(key(workspaceId, connector.id), connector);
+  return { ok: true, connector };
 }
 
-export async function updatePlugin(
+export async function updateConnector(
   workspaceId: string,
   id: string,
-  patch: { enabled?: boolean; askFirst?: boolean; description?: string; check?: PluginCheck },
-): Promise<Plugin | null> {
-  return updateDoc<Plugin>(key(workspaceId, id), (current) =>
+  patch: { enabled?: boolean; gate?: ConnectorGate; description?: string; check?: ConnectorCheck },
+): Promise<Connector | null> {
+  return updateDoc<Connector>(key(workspaceId, id), (current) =>
     current === null
       ? null
       : {
           ...current,
           ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
-          ...(patch.askFirst === undefined ? {} : { askFirst: patch.askFirst }),
+          ...(patch.gate === undefined || !GATES.includes(patch.gate) ? {} : { gate: patch.gate }),
           ...(patch.description === undefined ? {} : { description: patch.description.trim().slice(0, DESCRIPTION_MAX) }),
           ...(patch.check === undefined ? {} : { check: patch.check }),
         },
   );
 }
 
-export async function removePlugin(workspaceId: string, id: string): Promise<boolean> {
-  if ((await getPlugin(workspaceId, id)) === null) return false;
+export async function removeConnector(workspaceId: string, id: string): Promise<boolean> {
+  if ((await getConnector(workspaceId, id)) === null) return false;
   await deleteDoc(key(workspaceId, id));
   return true;
 }
 
 /** Reaches the server again with its stored key and records what it offers now. */
-export async function recheckPlugin(plugin: Plugin): Promise<Plugin | null> {
-  const check = await probeMcp(plugin.url, await pluginHeaders(plugin));
-  return updatePlugin(plugin.workspaceId, plugin.id, { check });
+export async function recheckConnector(connector: Connector): Promise<Connector | null> {
+  const check = await probeMcp(connector.url, await connectorHeaders(connector));
+  return updateConnector(connector.workspaceId, connector.id, { check });
 }
 
-/** The plugin's request headers with its key unsealed. Only for server-side calls. */
-export async function pluginHeaders(plugin: Plugin): Promise<Record<string, string>> {
-  if (plugin.auth.kind === "none") return {};
-  const secret = await unseal(plugin.auth.sealed);
-  return headersFor(plugin.auth.kind, plugin.auth.kind === "header" ? plugin.auth.header : "", secret);
+/** The connector's request headers with its key unsealed. Only for server-side calls. */
+export async function connectorHeaders(connector: Connector): Promise<Record<string, string>> {
+  if (connector.auth.kind === "none") return {};
+  const secret = await unseal(connector.auth.sealed);
+  return headersFor(connector.auth.kind, connector.auth.kind === "header" ? connector.auth.header : "", secret);
 }
 
-function headersFor(kind: PluginKeyKind, header: string, secret: string): Record<string, string> {
+function headersFor(kind: ConnectorKeyKind, header: string, secret: string): Record<string, string> {
   if (kind === "bearer") return { authorization: `Bearer ${secret}` };
   if (kind === "header") return { [header]: secret };
   return {};
@@ -175,7 +200,7 @@ function checkUrl(raw: string): string | { error: string } {
   }
   const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && local && process.env.VERCEL !== "1")) {
-    return { error: "Plugins connect over https." };
+    return { error: "Connectors connect over https." };
   }
   url.hash = "";
   return url.toString();
@@ -189,7 +214,7 @@ function uniqueName(label: string, taken: readonly string[]): string {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^[^a-z]+/, "")
       .replace(/-+$/, "")
-      .slice(0, 40) || "plugin";
+      .slice(0, 40) || "connector";
   let name = base;
   for (let n = 2; taken.includes(name); n += 1) name = `${base}-${n}`;
   return name;
@@ -198,10 +223,10 @@ function uniqueName(label: string, taken: readonly string[]): string {
 // ─── Keys at rest ────────────────────────────────────────────────────────────
 
 async function sealingKey(): Promise<Buffer> {
-  return createHash("sha256").update(`bot-plugins:${await computerKey()}`).digest();
+  return createHash("sha256").update(`bot-connectors:${await computerKey()}`).digest();
 }
 
-async function seal(kind: PluginKeyKind, header: string, secret: string): Promise<SealedAuth> {
+async function seal(kind: ConnectorKeyKind, header: string, secret: string): Promise<SealedAuth> {
   if (kind === "none") return { kind };
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", await sealingKey(), iv);
@@ -212,7 +237,7 @@ async function seal(kind: PluginKeyKind, header: string, secret: string): Promis
 
 async function unseal(sealed: string): Promise<string> {
   const [iv, tag, body] = sealed.split(".").map((part) => Buffer.from(part, "base64url"));
-  if (iv === undefined || tag === undefined || body === undefined) throw new Error("A plugin key is damaged; add the plugin again.");
+  if (iv === undefined || tag === undefined || body === undefined) throw new Error("A connector key is damaged; add the connector again.");
   const decipher = createDecipheriv("aes-256-gcm", await sealingKey(), iv);
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(body), decipher.final()]).toString("utf8");
@@ -224,14 +249,14 @@ async function unseal(sealed: string): Promise<string> {
  * Connects the way a Bot will (Streamable HTTP), asks for the tool list, and
  * hangs up. Enough to prove the address and key work before a Bot relies on them.
  */
-export async function probeMcp(url: string, headers: Record<string, string>): Promise<PluginCheck> {
+export async function probeMcp(url: string, headers: Record<string, string>): Promise<ConnectorCheck> {
   const at = new Date().toISOString();
   try {
     const init = await rpc(url, headers, {
       jsonrpc: "2.0",
       id: 1,
       method: "initialize",
-      params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "bot-plugins", version: "1" } },
+      params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "bot-connectors", version: "1" } },
     });
     await rpc(url, headers, { jsonrpc: "2.0", method: "notifications/initialized" }, init.session).catch(() => undefined);
     const listed = await rpc(url, headers, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, init.session);

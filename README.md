@@ -103,11 +103,13 @@ tools.
 - **Durable jobs.** A run survives restarts and redeploys, waits for its start
   time with no compute, renews a lease so a dead run is noticed, and can park
   a day for your sign-off. A daily watchdog re-dispatches anything stranded.
-- **Approvals.** Sending email, retiring a Bot, and anything a plugin marks
-  sensitive stop for a person first.
+- **Approvals.** Sending email, retiring a Bot, and any connector tool that
+  changes something stop for a person first.
 - **Memory.** Per-person, per-workspace, and per-craft memory, plus each Bot's
   playbook. Open **Memory** in the console to see and edit it.
-- **Plugins.** Connect an MCP server once and every Bot can use it.
+- **Connectors.** Add GitHub or a documentation source by name, or any MCP
+  server by address, once, and every Bot can use it. Tools that change
+  something ask first.
 
 ## The console
 
