@@ -2,6 +2,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 
 import { pricedModel } from "./pricing";
+import { steadyModel } from "./steady";
 
 /**
  * Which model does a job.
@@ -124,7 +125,8 @@ let endpointProvider: { readonly baseURL: string; readonly provider: ReturnType<
 /**
  * A model on the custom endpoint, as the AI SDK model object eve calls directly,
  * with every step priced from `BOT_MODEL_PRICES` or OpenRouter's list so the USD
- * caps hold (see `pricing.ts`).
+ * caps hold (see `pricing.ts`), and a stream the endpoint drops early ended
+ * cleanly rather than failing the turn (see `steady.ts`).
  */
 export function endpointModel(endpoint: ModelEndpoint, id: string): LanguageModel {
   if (endpointProvider?.baseURL !== endpoint.baseURL) {
@@ -139,7 +141,8 @@ export function endpointModel(endpoint: ModelEndpoint, id: string): LanguageMode
       }),
     };
   }
-  return pricedModel(endpointProvider.provider.chatModel(id), endpoint.baseURL, id);
+  // Nearest the wire: a stream the endpoint drops early still ends in a finish the pricing layer can read.
+  return pricedModel(steadyModel(endpointProvider.provider.chatModel(id)), endpoint.baseURL, id);
 }
 
 // ---------------------------------------------------------------------------
