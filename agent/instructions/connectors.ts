@@ -21,11 +21,11 @@ export default defineDynamic({
         content: [
           "## Connectors",
           "",
-          "The team connected these services. Every Bot can use them while it works; you cannot call them yourself.",
+          "The team connected these services. You have their read tools yourself, found with `connection_search`; Bots have all of their tools.",
           "",
           ...connectors.map((connector) => `- ${connector.label} (\`${connector.name}\`): ${connector.description}`),
           "",
-          "When a request needs one of them, assign it to a Bot as usual and name the connector in the brief, so the Bot uses it instead of the browser. Never tell the operator a listed service is unavailable.",
+          "A lookup or a question one of them answers in a call or two, answer yourself, in this thread, right away: open issues, recent commits, a page's contents, a status. Do not assign a job for it, and do not ask which account or repository first: list what the connector can see and pick the obvious one, or ask only when several fit. When a request changes something (create, merge, send, close), or needs the browser, or takes many steps, assign it to a Bot as usual and name the connector in the brief so the Bot uses it instead of the browser. Never tell the operator a listed service is unavailable.",
         ].join("\n"),
       });
     },
