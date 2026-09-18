@@ -21,7 +21,7 @@ Bot runs in one of two places. Same code, different plumbing.
 | --- | --- | --- |
 | Setup | one click | `npm run setup` |
 | The team's computer | Vercel Sandbox | Docker on your machine |
-| Models | AI Gateway, with Jev routing | Ollama, LM Studio, OpenRouter, any OpenAI-compatible API |
+| Models | AI Gateway, with Jev routing | Ollama, LM Studio, OpenRouter, any OpenAI-compatible API; Jev too, with a Gateway key |
 | Storage and memory | Vercel Blob | disk |
 | Schedules | Vercel Cron | the server's own cron |
 | Web search | eve's, through AI Gateway | your SearXNG, or Brave, Tavily, Exa |
@@ -84,7 +84,9 @@ the machine itself is `http://host.docker.internal:11434/v1`, the profile's
 Ollama is `http://ollama:11434/v1`.
 
 Pick a model that handles tool calls well; the Bots do everything through
-tools. Jev is off here on its own, since it lives on AI Gateway.
+tools. Jev lives on AI Gateway: set `AI_GATEWAY_API_KEY` and it runs here too,
+with the language models still on your endpoint; leave it unset and Bot goes
+without Jev on its own.
 
 ## What you get
 
@@ -125,7 +127,9 @@ under a second, for a fraction of a cent. One switch, `BOT_JEV`, on by default.
 
 The pilot never invents text, never presses anything consequential (send, pay,
 delete, publish, sign out), and stops at any sign-in. The Bot does those steps.
-Jev is in early access on AI Gateway; without access, set `BOT_JEV=off`.
+Jev is in early access on AI Gateway; without access, set `BOT_JEV=off`. On a
+custom model endpoint, HQ's model is not routed (the endpoint's model answers
+every turn); the other three decisions run whenever a Gateway key is set.
 
 ## The console
 
@@ -183,6 +187,7 @@ of it; these are the ones that matter.
 | `BOT_PUBLIC_URL` | the front door's public origin for canonical URLs and the sitemap; Vercel supplies its own |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
 | `BOT_SANDBOX_ALLOW_DOMAINS` / `BOT_BROWSER_ALLOWED_DOMAINS` | fence the computer and the browser |
+| `BOT_BROWSER_PAGE_CHARS` / `BOT_BROWSER_SETTLE_MS` | how much of a page a Bot reads per look (`8000`) and how long it lets the page settle first (`300`) |
 | `BOT_EMAIL_WEBHOOK` | where approved email goes; unset returns drafts |
 
 ## Development

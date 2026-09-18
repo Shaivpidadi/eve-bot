@@ -3,11 +3,12 @@ import { z } from "zod";
 
 import { looseBoolean } from "../../../lib/tool-input";
 
-import { browser, refreshScreen } from "../lib/browser";
+import { browser } from "../lib/browser";
+import { act } from "../lib/page";
 
 export default defineTool({
   description:
-    "Clear a field and type into it: text page_pilot could not type (it only types values you gave it), or the final entry of a job. Set submit to press Enter afterwards. Never pass a password or one-time code you were not explicitly given for this job.",
+    "Clear a field and type into it: text page_pilot could not type (it only types values you gave it), or the final entry of a job. Set submit to press Enter afterwards. Reports what changed on the page the same way page_click does. Never pass a password or one-time code you were not explicitly given for this job.",
   inputSchema: z.object({
     target: z.string().min(1).describe("An @ref like @e7, or a CSS selector."),
     value: z.string().max(4_000),
@@ -18,22 +19,17 @@ export default defineTool({
     start: ({ target }) => `Fill ${target}`,
   },
   async execute({ target, value, submit }, ctx) {
-    const filled = await browser(ctx, ["fill", target, value]);
-    if (!filled.ok) {
-      return { filled: false as const, target, error: filled.error, detail: filled.output };
-    }
     if (submit === true) {
-      const pressed = await browser(ctx, ["press", "Enter"]);
-      if (!pressed.ok) {
-        return { filled: true as const, submitted: false as const, detail: pressed.output };
-      }
+      const filled = await browser(ctx, ["fill", target, value]);
+      if (!filled.ok) return { filled: false as const, target, error: filled.error, detail: filled.output };
+      const pressed = await act(ctx, ["press", "Enter"]);
+      if (!pressed.ok) return { filled: true as const, submitted: false as const, target, error: pressed.error, detail: pressed.detail };
+      const { ok: _ok, ...seen } = pressed;
+      return { filled: true as const, submitted: true as const, target, ...seen };
     }
-    await refreshScreen(ctx);
-    const snapshot = await browser(ctx, ["snapshot"]);
-    return {
-      filled: true as const,
-      submitted: submit === true,
-      page: snapshot.ok ? snapshot.output : null,
-    };
+    const result = await act(ctx, ["fill", target, value]);
+    if (!result.ok) return { filled: false as const, target, error: result.error, detail: result.detail };
+    const { ok: _ok, ...seen } = result;
+    return { filled: true as const, submitted: false as const, target, ...seen };
   },
 });

@@ -64,8 +64,11 @@ the walking; you do the steps that carry consequences.
 3. `page_click` and `page_fill` for what the pilot hands back: the consequential
    step, a page it was unsure on, or a step it could not find. Call
    `request_takeover` when it stopped at a sign-in.
-4. Confirm with `page_snapshot`, or `page_wait` for the text you expect. A click
-   that silently failed looks exactly like one that worked until you look.
+4. Read what came back. `page_click` and `page_fill` report `changed`: `none`
+   means the page did not react, so do not repeat the same action; `some`
+   lists what appeared under `added`, with fresh refs; `page` means you are
+   somewhere new, so read the page afresh. Confirm with `page_snapshot`, or
+   `page_wait` for the text you expect.
 
 - Reach for `page_click` and `page_fill` on their own only when the goal is a
   single action away or the pilot is not available. Never give the pilot
@@ -88,8 +91,11 @@ the walking; you do the steps that carry consequences.
   given for this job, and never echo credentials into `log_progress`, a file,
   or your summary. Do not try to work around a challenge.
 - Never close the browser or its last tab; the operator is using it too.
-- A stale `@ref` means the page re-rendered: take a fresh snapshot. `page_read`
-  gives you the page as text when you only need to extract data.
+- A stale `@ref` means the page re-rendered: take a fresh snapshot. The tree
+  you get is trimmed to headings, text, and interactive elements; when it says
+  lines were left out and you need them, `page_snapshot` with `full` has the
+  whole tree, and `page_read` gives you the page as text when you only need
+  to extract data.
 - Before you say a form was submitted or a record was updated, take a
   `page_screenshot` of the confirmation and `save_artifact` it.
 - Three failed attempts at the same element means the approach is wrong. Say so
