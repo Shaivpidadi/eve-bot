@@ -273,7 +273,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         }
       }
       const old = [...new Set([live?.id ?? null, recorded].filter((id): id is string => id !== null))];
-      for (const id of old) await quietly(within(attachSession(id).cancel({ tasks: true })));
+      // The session alone, not its tasks: the one-off jobs' sessions were cancelled
+      // above, routines started here must keep running, and asking eve to cancel
+      // finished children only makes it log that they cannot be cancelled.
+      for (const id of old) await quietly(within(attachSession(id).cancel({ tasks: false })));
       // eve's own reset of the old address is left to finish, or not, on its own.
       void quietly(from(address).reset({ reason: `Started over from the console by ${user}` }));
       const reset = { status: `generation ${generation}` };
