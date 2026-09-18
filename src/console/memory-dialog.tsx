@@ -101,7 +101,7 @@ export function MemoryDialog({ open, onClose }: { open: boolean; onClose: () => 
           const draft = drafts[memory.slot] ?? "";
           const full = Math.min(100, Math.round((memory.used / memory.maxCharacters) * 100));
           return (
-            <section key={memory.slot} className="plugins-section">
+            <section key={memory.slot} className="connectors-section">
               <h3>{copy.title}</h3>
               <p className="faint">{copy.detail}</p>
               {memory.entries.length === 0 ? (

@@ -19,15 +19,16 @@ import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
 import { cancelJob, listOpenJobs } from "../lib/jobs";
 import { addMemory, forgetMemory, isMemorySlot, readMemory } from "../lib/memory";
+import { CATALOG } from "../lib/catalog";
 import {
-  addPlugin,
-  getPlugin,
-  listPlugins,
-  publicPlugin,
-  recheckPlugin,
-  removePlugin,
-  updatePlugin,
-} from "../lib/plugins";
+  addConnector,
+  getConnector,
+  listConnectors,
+  publicConnector,
+  recheckConnector,
+  removeConnector,
+  updateConnector,
+} from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
 import { getRoomState, noteAnswered, resetRoom, roomGeneration } from "../lib/roomstate";
@@ -272,7 +273,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         }
       }
       const old = [...new Set([live?.id ?? null, recorded].filter((id): id is string => id !== null))];
-      for (const id of old) await quietly(within(attachSession(id).cancel({ tasks: true })));
+      // The session alone, not its tasks: the one-off jobs' sessions were cancelled
+      // above, routines started here must keep running, and asking eve to cancel
+      // finished children only makes it log that they cannot be cancelled.
+      for (const id of old) await quietly(within(attachSession(id).cancel({ tasks: false })));
       // eve's own reset of the old address is left to finish, or not, on its own.
       void quietly(from(address).reset({ reason: `Started over from the console by ${user}` }));
       const reset = { status: `generation ${generation}` };
@@ -578,62 +582,62 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return outcome.ok ? json({ forgotten: true }) : json({ error: outcome.error }, outcome.status);
     }),
 
-    /** The team's plugins: MCP servers every Bot can use. Keys never come back out. */
-    GET("/bot/v1/plugins", async (request) => {
+    /** The team's connectors: services every Bot can use. Keys never come back out. */
+    GET("/bot/v1/connectors", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      return json({ plugins: (await listPlugins(gate.access.workspaceId)).map(publicPlugin) });
+      return json({ connectors: (await listConnectors(gate.access.workspaceId)).map(publicConnector), catalog: CATALOG });
     }),
 
-    /** Connects a plugin: the server must answer with its tools before it is saved. */
-    POST("/bot/v1/plugins", async (request) => {
+    /** Connects a connector, from the catalog by id or a custom MCP server: it must answer with its tools before it is saved. */
+    POST("/bot/v1/connectors", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const body = await readJson(request);
       const keyInput = typeof body?.key === "object" && body.key !== null ? (body.key as Record<string, unknown>) : {};
-      const kind = keyInput.kind === "bearer" || keyInput.kind === "header" ? keyInput.kind : "none";
-      const added = await addPlugin(gate.access.workspaceId, gate.access.user, {
-        label: typeof body?.label === "string" ? body.label : "",
-        url: typeof body?.url === "string" ? body.url : "",
+      const added = await addConnector(gate.access.workspaceId, gate.access.user, {
+        ...(typeof body?.catalog === "string" ? { catalog: body.catalog } : {}),
+        ...(typeof body?.label === "string" ? { label: body.label } : {}),
+        ...(typeof body?.url === "string" ? { url: body.url } : {}),
         ...(typeof body?.description === "string" ? { description: body.description } : {}),
         key: {
-          kind,
+          ...(keyInput.kind === "bearer" || keyInput.kind === "header" || keyInput.kind === "none" ? { kind: keyInput.kind } : {}),
           ...(typeof keyInput.header === "string" ? { header: keyInput.header } : {}),
           ...(typeof keyInput.secret === "string" ? { secret: keyInput.secret } : {}),
         },
-        askFirst: body?.askFirst === true,
+        ...(body?.gate === "none" || body?.gate === "writes" || body?.gate === "all" ? { gate: body.gate } : {}),
       });
       if (!added.ok) return json({ error: added.error }, 422);
-      return json({ plugin: publicPlugin(added.plugin) }, 201);
+      return json({ connector: publicConnector(added.connector) }, 201);
     }),
 
-    PATCH("/bot/v1/plugins/:pluginId", async (request, { params }) => {
+    PATCH("/bot/v1/connectors/:connectorId", async (request, { params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const body = await readJson(request);
-      const updated = await updatePlugin(gate.access.workspaceId, params.pluginId ?? "", {
+      const updated = await updateConnector(gate.access.workspaceId, params.connectorId ?? "", {
         ...(typeof body?.enabled === "boolean" ? { enabled: body.enabled } : {}),
-        ...(typeof body?.askFirst === "boolean" ? { askFirst: body.askFirst } : {}),
+        ...(body?.gate === "none" || body?.gate === "writes" || body?.gate === "all" ? { gate: body.gate } : {}),
         ...(typeof body?.description === "string" ? { description: body.description } : {}),
       });
-      return updated === null ? json({ error: "no such plugin" }, 404) : json({ plugin: publicPlugin(updated) });
+      return updated === null ? json({ error: "no such connector" }, 404) : json({ connector: publicConnector(updated) });
     }),
 
-    DELETE("/bot/v1/plugins/:pluginId", async (request, { params }) => {
+    DELETE("/bot/v1/connectors/:connectorId", async (request, { params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      const removed = await removePlugin(gate.access.workspaceId, params.pluginId ?? "");
-      return removed ? json({ removed: true }) : json({ error: "no such plugin" }, 404);
+      const removed = await removeConnector(gate.access.workspaceId, params.connectorId ?? "");
+      return removed ? json({ removed: true }) : json({ error: "no such connector" }, 404);
     }),
 
     /** Reaches the server again with its stored key, to show whether it still works. */
-    POST("/bot/v1/plugins/:pluginId/check", async (request, { params }) => {
+    POST("/bot/v1/connectors/:connectorId/check", async (request, { params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      const plugin = await getPlugin(gate.access.workspaceId, params.pluginId ?? "");
-      if (plugin === null) return json({ error: "no such plugin" }, 404);
-      const checked = await recheckPlugin(plugin);
-      return checked === null ? json({ error: "no such plugin" }, 404) : json({ plugin: publicPlugin(checked) });
+      const connector = await getConnector(gate.access.workspaceId, params.connectorId ?? "");
+      if (connector === null) return json({ error: "no such connector" }, 404);
+      const checked = await recheckConnector(connector);
+      return checked === null ? json({ error: "no such connector" }, 404) : json({ connector: publicConnector(checked) });
     }),
 
     GET("/bot/v1/bots/:botId/screen", async (request, { params }) => {

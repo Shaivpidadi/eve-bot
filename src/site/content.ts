@@ -41,7 +41,7 @@ ${SITE.tagline} Each teammate works inside the apps you already use, on a real b
 
 ### On Vercel
 
-One click. Vercel runs the computer (Vercel Sandbox), the models (AI Gateway, with Jev routing the small decisions), the storage (Blob), and the schedules (Cron), and bills your account.
+One click. Vercel runs the computer (Vercel Sandbox), the models (AI Gateway), the storage (Blob), and the schedules (Cron), and bills your account.
 
 - Deploy: ${DEPLOY_URL}
 - It asks for one value, BOT_CONSOLE_TOKEN, the password you sign in with.
@@ -81,7 +81,6 @@ export const ABOUT = {
     `${SITE.name} is open-source software for running a small team of AI teammates that do real work inside the web apps a person already uses. You talk to HQ, the coordinator, the way you would message a colleague. HQ turns the request into a job with explicit success criteria, hands it to the Bot whose role fits, and reports back. The Bots share one persistent computer with a real Google Chrome, a terminal, and files, so what one of them signs in to is there for the next, and what they leave behind is there tomorrow.`,
     `It is built on eve, Vercel's agent framework, and Next.js. Jobs run as durable workflows, so they survive restarts and redeploys, wait for their start time without holding compute, and can park for a day waiting for a person's sign-off. Anything irreversible, such as sending email or retiring a Bot, stops for a person first. When a Bot meets a sign-in, a one-time code, or a CAPTCHA, it asks you to take over its live browser; you do the step and hand it back, and the password never passes through chat.`,
     `It runs in two places. On Vercel, one click deploys it to your own account, and Vercel provides the computer, the models, the storage, and the schedules. Standalone, it runs on a machine you own: the computer in Docker, models from Ollama, LM Studio, OpenRouter, or any OpenAI-compatible endpoint, storage on disk, nothing leaving your network unless you point it there. The code is the same; only the plumbing differs.`,
-    `Small decisions inside the system, such as which model HQ answers on, which Bot takes a job, how hard the job is, and which element a Bot should click next, go to Jev, a decision model, rather than to a full language-model turn. That is faster and far cheaper, and each decision keeps a fallback for when Jev is unsure or unavailable.`,
     `${SITE.name} is alpha software, released under the ${SITE.license} license. The source, the issue tracker, and the documentation live at ${SITE.repo}.`,
   ],
 };

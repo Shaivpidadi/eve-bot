@@ -53,20 +53,3 @@ export function renderBrief(bot: Bot, job: Job): string {
 
   return sections.filter((section): section is string => section !== null).join("\n\n");
 }
-
-/** The result contract a teammate returns to the dispatcher. */
-export const JOB_RESULT_SCHEMA = {
-  type: "object",
-  properties: {
-    summary: { type: "string", description: "One or two sentences an operator can read." },
-    deliverable: { type: "string", description: "The actual output, or where it now lives." },
-    openQuestions: { type: "array", items: { type: "string" } },
-    needsHuman: {
-      type: "boolean",
-      description:
-        "True only when the job cannot count as done until a person acts. Open questions alone are not a reason; list them in openQuestions.",
-    },
-  },
-  required: ["summary", "deliverable", "openQuestions", "needsHuman"],
-  additionalProperties: false,
-} as const;

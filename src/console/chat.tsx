@@ -9,8 +9,21 @@ import { buildTimeline, roomStore } from "./room-store";
 import { Transcript } from "./transcript";
 import type { ActivityEvent, Hover, Member } from "./types";
 
+/**
+ * Bots at work whose progress belongs in this thread: from HQ's desk, every
+ * Bot on a job; in a Bot's own thread, that Bot, unless its live turn is
+ * already showing. Work runs in the background after HQ's turn ends, so this
+ * is what keeps the thread from looking asleep until the result comes back.
+ */
+function busyIn(member: Member, members: readonly Member[], live: boolean): Member[] {
+  const atWork = (candidate: Member) => candidate.presence === "working" || candidate.presence === "thinking";
+  if (member.kind === "hq") return members.filter((candidate) => candidate.kind === "bot" && atWork(candidate));
+  return !live && atWork(member) ? [member] : [];
+}
+
 export function ChatPane({
   member,
+  members,
   activity,
   user,
   onBack,
@@ -19,6 +32,7 @@ export function ChatPane({
   onHover,
 }: {
   member: Member;
+  members: readonly Member[];
   activity: readonly ActivityEvent[];
   user: string;
   onBack: () => void;
@@ -30,6 +44,7 @@ export function ChatPane({
   const store = roomStore(member.room);
   const room = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
   const timeline = useMemo(() => buildTimeline(member, room.items, activity), [member, room.items, activity]);
+  const busy = useMemo(() => busyIn(member, members, room.live), [member, members, room.live]);
 
   return (
     <main className="chat">
@@ -53,6 +68,7 @@ export function ChatPane({
         member={member}
         room={room}
         timeline={timeline}
+        busy={busy}
         user={user}
         store={store}
         onOpenComputer={onOpenComputer}

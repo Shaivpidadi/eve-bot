@@ -72,10 +72,8 @@ export interface Job {
   priority: "normal" | "high";
   /** How hard the job is, which picks the teammate's model (see `models.ts`). Absent on older jobs. */
   effort?: JobEffort;
-  /** Who rated the effort: HQ in its brief, Jev from the brief, or the default. Absent on older jobs. */
-  effortBy?: "hq" | "jev" | "default";
-  /** Jev's probability for the level it chose, when it rated the job. */
-  effortConfidence?: number;
+  /** Who set the effort: HQ in its brief, or the default. Absent on older jobs. */
+  effortBy?: "hq" | "default";
   /** When the job becomes eligible to run. */
   runAt: string;
   /** Repeat interval in minutes, or `null` for a one-shot job. */

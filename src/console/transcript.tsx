@@ -46,6 +46,7 @@ export function Transcript({
   member,
   room,
   timeline,
+  busy,
   user,
   store,
   onOpenComputer,
@@ -53,6 +54,8 @@ export function Transcript({
   member: Member;
   room: RoomSnapshot;
   timeline: readonly TimelineItem[];
+  /** Bots working in the background on this thread's behalf; see `busyIn` in chat.tsx. */
+  busy: readonly Member[];
   user: string;
   store: RoomStore;
   onOpenComputer: (requestId: string) => void;
@@ -190,6 +193,18 @@ export function Transcript({
         <div key="working" className="working">
           <Avatar member={member} size={16} presence="thinking" />
           <span className="shimmer">{room.liveLabel ?? "Thinking"}</span>
+        </div>,
+      );
+    }
+    // The Bots on jobs for this thread, animated until their work comes back.
+    for (const bot of busy) {
+      rows.push(
+        <div key={`busy:${bot.id}`} className="working">
+          <Avatar member={bot} size={16} presence="thinking" />
+          <span className="shimmer">
+            {bot.id === member.id ? "Working" : `${bot.name} is working`}
+            {bot.action === null ? "" : ` · ${bot.action}`}
+          </span>
         </div>,
       );
     }

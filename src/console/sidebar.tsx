@@ -44,7 +44,7 @@ export function Sidebar({
   unread,
   onSelect,
   onHire,
-  onPlugins,
+  onConnectors,
   onMemory,
   onHover,
   onUnread,
@@ -59,7 +59,7 @@ export function Sidebar({
   unread: ReadonlySet<string>;
   onSelect: (id: string) => void;
   onHire: () => void;
-  onPlugins: () => void;
+  onConnectors: () => void;
   onMemory: () => void;
   onHover: (hover: Hover | null) => void;
   onUnread: (id: string, unread: boolean) => void;
@@ -213,9 +213,9 @@ export function Sidebar({
       )}
 
       <div className="side-bottom">
-        <button type="button" className="side-item" onClick={onPlugins}>
+        <button type="button" className="side-item" onClick={onConnectors}>
           <Icon name="plug" />
-          Plugins
+          Connectors
         </button>
         <button type="button" className="side-item" onClick={onMemory}>
           <Icon name="brain" />

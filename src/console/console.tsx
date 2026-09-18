@@ -11,7 +11,7 @@ import { Icon } from "./icons";
 import { MemoryDialog } from "./memory-dialog";
 import { DetailsPanel, type PanelView } from "./panel";
 import { PANEL_SLIDE_MS, PanelResizer, usePanelWidth } from "./panel-frame";
-import { PluginsDialog } from "./plugins-dialog";
+import { ConnectorsDialog } from "./connectors-dialog";
 import { Sidebar } from "./sidebar";
 import type { Hover, Member } from "./types";
 import { useBoard } from "./use-board";
@@ -64,7 +64,7 @@ export function Console() {
   const [view, setView] = useState<"roster" | "chat">(() => (window.innerWidth > 760 ? "chat" : "roster"));
   const [computer, setComputer] = useState<{ botId: string; requestId: string | null } | null>(null);
   const [hiring, setHiring] = useState(false);
-  const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [connectorsOpen, setConnectorsOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [hover, setHover] = useState<Hover | null>(null);
   const [panelWidth, setPanelWidth] = usePanelWidth();
@@ -162,7 +162,7 @@ export function Console() {
           workspaceId={board.workspaceId}
           onSelect={select}
           onHire={() => setHiring(true)}
-          onPlugins={() => setPluginsOpen(true)}
+          onConnectors={() => setConnectorsOpen(true)}
           onMemory={() => setMemoryOpen(true)}
           onHover={setHover}
           unread={unread}
@@ -178,6 +178,7 @@ export function Console() {
         <ChatPane
           key={member.room}
           member={member}
+          members={members}
           activity={board.activity}
           user={board.user}
           onBack={() => setView("roster")}
@@ -254,7 +255,7 @@ export function Console() {
         />
       ) : null}
 
-      <PluginsDialog open={pluginsOpen} onClose={() => setPluginsOpen(false)} />
+      <ConnectorsDialog open={connectorsOpen} onClose={() => setConnectorsOpen(false)} />
       <MemoryDialog open={memoryOpen} onClose={() => setMemoryOpen(false)} />
 
       <HireDialog
