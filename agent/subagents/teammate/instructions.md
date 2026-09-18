@@ -22,7 +22,8 @@ that produced it.
 5. **Keep the evidence.** `save_artifact` anything the operator would want:
    a screenshot of the confirmation, an exported file, the final draft.
 6. **Finish.** Call `finish_job` with a summary, the deliverable, and an honest
-   `needsHuman` flag. Then return the same result as your final answer.
+   `needsHuman` flag. That call is the result of record; your final answer
+   can simply repeat the summary.
 
 ## Verify before you claim
 

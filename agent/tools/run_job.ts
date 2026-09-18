@@ -2,9 +2,10 @@ import { defineWorkflowTool } from "eve/tools";
 import { sleep } from "workflow";
 import { z } from "zod";
 
-import { record } from "../lib/activity";
+import { record, recentActivity } from "../lib/activity";
+import { readArtifact } from "../lib/artifacts";
 import { getBot } from "../lib/bots";
-import { JOB_RESULT_SCHEMA, renderBrief } from "../lib/brief";
+import { renderBrief } from "../lib/brief";
 import { reapIdleScreens } from "../lib/computer/reaper";
 import { forgetJob } from "../lib/computer/screens";
 import { newId } from "../lib/ids";
@@ -150,7 +151,9 @@ export default defineWorkflowTool({
         yield { phase: claim.revising ? "revising" : "working", bot: claim.botName, title: claim.title };
 
         const working: Promise<Settled> = ctx
-          .agent("teammate", { message: claim.brief, outputSchema: JOB_RESULT_SCHEMA })
+          // No output schema: the result of record is what finish_job stored. A
+          // structured final answer is welcome but not required; see salvageResult.
+          .agent("teammate", { message: claim.brief })
           .then(
             (raw): Settled => ({ ok: true, raw }),
             (error: unknown): Settled => ({ ok: false, error: describeError(error) }),
@@ -173,27 +176,17 @@ export default defineWorkflowTool({
           }
         }
 
-        let raw: unknown;
-        if (settled.ok) {
-          raw = settled.raw;
-        } else {
-          // A Bot can finish the work and record it with finish_job, then fumble
-          // the structured answer, which smaller models sometimes do. What it
-          // recorded during this run is the same contract, so it stands in.
-          const recorded = await resultRecordedSince(workspaceId, jobId, claim.token, claim.resultAtClaim);
-          if (recorded === null) {
-            await markFailed(workspaceId, jobId, settled.error, claim.token);
-            return { jobId, ran: true as const, status: "failed" as const, error: settled.error };
-          }
-          raw = recorded;
-        }
-        const parsed = JobResultZ.safeParse(raw);
-        if (!parsed.success) {
-          const error = "The bot finished without a result in the expected shape.";
+        // What the run left behind, in order of trust: the result finish_job
+        // recorded, a structured final answer, or the final answer as text with
+        // the files saved along the way. A run that failed outright may still
+        // have recorded a result before it did.
+        const salvaged = await salvageResult(workspaceId, jobId, claim, settled.ok ? settled.raw : null);
+        if (salvaged === null) {
+          const error = settled.ok ? "The bot ended without a result: nothing was recorded, said, or saved." : settled.error;
           await markFailed(workspaceId, jobId, error, claim.token);
           return { jobId, ran: true as const, status: "failed" as const, error };
         }
-        const result: JobResult = parsed.data;
+        const result: JobResult = salvaged;
 
         if (!claim.requiresSignoff && !result.needsHuman) {
           done = { result, token: claim.token, title: claim.title, botName: claim.botName };
@@ -337,6 +330,10 @@ type Claim =
       revising: boolean;
       /** The job's result before this run, so a result recorded during it can be told apart. */
       resultAtClaim: string | null;
+      /** How many artifacts the job had before this run; anything past them was saved by it. */
+      artifactsAtClaim: number;
+      /** When this run began, so its progress notes can be told from earlier runs'. */
+      startedAt: string;
     };
 
 /**
@@ -404,6 +401,77 @@ async function claimForRun(
     requiresSignoff: claimed.job.requiresSignoff,
     revising,
     resultAtClaim: claimed.job.result === null ? null : JSON.stringify(claimed.job.result),
+    artifactsAtClaim: claimed.job.artifacts.length,
+    startedAt: new Date().toISOString(),
+  };
+}
+
+const SALVAGE_TEXT_CHARS = 8_000;
+const SALVAGE_ARTIFACT_CHARS = 6_000;
+const TEXT_MEDIA = /^text\/|json|markdown|csv|xml/i;
+
+/**
+ * A result from what the run produced when the Bot did not hand one over.
+ *
+ * The contract is finish_job. Smaller models do the work, save the summary as
+ * a file, and then end with prose, or with nothing, instead of the recorded
+ * result; that used to fail the job with the work sitting in an artifact.
+ * This assembles the result from what is there, in order of trust: the result
+ * finish_job recorded during this run, the final answer if it is the result
+ * in JSON, and last the final answer as text plus the text files saved during
+ * the run. The result says it was assembled, so nobody mistakes it for a
+ * verified close. Null when the run left nothing to assemble.
+ */
+async function salvageResult(workspaceId: string, jobId: string, claim: Extract<Claim, { ok: true }>, raw: unknown): Promise<JobResult | null> {
+  "use step";
+  const recorded = await resultRecordedSince(workspaceId, jobId, claim.token, claim.resultAtClaim);
+  if (recorded !== null) return recorded;
+
+  const text = typeof raw === "string" ? raw.trim() : "";
+  if (text.startsWith("{")) {
+    try {
+      const parsed = JobResultZ.safeParse(JSON.parse(text));
+      if (parsed.success) return parsed.data;
+    } catch {
+      // Not the result as JSON; treat it as prose below.
+    }
+  }
+
+  const job = await getJob(workspaceId, jobId);
+  if (job === null || job.lease?.token !== claim.token) return null;
+  const saved = job.artifacts.slice(claim.artifactsAtClaim);
+  const files: string[] = [];
+  let budget = SALVAGE_TEXT_CHARS;
+  for (const artifact of saved) {
+    if (!TEXT_MEDIA.test(artifact.mediaType) || budget <= 0) {
+      files.push(`- ${artifact.name} (${artifact.mediaType}, ${artifact.bytes} bytes)`);
+      continue;
+    }
+    const stored = await readArtifact(artifact.key);
+    if (stored === null) continue;
+    const content = Buffer.from(stored.base64, "base64").toString("utf8").trim().slice(0, Math.min(SALVAGE_ARTIFACT_CHARS, budget));
+    budget -= content.length;
+    files.push(`### ${artifact.name}\n${content}`);
+  }
+  if (text === "" && files.length === 0) return null;
+
+  const notes = await recentActivity(workspaceId, { jobId, after: claim.startedAt, limit: 40 });
+  const lastNote = notes.find((event) => event.kind === "job.progress")?.text ?? null;
+  const summary = (lastNote ?? text.split(/\n\s*\n/)[0] ?? "").slice(0, 600) || `${claim.botName} ended without a summary; see the deliverable.`;
+  const deliverable = [text.slice(0, SALVAGE_TEXT_CHARS), ...files].filter((part) => part !== "").join("\n\n").slice(0, SALVAGE_TEXT_CHARS);
+
+  await record({
+    workspaceId,
+    kind: "job.progress",
+    botId: job.botId,
+    jobId,
+    text: `${claim.botName} did not close the job with finish_job; the result was assembled from its final message${saved.length > 0 ? ` and ${saved.length} saved file${saved.length === 1 ? "" : "s"}` : ""}.`,
+  });
+  return {
+    summary,
+    deliverable,
+    openQuestions: [`${claim.botName} did not close this job itself; this result was assembled from what it left. Treat it as unverified.`],
+    needsHuman: false,
   };
 }
 
