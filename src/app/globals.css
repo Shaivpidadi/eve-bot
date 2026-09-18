@@ -267,7 +267,8 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .notice.error, .notice.error b, .notice.error .i { color: var(--bad); }
 .notice .btn { flex-basis: 100%; width: max-content; margin: 4px auto 0; font-size: 12px; padding: 4px 10px; }
 
-.working { align-self: flex-start; margin: 8px 2px; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.working { align-self: flex-start; margin: 8px 2px; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; max-width: 100%; }
+.working .shimmer { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shimmer {
   background: linear-gradient(90deg, var(--faint) 0%, var(--text) 50%, var(--faint) 100%);
   background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;

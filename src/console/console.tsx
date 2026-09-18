@@ -178,6 +178,7 @@ export function Console() {
         <ChatPane
           key={member.room}
           member={member}
+          members={members}
           activity={board.activity}
           user={board.user}
           onBack={() => setView("roster")}
