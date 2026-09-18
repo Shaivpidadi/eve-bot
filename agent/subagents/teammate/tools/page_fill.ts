@@ -8,7 +8,7 @@ import { act } from "../lib/page";
 
 export default defineTool({
   description:
-    "Clear a field and type into it: text page_pilot could not type (it only types values you gave it), or the final entry of a job. Set submit to press Enter afterwards. Reports what changed on the page the same way page_click does. Never pass a password or one-time code you were not explicitly given for this job.",
+    "Clear a field and type into it. Set submit to press Enter afterwards. Reports what changed on the page the same way page_click does. Never pass a password or one-time code you were not explicitly given for this job.",
   inputSchema: z.object({
     target: z.string().min(1).describe("An @ref like @e7, or a CSS selector."),
     value: z.string().max(4_000),

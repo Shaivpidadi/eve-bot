@@ -152,13 +152,6 @@ if (modelChoice === 5) {
     set("BOT_MODEL_PRICES", `${model}=${price}`);
   }
   customEndpoint = baseURL;
-  say();
-  say("Jev, the decision model Bot uses for routing, Bot selection, and the browser pilot, lives on Vercel AI Gateway.");
-  const jevKey = await ask("AI_GATEWAY_API_KEY for Jev (blank to go without Jev):", "");
-  if (jevKey !== "") {
-    note("Jev through Vercel AI Gateway; the language models stay on your endpoint.");
-    set("AI_GATEWAY_API_KEY", jevKey);
-  }
 }
 
 // ── Web search ─────────────────────────────────────────────────────────────

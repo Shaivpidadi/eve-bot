@@ -97,7 +97,7 @@ export default function Home() {
               Then, in the project&apos;s Storage tab, create a Blob store and connect it. It holds the roster, jobs, and
               memory. Redeploy once.
             </li>
-            <li>The team&apos;s computer is a Vercel Sandbox; models go through AI Gateway, with Jev routing the small decisions.</li>
+            <li>The team&apos;s computer is a Vercel Sandbox; models go through AI Gateway.</li>
           </ul>
           <a className="btn primary landing-cta" href={DEPLOY}>
             Deploy to Vercel

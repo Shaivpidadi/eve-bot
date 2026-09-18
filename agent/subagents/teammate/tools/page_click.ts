@@ -5,7 +5,7 @@ import { act } from "../lib/page";
 
 export default defineTool({
   description:
-    "Click one thing on the page: the consequential step page_pilot handed back to you, or a single action when the goal is one click away. Prefer an @ref from the latest snapshot; a CSS selector also works. Reports what the click changed: `changed` is none (nothing happened; do not repeat it), some (`added` lists what appeared, with refs), or page (a new page; read it afresh). For getting from here to there, use page_pilot.",
+    "Click one thing on the page. Prefer an @ref from the latest snapshot; a CSS selector also works. Reports what the click changed: `changed` is none (nothing happened; do not repeat it), some (`added` lists what appeared, with refs), or page (a new page; read it afresh).",
   inputSchema: z.object({
     target: z.string().min(1).describe("An @ref like @e12, or a CSS selector."),
   }),

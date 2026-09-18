@@ -31,7 +31,7 @@ const DEFAULT_MODELS: Readonly<Record<JobEffort, string>> = {
 };
 
 /**
- * What each level is for, in words HQ reads when it rates a job and Jev reads
+ * What each level is for, in words HQ reads when it rates a job
  * when it rates one instead (see `tools/assign_job.ts`).
  */
 export const EFFORT_DESCRIPTIONS: Readonly<Record<JobEffort, string>> = {

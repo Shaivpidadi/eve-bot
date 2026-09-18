@@ -21,7 +21,7 @@ Bot runs in one of two places. Same code, different plumbing.
 | --- | --- | --- |
 | Setup | one click | `npm run setup` |
 | The team's computer | Vercel Sandbox | Docker on your machine |
-| Models | AI Gateway, with Jev routing | Ollama, LM Studio, OpenRouter, any OpenAI-compatible API; Jev too, with a Gateway key |
+| Models | AI Gateway | Ollama, LM Studio, OpenRouter, any OpenAI-compatible API |
 | Storage and memory | Vercel Blob | disk |
 | Schedules | Vercel Cron | the server's own cron |
 | Web search | eve's, through AI Gateway | your SearXNG, or Brave, Tavily, Exa |
@@ -84,9 +84,7 @@ the machine itself is `http://host.docker.internal:11434/v1`, the profile's
 Ollama is `http://ollama:11434/v1`.
 
 Pick a model that handles tool calls well; the Bots do everything through
-tools. Jev lives on AI Gateway: set `AI_GATEWAY_API_KEY` and it runs here too,
-with the language models still on your endpoint; leave it unset and Bot goes
-without Jev on its own.
+tools.
 
 ## What you get
 
@@ -110,26 +108,6 @@ without Jev on its own.
 - **Memory.** Per-person, per-workspace, and per-craft memory, plus each Bot's
   playbook. Open **Memory** in the console to see and edit it.
 - **Plugins.** Connect an MCP server once and every Bot can use it.
-
-## Jev
-
-Bot builds explicit state everywhere, so its small decisions go to
-[Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev), a
-decision model: structured state in, a typed choice with a probability out, in
-under a second, for a fraction of a cent. One switch, `BOT_JEV`, on by default.
-
-| Decision | Jev picks | Fallback |
-| --- | --- | --- |
-| HQ's model, each turn | the team's `standard` or `deep` model | `standard`, or `BOT_HQ_MODEL` |
-| Which Bot takes a job | a fitting specialist, else the generalist | the generalist |
-| A job's effort | `quick`, `standard`, or `deep`, which picks the Bot's model | HQ's level |
-| The next browser step | with `page_pilot`, which element to click or type into, or stop | the Bot clicks itself |
-
-The pilot never invents text, never presses anything consequential (send, pay,
-delete, publish, sign out), and stops at any sign-in. The Bot does those steps.
-Jev is in early access on AI Gateway; without access, set `BOT_JEV=off`. On a
-custom model endpoint, HQ's model is not routed (the endpoint's model answers
-every turn); the other three decisions run whenever a Gateway key is set.
 
 ## The console
 
@@ -177,7 +155,6 @@ of it; these are the ones that matter.
 | `BOT_MODEL_BASE_URL` / `BOT_MODEL` / `BOT_MODEL_API_KEY` | your own OpenAI-compatible endpoint and the model used everywhere on it |
 | `BOT_MODEL_QUICK` / `BOT_MODEL_STANDARD` / `BOT_MODEL_DEEP` | the model at each effort level; HQ routes between the last two |
 | `BOT_HQ_MODEL` | pin HQ to one model |
-| `BOT_JEV` / `BOT_JEV_MODEL` | Jev on (default) or off; the decision model id |
 | `BOT_COMPUTER` | `vercel` (default) or `local` |
 | `BOT_COMPUTER_LOCAL_BIND` | where a local computer's live view is published; `127.0.0.1` by default |
 | `BOT_SEARCH_PROVIDER` / `BOT_SEARCH_URL` / `BOT_SEARCH_API_KEY` | web search on your own endpoint: `searxng`, `brave`, `tavily`, `exa` |
@@ -205,8 +182,8 @@ the dev server cannot continue under `npm start`; the console offers Start over.
 
 ```
 agent/                      HQ: agent.ts, instructions.md, tools/, schedules/, memory/
-agent/subagents/teammate/   the Bot that does the work: its tools, browser, and pilot
-agent/lib/                  jobs, board, store drivers, computer, pricing, search, jev
+agent/subagents/teammate/   the Bot that does the work: its tools and browser
+agent/lib/                  jobs, board, store drivers, computer, pricing, search
 agent/channels/ops.ts       the console API
 src/console/                the console
 scripts/                    setup, build, start, and the Docker wrapper for Chrome's sandbox
@@ -227,7 +204,6 @@ Swapping storage means implementing four methods in `agent/lib/store/`.
   instruction to ignore text on a page.
 - A local computer's Chrome runs without its own sandbox unless eve is given
   the seccomp wrapper in `scripts/`; Docker Compose does this by default.
-- The browser pilot has not yet been exercised against a live browser.
 - Delivery is at-least-once. Anything a Bot does outwardly should be idempotent
   or gated on approval.
 

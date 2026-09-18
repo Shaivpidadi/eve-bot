@@ -6,7 +6,7 @@ import { isLook, look } from "../lib/page";
 
 export default defineTool({
   description:
-    "Open a URL in your browser and read the page, settled: an accessibility tree trimmed to what matters, where every interactive element has an @ref, the handle page_pilot navigates by and you pass to page_click and page_fill. This is how you work inside apps that have no API: browse here, then page_pilot to where you need to be. page_snapshot with full gives the whole tree; page_read gives the text.",
+    "Open a URL in your browser and read the page, settled: an accessibility tree trimmed to what matters, where every interactive element has an @ref, the handle you pass to page_click and page_fill. This is how you work inside apps that have no API. page_snapshot with full gives the whole tree; page_read gives the text.",
   inputSchema: z.object({
     url: z.string().min(3).describe("Full URL, or a bare domain like app.example.com."),
   }),
