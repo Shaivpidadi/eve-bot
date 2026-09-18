@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Bot — always-on AI teammates with their own computer, built on Vercel eve and Next.js.",
+  "description": "Bot \u2014 always-on AI teammates with their own computer, built on Vercel eve and Next.js.",
   "scripts": {
     "setup": "node scripts/setup.mjs",
+    "reset": "node scripts/reset.mjs",
     "dev": "next dev",
     "dev:https": "next dev --experimental-https",
     "build": "node scripts/build.mjs",

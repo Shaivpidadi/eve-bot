@@ -174,6 +174,7 @@ npm run dev          # console and agent together
 npm run agent:dev    # the agent alone, with eve's terminal UI
 npm test             # vitest over tests/: store, models, pricing, search, access, handovers
 npm run typecheck && npm run build
+npm run reset        # back to zero: threads, roster, jobs, memory; --computer for a fresh machine too
 ```
 
 Schedules do not fire under `npm run dev`; trigger the watchdog with
