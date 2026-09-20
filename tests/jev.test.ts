@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { confidenceFloor, gatewayReachable, jevEnabled, verdictOf } from "../agent/lib/jev";
-import { authWallQuestions, completionQuestions, unmetCriteria } from "../agent/lib/jev-watch";
+import { authWallQuestions, completionQuestions, policyDisagreements, toolPolicyQuestions, unmetCriteria } from "../agent/lib/jev-watch";
 import type { Judgement } from "../agent/lib/jev";
 
 describe("jevEnabled", () => {
@@ -76,5 +76,36 @@ describe("unmetCriteria", () => {
   it("says nothing when it is unsure, and nothing at all without a judgement", () => {
     expect(unmetCriteria(judgement({ criterion0: 0.01 }, 0.1), 1)).toEqual([]);
     expect(unmetCriteria(null, 3)).toEqual([]);
+  });
+});
+
+describe("policyDisagreements", () => {
+  const judgement = (answers: Record<string, number>, confidence = 0.9): Judgement<Record<string, never>> =>
+    ({
+      answers: Object.fromEntries(
+        Object.entries(answers).map(([id, probability]) => [id, { type: "boolean", probability }]),
+      ),
+      confidence: Object.fromEntries(Object.keys(answers).map((id) => [id, confidence])),
+      inputTokens: 40,
+    }) as never;
+
+  it("asks about each tool, up to its cap", () => {
+    expect(Object.keys(toolPolicyQuestions(["get_issue", "create_issue"]))).toEqual(["tool0", "tool1"]);
+    expect(Object.keys(toolPolicyQuestions(Array.from({ length: 30 }, (_, i) => `tool_${i}`))).length).toBe(12);
+  });
+
+  it("reports only where it disagrees with what is recorded", () => {
+    const tools = ["get_issue", "run_workflow"];
+    const policy = { get_issue: "read", run_workflow: "write" } as const;
+    // Says get_issue reads (agrees) and run_workflow reads (disagrees).
+    const found = policyDisagreements(judgement({ tool0: 0.02, tool1: 0.03 }), tools, policy);
+    expect(found).toEqual([{ tool: "run_workflow", recorded: "write", judged: "read" }]);
+  });
+
+  it("stays quiet when it is unsure, or when there is no judgement", () => {
+    const tools = ["run_workflow"];
+    const policy = { run_workflow: "write" } as const;
+    expect(policyDisagreements(judgement({ tool0: 0.03 }, 0.1), tools, policy)).toEqual([]);
+    expect(policyDisagreements(null, tools, policy)).toEqual([]);
   });
 });

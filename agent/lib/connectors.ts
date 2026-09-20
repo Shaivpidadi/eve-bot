@@ -11,6 +11,7 @@ import {
 } from "./catalog";
 import { computerKey } from "./computer/keys";
 import { newId } from "./ids";
+import { watchToolPolicy } from "./jev-watch";
 import { deleteDoc, listDocs, readDoc, updateDoc, writeDoc } from "./store";
 
 /**
@@ -160,6 +161,8 @@ export async function addConnector(
     createdBy,
   };
   await writeDoc(key(workspaceId, connector.id), connector);
+  // A second opinion on the classification, recorded only; nothing here defers to it.
+  await watchToolPolicy(workspaceId, connector.id, probe.tools, connector.policy ?? {});
   return { ok: true, connector };
 }
 

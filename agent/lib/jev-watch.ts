@@ -14,7 +14,7 @@ import { confidenceFloor, jevEnabled, judge, type Judgement, type Verdict, verdi
  * there a reason to let one of these decide anything.
  */
 
-export type ShadowKind = "completion" | "auth-wall";
+export type ShadowKind = "completion" | "auth-wall" | "tool-policy";
 
 export interface ShadowDecision {
   readonly id: string;
@@ -118,6 +118,72 @@ export async function watchAuthWall(workspaceId: string, url: string, page: stri
     confidence,
     actual: "bot decided for itself",
     detail: { url },
+  });
+}
+
+const POLICY_QUESTIONS = 12;
+
+/** One question per tool: does this name describe something that changes state? */
+export function toolPolicyQuestions(tools: readonly string[]): Record<string, EvaluationQuestion> {
+  const questions: Record<string, EvaluationQuestion> = {};
+  tools.slice(0, POLICY_QUESTIONS).forEach((tool, index) => {
+    questions[`tool${index}`] = {
+      type: "boolean",
+      instructions: `An agent can call a tool named "${tool}" on a connected service. Does calling it change, create, send or delete something, rather than only read?`,
+      criteria: {
+        true: "Calling it changes state: it creates, edits, sends, publishes or deletes something.",
+        false: "Calling it only reads or searches; nothing changes.",
+      },
+    };
+  });
+  return questions;
+}
+
+/** Which tools a judgement disagrees with the recorded policy about. */
+export function policyDisagreements(
+  judgement: Judgement<Record<string, EvaluationQuestion>> | null,
+  tools: readonly string[],
+  policy: Readonly<Record<string, "read" | "write">>,
+  floor: number = confidenceFloor(),
+): { readonly tool: string; readonly recorded: "read" | "write"; readonly judged: "read" | "write" }[] {
+  if (judgement === null) return [];
+  const out: { tool: string; recorded: "read" | "write"; judged: "read" | "write" }[] = [];
+  tools.slice(0, POLICY_QUESTIONS).forEach((tool, index) => {
+    const { verdict } = readVerdict(judgement, `tool${index}`, floor);
+    if (verdict === "unknown") return;
+    const judged = verdict === "yes" ? "write" : "read";
+    const recorded = policy[tool] ?? "write";
+    if (judged !== recorded) out.push({ tool, recorded, judged });
+  });
+  return out;
+}
+
+/**
+ * Checks a connector's recorded classification against a second opinion.
+ *
+ * It changes nothing. What a tool is allowed to do stays a decision in the
+ * store that a person can see and edit; this only writes down where a model
+ * would have classified it differently, so a wrong guess can be found before
+ * a bot acts on it rather than after.
+ */
+export async function watchToolPolicy(
+  workspaceId: string,
+  connectorId: string,
+  tools: readonly string[],
+  policy: Readonly<Record<string, "read" | "write">>,
+): Promise<void> {
+  if (!jevEnabled() || tools.length === 0) return;
+  const judgement = await judge({ tools: tools.slice(0, POLICY_QUESTIONS) }, toolPolicyQuestions(tools), { timeoutMs: 5_000 });
+  const disagreements = policyDisagreements(judgement, tools, policy);
+  if (disagreements.length === 0) return;
+  await noteShadow({
+    kind: "tool-policy",
+    workspaceId,
+    jobId: null,
+    verdict: `${disagreements.length} of ${Math.min(tools.length, POLICY_QUESTIONS)} classified differently`,
+    confidence: null,
+    actual: "the recorded policy stands",
+    detail: { connectorId, disagreements },
   });
 }
 
