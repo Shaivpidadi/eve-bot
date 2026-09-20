@@ -61,10 +61,20 @@ const agentPort = process.env.EVE_NEXT_PRODUCTION_PORT?.trim() || "4274";
 const consolePort = process.env.PORT?.trim() || "3000";
 const host = process.env.HOST?.trim() || "0.0.0.0";
 
+// NODE_ENV is what tells the agent it is serving rather than being developed:
+// without it a server started here treats itself as a dev box and, with no
+// console token set, leaves /bot/v1 open to anyone who can reach the port.
 const children = [
   spawn(process.execPath, [agentEntry], {
     stdio: "inherit",
-    env: { ...process.env, HOST: "127.0.0.1", NITRO_HOST: "127.0.0.1", PORT: agentPort, NITRO_PORT: agentPort },
+    env: {
+      ...process.env,
+      NODE_ENV: process.env.NODE_ENV ?? "production",
+      HOST: "127.0.0.1",
+      NITRO_HOST: "127.0.0.1",
+      PORT: agentPort,
+      NITRO_PORT: agentPort,
+    },
   }),
   spawn(process.execPath, [join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", host, "-p", consolePort], {
     stdio: "inherit",
