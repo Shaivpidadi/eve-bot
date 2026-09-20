@@ -1,6 +1,14 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
-import { type CatalogEntry, catalogEntry, type ConnectorGate, type ConnectorKeyKind } from "./catalog";
+import {
+  type CatalogEntry,
+  catalogEntry,
+  type ConnectorGate,
+  type ConnectorKeyKind,
+  mergePolicy,
+  type ToolEffect,
+  type ToolPolicy,
+} from "./catalog";
 import { computerKey } from "./computer/keys";
 import { newId } from "./ids";
 import { deleteDoc, listDocs, readDoc, updateDoc, writeDoc } from "./store";
@@ -44,6 +52,12 @@ export interface Connector {
   readonly enabled: boolean;
   /** When a person is asked before a Bot uses it: never, before changes, or before every first use. */
   readonly gate: ConnectorGate;
+  /**
+   * What each of the server's tools does, read or write, as this workspace has
+   * it recorded. Set from the tool names when the connector is added, and the
+   * operator's to correct. A tool missing from it counts as a write.
+   */
+  readonly policy?: ToolPolicy;
   readonly check: ConnectorCheck;
   readonly createdAt: string;
   readonly createdBy: string;
@@ -140,6 +154,7 @@ export async function addConnector(
     auth: await seal(kind, header, secret),
     enabled: true,
     gate,
+    policy: mergePolicy(undefined, probe.tools),
     check: probe,
     createdAt: now,
     createdBy,
@@ -151,7 +166,14 @@ export async function addConnector(
 export async function updateConnector(
   workspaceId: string,
   id: string,
-  patch: { enabled?: boolean; gate?: ConnectorGate; description?: string; check?: ConnectorCheck },
+  patch: {
+    enabled?: boolean;
+    gate?: ConnectorGate;
+    description?: string;
+    check?: ConnectorCheck;
+    /** Corrections to what a tool does, merged over what is recorded. */
+    policy?: Readonly<Record<string, ToolEffect>>;
+  },
 ): Promise<Connector | null> {
   return updateDoc<Connector>(key(workspaceId, id), (current) =>
     current === null
@@ -162,6 +184,7 @@ export async function updateConnector(
           ...(patch.gate === undefined || !GATES.includes(patch.gate) ? {} : { gate: patch.gate }),
           ...(patch.description === undefined ? {} : { description: patch.description.trim().slice(0, DESCRIPTION_MAX) }),
           ...(patch.check === undefined ? {} : { check: patch.check }),
+          ...(patch.policy === undefined ? {} : { policy: { ...current.policy, ...patch.policy } }),
         },
   );
 }
@@ -175,7 +198,10 @@ export async function removeConnector(workspaceId: string, id: string): Promise<
 /** Reaches the server again with its stored key and records what it offers now. */
 export async function recheckConnector(connector: Connector): Promise<Connector | null> {
   const check = await probeMcp(connector.url, await connectorHeaders(connector));
-  return updateConnector(connector.workspaceId, connector.id, { check });
+  return updateConnector(connector.workspaceId, connector.id, {
+    check,
+    ...(check.ok ? { policy: mergePolicy(connector.policy, check.tools) } : {}),
+  });
 }
 
 /** The connector's request headers with its key unsealed. Only for server-side calls. */

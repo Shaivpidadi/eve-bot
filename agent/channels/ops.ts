@@ -64,6 +64,24 @@ const json = (body: unknown, status = 200) =>
 
 const denied = (gate: Extract<Gate, { ok: false }>) => json({ error: gate.error }, gate.status);
 
+const POLICY_TOOLS = 200;
+
+/**
+ * Corrections to what a connector's tools do, from the console.
+ *
+ * Only "read" and "write" are accepted, and only for plausible tool names, so
+ * a typo cannot quietly become a third kind of permission nothing checks.
+ */
+function policyPatch(value: unknown): Record<string, "read" | "write"> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const patch: Record<string, "read" | "write"> = {};
+  for (const [tool, effect] of Object.entries(value as Record<string, unknown>).slice(0, POLICY_TOOLS)) {
+    if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(tool)) continue;
+    if (effect === "read" || effect === "write") patch[tool] = effect;
+  }
+  return Object.keys(patch).length === 0 ? null : patch;
+}
+
 /** The console is the Next.js app; sign-in outcomes send the browser back to its pages. */
 const seeOther = (location: string, headers: Record<string, string> = {}) =>
   new Response(null, { status: 303, headers: { location, ...headers } });
@@ -619,6 +637,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         ...(typeof body?.enabled === "boolean" ? { enabled: body.enabled } : {}),
         ...(body?.gate === "none" || body?.gate === "writes" || body?.gate === "all" ? { gate: body.gate } : {}),
         ...(typeof body?.description === "string" ? { description: body.description } : {}),
+        ...(policyPatch(body?.policy) === null ? {} : { policy: policyPatch(body?.policy) as Record<string, "read" | "write"> }),
       });
       return updated === null ? json({ error: "no such connector" }, 404) : json({ connector: publicConnector(updated) });
     }),

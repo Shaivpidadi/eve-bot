@@ -1,6 +1,6 @@
 import { defineDynamic, defineMcpClientConnection } from "eve/connections";
 
-import { isWriteTool } from "../lib/catalog";
+import { effectOf } from "../lib/catalog";
 import { connectorHeaders, listConnectors } from "../lib/connectors";
 import { operator } from "../lib/session";
 
@@ -21,7 +21,7 @@ export default defineDynamic({
       const connectors = (await listConnectors(workspaceId)).filter((connector) => connector.enabled && connector.check.tools.length > 0);
       const entries = await Promise.all(
         connectors.map(async (connector) => {
-          const reads = connector.check.tools.filter((tool) => !isWriteTool(tool));
+          const reads = connector.check.tools.filter((tool) => effectOf(connector.policy, tool) === "read");
           if (reads.length === 0) return null;
           const headers = await connectorHeaders(connector);
           return [

@@ -18,6 +18,8 @@ interface ConnectorRow {
   readonly gate: ConnectorGate;
   readonly auth: { readonly kind: ConnectorKeyKind; readonly header?: string };
   readonly check: { readonly ok: boolean; readonly at: string; readonly tools: readonly string[]; readonly error: string | null };
+  /** What each tool does, as this workspace has it recorded. Missing means "treat as changing". */
+  readonly policy?: Readonly<Record<string, "read" | "write">>;
 }
 
 /** What every Bot has without connecting anything. */
@@ -201,6 +203,27 @@ export function ConnectorsDialog({ open, onClose }: { open: boolean; onClose: ()
                     />
                     On
                   </label>
+                  {connector.check.ok && connector.check.tools.length > 0 ? (
+                    <details className="connector-tools">
+                      <summary>{connector.check.tools.length} tools</summary>
+                      <ul>
+                        {connector.check.tools.map((tool) => (
+                          <li key={tool}>
+                            <code>{tool}</code>
+                            <select
+                              value={connector.policy?.[tool] ?? "write"}
+                              disabled={busy === connector.id}
+                              title="Whether this tool changes something, which is what the gate above asks about"
+                              onChange={(event) => void patch(connector, { policy: { [tool]: event.target.value } })}
+                            >
+                              <option value="read">reads</option>
+                              <option value="write">changes</option>
+                            </select>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
                   <button
                     type="button"
                     className="btn"
