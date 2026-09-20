@@ -42,6 +42,7 @@ export default defineTool({
       openQuestions: input.openQuestions ?? [],
       needsHuman: input.needsHuman,
       completion: input.verified ? "verified" : "recorded",
+      recordedAt: new Date().toISOString(),
     };
 
     await patchJob(who.workspaceId, input.jobId, (current) => ({ ...current, result }));

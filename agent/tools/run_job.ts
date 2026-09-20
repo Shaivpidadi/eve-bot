@@ -20,6 +20,7 @@ import {
   patchJob,
   releaseJob,
   renewLease,
+  resultIsFromRun,
   sendBack,
   type Hold,
 } from "../lib/jobs";
@@ -424,7 +425,7 @@ const TEXT_MEDIA = /^text\/|json|markdown|csv|xml/i;
  */
 async function salvageResult(workspaceId: string, jobId: string, claim: Extract<Claim, { ok: true }>, raw: unknown): Promise<JobResult | null> {
   "use step";
-  const recorded = await resultRecordedSince(workspaceId, jobId, claim.token, claim.resultAtClaim);
+  const recorded = await resultRecordedSince(workspaceId, jobId, claim.token, claim.resultAtClaim, claim.startedAt);
   if (recorded !== null) return recorded;
 
   const text = typeof raw === "string" ? raw.trim() : "";
@@ -483,11 +484,12 @@ async function resultRecordedSince(
   jobId: string,
   token: string,
   atClaim: string | null,
+  startedAt: string,
 ): Promise<JobResult | null> {
   "use step";
   const job = await getJob(workspaceId, jobId);
   if (job === null || job.lease?.token !== token || job.result === null) return null;
-  return JSON.stringify(job.result) === atClaim ? null : job.result;
+  return resultIsFromRun(job.result, { startedAt, resultAtClaim: atClaim }) ? job.result : null;
 }
 
 async function newWaitToken(): Promise<string> {

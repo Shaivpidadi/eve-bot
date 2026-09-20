@@ -96,6 +96,25 @@ export async function assignJob(input: {
   return job;
 }
 
+/**
+ * Whether the result now on a job was recorded by the run that is asking.
+ *
+ * A routine's cycle can record a result identical to the last cycle's — a
+ * monitor that correctly reports "nothing changed" does it every time — so the
+ * text of a result cannot say whether this run recorded anything. Results carry
+ * the moment they were recorded, and that is the answer. Results written before
+ * that was kept fall back to the old comparison against the text at claim time.
+ */
+export function resultIsFromRun(
+  result: JobResult,
+  run: { readonly startedAt: string; readonly resultAtClaim: string | null },
+): boolean {
+  if (result.recordedAt !== undefined) {
+    return Date.parse(result.recordedAt) >= Date.parse(run.startedAt);
+  }
+  return JSON.stringify(result) !== run.resultAtClaim;
+}
+
 export async function getJob(workspaceId: string, jobId: string): Promise<Job | null> {
   return (await readDoc<Job>(key(workspaceId, jobId)))?.value ?? null;
 }

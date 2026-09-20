@@ -126,6 +126,13 @@ export interface JobResult {
   readonly needsHuman: boolean;
   /** How the result came to be. Absent on older results. */
   readonly completion?: JobCompletion;
+  /**
+   * When `finish_job` recorded it. This is what tells one cycle's result from
+   * the last one's: a routine that correctly reports "nothing changed" records
+   * the same words every cycle, so the text cannot say whether a run recorded
+   * anything. Absent on older results.
+   */
+  readonly recordedAt?: string;
 }
 
 export type ActivityKind =
