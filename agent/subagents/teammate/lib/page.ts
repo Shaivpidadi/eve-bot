@@ -300,6 +300,19 @@ export async function look(ctx: ToolContext, options: { readonly full?: boolean 
 
 export const isLook = (value: Look | { error: string }): value is Look => "page" in value;
 
+/**
+ * Drops the baseline this session compares against.
+ *
+ * Anything that moves the page without going through `look` — reading a URL as
+ * text, a person working in the browser during a takeover — leaves that
+ * baseline describing a page the bot is no longer on. Comparing the next
+ * action against it would report the whole new page as that action's doing.
+ * Forgetting it makes the next action say "read the page" instead.
+ */
+export const forgetLook = (ctx: ToolContext): void => {
+  lastLook.delete(ctx.session.id);
+};
+
 export interface Acted {
   readonly ok: true;
   readonly url: string;

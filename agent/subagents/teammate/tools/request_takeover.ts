@@ -6,6 +6,7 @@ import { syncIdentity, toolIo } from "../../../lib/computer/runtime";
 import { finishHandover, liveControl, sessionBinding, setControl, teamScreen } from "../../../lib/computer/screens";
 import { operator } from "../../../lib/session";
 import { browser } from "../lib/browser";
+import { forgetLook } from "../lib/page";
 
 /**
  * Hands the Bot's live browser to a person for the one step only a person can
@@ -44,6 +45,8 @@ export default defineTool({
     } catch {
       // The sign-in still holds in this browser.
     }
+    // A person may have gone anywhere in the browser while they had control.
+    forgetLook(ctx);
     const page = await browser(ctx, ["snapshot", "-i"]);
     return {
       handedBack: true as const,
