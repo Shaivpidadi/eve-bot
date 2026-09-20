@@ -14,3 +14,6 @@ next-env.d.ts
 !.env.example
 certificates
 .trash
+
+# QA runs
+.qa/

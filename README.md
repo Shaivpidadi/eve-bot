@@ -211,6 +211,23 @@ Turn it off with `BOT_JEV=off`. It is off on its own wherever the Gateway
 cannot be reached, so a standalone server on your own models never depends on
 it.
 
+### Bots testing Bots
+
+`npm test` covers the pure parts. The things that actually break — a job that
+closes without doing the work, an approval that does not hold, a cancelled job
+that comes back — need a running deployment, so there is a suite that drives
+one over its own console API:
+
+```bash
+QA_URL=https://staging.example QA_TOKEN=… npm run qa    # free, no model calls
+QA_JOBS=1 … npm run qa                                  # also runs real jobs
+```
+
+It hires bots, writes memory and (with `QA_JOBS=1`) runs jobs, so point it at a
+deployment with its own computer and its own data, never at the one you work
+in. Failures are written to `.qa/` with what was expected and what the
+deployment actually answered.
+
 ## Limits
 
 - One computer per deployment, shared by every Bot and workspace. Sign-ins are
