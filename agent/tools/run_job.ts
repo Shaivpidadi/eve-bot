@@ -21,6 +21,7 @@ import {
   releaseJob,
   renewLease,
   resultIsFromRun,
+  sameFindings,
   sendBack,
   type Hold,
 } from "../lib/jobs";
@@ -143,7 +144,7 @@ export default defineWorkflowTool({
       // 2. Work. A person's review, when needed, is the only card this run shows:
       // a run's later cards do not reach the thread, so whatever follows is a new run.
       let signedOff = false;
-      let done: { result: JobResult; token: string; title: string; botName: string } | null = null;
+      let done: { result: JobResult; token: string; title: string; botName: string; previous: string | null } | null = null;
       work: {
         const claim = await claimForRun(workspaceId, jobId, {
           waitToken,
@@ -195,7 +196,7 @@ export default defineWorkflowTool({
           // Observation only: what a grader would have said about this close,
           // recorded beside what actually happened. It decides nothing yet.
           await reviewClose(workspaceId, jobId, claim, result);
-          done = { result, token: claim.token, title: claim.title, botName: claim.botName };
+          done = { result, token: claim.token, title: claim.title, botName: claim.botName, previous: claim.resultAtClaim };
           break work;
         }
         if (cycle > 1) {
@@ -259,7 +260,7 @@ export default defineWorkflowTool({
         }
         if (answer.optionId === "approve") {
           signedOff = true;
-          done = { result, token: claim.token, title: claim.title, botName: claim.botName };
+          done = { result, token: claim.token, title: claim.title, botName: claim.botName, previous: claim.resultAtClaim };
           break work;
         }
 
@@ -318,7 +319,13 @@ export default defineWorkflowTool({
           result: done.result,
         };
       }
-      yield task.postMessage(cycleReport(done.title, jobId, done.result, closed.nextRunAt));
+      // A monitor that finds the same thing again says nothing: the feed keeps
+      // the record, and the thread stays worth reading.
+      if (sameFindings(done.previous, done.result)) {
+        await noteQuietCycle(workspaceId, jobId, done.botName, closed.nextRunAt);
+      } else {
+        yield task.postMessage(cycleReport(done.title, jobId, done.result, closed.nextRunAt));
+      }
     }
   },
 });
@@ -524,6 +531,17 @@ async function reviewClose(
     confidence: overall.confidence,
     actual: result.completion ?? "unknown",
     detail: { unmetCriteria: unmetCriteria(judgement, criteria.length), criteria: criteria.length },
+  });
+}
+
+/** Records a cycle that found nothing new, where the operator can still see it. */
+async function noteQuietCycle(workspaceId: string, jobId: string, botName: string, nextRunAt: string): Promise<void> {
+  "use step";
+  await record({
+    workspaceId,
+    kind: "job.progress",
+    jobId,
+    text: `${botName} checked again and found nothing new; next at ${nextRunAt}.`,
   });
 }
 

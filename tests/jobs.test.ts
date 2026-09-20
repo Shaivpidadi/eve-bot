@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resultIsFromRun } from "../agent/lib/jobs";
+import { isRoutine, nextRunAt, resultIsFromRun, sameFindings } from "../agent/lib/jobs";
 import type { JobResult } from "../agent/lib/types";
 
 const result = (over: Partial<JobResult> = {}): JobResult => ({
@@ -34,5 +34,47 @@ describe("resultIsFromRun", () => {
     const run = { startedAt: "2026-09-20T10:00:00.000Z", resultAtClaim: JSON.stringify(old) };
     expect(resultIsFromRun(old, run)).toBe(false);
     expect(resultIsFromRun(result({ summary: "Two new listings." }), run)).toBe(true);
+  });
+});
+
+describe("sameFindings", () => {
+  const monitor = (over: Partial<JobResult> = {}): JobResult => ({
+    summary: "No new listings since the last check.",
+    deliverable: "Checked 14 pages. Nothing new.",
+    openQuestions: [],
+    needsHuman: false,
+    ...over,
+  });
+
+  it("sees through the parts that differ every cycle", () => {
+    const previous = JSON.stringify(monitor({ recordedAt: "2026-09-20T09:00:00.000Z", completion: "verified" }));
+    expect(sameFindings(previous, monitor({ recordedAt: "2026-09-20T09:10:00.000Z", completion: "recorded" }))).toBe(true);
+  });
+
+  it("reports a cycle that found something", () => {
+    const previous = JSON.stringify(monitor());
+    expect(sameFindings(previous, monitor({ summary: "Two new listings." }))).toBe(false);
+    expect(sameFindings(previous, monitor({ needsHuman: true }))).toBe(false);
+  });
+
+  it("treats a first cycle, or an unreadable previous result, as new", () => {
+    expect(sameFindings(null, monitor())).toBe(false);
+    expect(sameFindings("not json", monitor())).toBe(false);
+  });
+});
+
+describe("isRoutine and nextRunAt", () => {
+  it("counts both kinds of repeat", () => {
+    expect(isRoutine({ everyMinutes: null, schedule: null })).toBe(false);
+    expect(isRoutine({ everyMinutes: 10, schedule: null })).toBe(true);
+    expect(isRoutine({ everyMinutes: null, schedule: { hour: 9, minute: 0, timezone: "UTC" } })).toBe(true);
+  });
+
+  it("prefers the clock over the interval", () => {
+    const from = new Date("2026-09-20T10:00:00Z");
+    expect(nextRunAt({ everyMinutes: 10, schedule: { hour: 9, minute: 0, timezone: "UTC" } }, from)).toBe(
+      "2026-09-21T09:00:00.000Z",
+    );
+    expect(nextRunAt({ everyMinutes: 10, schedule: null }, from)).toBe("2026-09-20T10:10:00.000Z");
   });
 });
