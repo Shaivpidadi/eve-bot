@@ -1,4 +1,4 @@
-import { defineTool, disableTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { jevEnabled, judge } from "../../../lib/jev";
@@ -17,11 +17,10 @@ import {
 /**
  * A few browser steps, driven without a model turn for each one.
  *
- * Available only where a decision model can be reached (see `lib/jev.ts`);
- * everywhere else this tool is not offered at all, and Bots drive the page
- * with page_click and page_fill exactly as before. The decision is made when
- * this module loads, so the build and the server must see the same
- * environment — `scripts/build.mjs` loads `.env` for both.
+ * It needs a decision model to choose each step (see `lib/jev.ts`). Where one
+ * cannot be reached — a standalone server on your own models, with no Gateway
+ * key — the first call says so and the bot carries on with page_click and
+ * page_fill, which is how every bot worked before this existed.
  */
 
 const DEFAULT_STEPS = 6;
@@ -32,7 +31,7 @@ const seconds = (): number => {
   return Number.isFinite(value) && value > 0 ? value : 60;
 };
 
-const tool = defineTool({
+export default defineTool({
   description:
     "Take a few ordinary browser steps toward one small goal without asking you between each: it reads the page, picks a control, clicks or types, and checks something moved. Use it for the navigating parts of a job — reaching a page, opening a record, running a search — and keep the goal small enough to describe in a sentence. It stops and hands back the moment it is unsure, runs out of steps, or meets anything that would spend, send, or delete something. Read what it returns and confirm the outcome yourself.",
   inputSchema: z.object({
@@ -51,6 +50,10 @@ const tool = defineTool({
   }),
   label: { start: ({ goal }) => `Pilot: ${goal}` },
   async execute({ goal, type, maxSteps, allowSpending }, ctx) {
+    // Nothing to pick the steps with: say so once, plainly, and let the bot drive.
+    if (!jevEnabled()) {
+      return { ran: false as const, goal, stopped: "unavailable" as const, note: STOP_NOTE.unavailable };
+    }
     const limit = maxSteps ?? DEFAULT_STEPS;
     const deadline = Date.now() + seconds() * 1_000;
     const actions: { action: string; target: string; changed: string }[] = [];
@@ -124,5 +127,3 @@ const tool = defineTool({
     };
   },
 });
-
-export default jevEnabled() ? tool : disableTool();
