@@ -106,11 +106,26 @@ export interface Job {
   lastRunAt: string | null;
 }
 
+/**
+ * How far a bot got to proving its own result, so "done" cannot hide how much
+ * of it to trust.
+ *
+ * - `verified`: the bot re-checked the outcome after acting.
+ * - `recorded`: the bot closed the job with `finish_job` but did not re-check.
+ * - `recovered`: the bot never closed the job, and the result was assembled
+ *   from what the run left behind (see `run_job`).
+ *
+ * Absent on results recorded before this was kept.
+ */
+export type JobCompletion = "verified" | "recorded" | "recovered";
+
 export interface JobResult {
   readonly summary: string;
   readonly deliverable: string;
   readonly openQuestions: string[];
   readonly needsHuman: boolean;
+  /** How the result came to be. Absent on older results. */
+  readonly completion?: JobCompletion;
 }
 
 export type ActivityKind =

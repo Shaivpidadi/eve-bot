@@ -477,7 +477,7 @@ export async function completeJob(
       kind: "job.done",
       botId: job.botId,
       jobId,
-      text: `Finished "${job.title}": ${result.summary}`,
+      text: `Finished "${job.title}"${result.completion === "recovered" ? " (recovered, unverified)" : ""}: ${result.summary}`,
     });
   }
   return job;

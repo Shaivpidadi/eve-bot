@@ -431,7 +431,8 @@ async function salvageResult(workspaceId: string, jobId: string, claim: Extract<
   if (text.startsWith("{")) {
     try {
       const parsed = JobResultZ.safeParse(JSON.parse(text));
-      if (parsed.success) return parsed.data;
+      // The shape is the bot's, but the close is not: it never called finish_job.
+      if (parsed.success) return { ...parsed.data, completion: "recovered" };
     } catch {
       // Not the result as JSON; treat it as prose below.
     }
@@ -472,6 +473,7 @@ async function salvageResult(workspaceId: string, jobId: string, claim: Extract<
     deliverable,
     openQuestions: [`${claim.botName} did not close this job itself; this result was assembled from what it left. Treat it as unverified.`],
     needsHuman: false,
+    completion: "recovered",
   };
 }
 

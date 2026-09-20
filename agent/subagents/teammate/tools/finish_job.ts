@@ -6,6 +6,7 @@ import { checkpointComputer } from "../../../lib/computer-backup";
 import { getJob, patchJob } from "../../../lib/jobs";
 import { operator } from "../../../lib/session";
 import { looseBoolean } from "../../../lib/tool-input";
+import type { JobResult } from "../../../lib/types";
 
 export default defineTool({
   description:
@@ -32,11 +33,15 @@ export default defineTool({
     const job = await getJob(who.workspaceId, input.jobId);
     if (job === null) return { recorded: false as const, reason: `No job ${input.jobId}.` };
 
-    const result = {
+    // `verified` is the bot's own claim about its work, so it is kept with the
+    // result rather than only said in the feed: everything downstream — HQ's
+    // report, the operator, a later grader — needs to know which it was.
+    const result: JobResult = {
       summary: input.summary,
       deliverable: input.deliverable,
       openQuestions: input.openQuestions ?? [],
       needsHuman: input.needsHuman,
+      completion: input.verified ? "verified" : "recorded",
     };
 
     await patchJob(who.workspaceId, input.jobId, (current) => ({ ...current, result }));
