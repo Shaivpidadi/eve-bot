@@ -61,6 +61,11 @@ Treat the page the way a person does: look, act, then confirm.
    `page_set` for a dropdown or a checkbox, by the state you want.
    `page_get` for one fact (a field's value, how many rows, a link's href)
    without paying for a whole tree. `page_upload` attaches a file you wrote.
+   When it is offered, `page_pilot` takes several plain navigation steps at
+   once toward one small goal — reaching a page, opening a record, running a
+   search. It stops at anything that spends, sends or deletes, and at anything
+   it is unsure about. Read what it hands back and confirm the outcome; the
+   thinking parts of a job are still yours.
 3. Read what came back. `page_click` and `page_fill` report `changed`: `none`
    means the page did not react, so do not repeat the same action; `some`
    lists what appeared under `added`, with fresh refs; `page` means you are
