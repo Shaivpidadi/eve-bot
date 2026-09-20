@@ -1,4 +1,5 @@
 import { DEFAULT_EFFORT } from "./models";
+import { describeSchedule } from "./schedule";
 import type { Bot, Job } from "./types";
 
 /**
@@ -20,7 +21,11 @@ export function renderBrief(bot: Bot, job: Job): string {
       `id: ${job.id}`,
       `title: ${job.title}`,
       `requested by: ${job.requestedBy}`,
-      job.everyMinutes === null ? "cadence: one-off" : `cadence: every ${job.everyMinutes} minutes`,
+      job.schedule != null
+        ? `cadence: ${describeSchedule(job.schedule)}`
+        : job.everyMinutes === null
+          ? "cadence: one-off"
+          : `cadence: every ${job.everyMinutes} minutes`,
       // Read back by the teammate's model choice (see models.ts); keep the format.
       `effort: ${job.effort ?? DEFAULT_EFFORT}`,
       job.requiresSignoff ? "sign-off: a human must approve the deliverable" : "sign-off: not required",

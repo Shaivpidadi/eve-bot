@@ -17,7 +17,7 @@ import { findBot, getBot, hireBot, listBots, patchBot, retireBot } from "../lib/
 import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
-import { cancelJob, listOpenJobs } from "../lib/jobs";
+import { cancelJob, isRoutine, listOpenJobs } from "../lib/jobs";
 import { addMemory, forgetMemory, isMemorySlot, readMemory } from "../lib/memory";
 import { CATALOG } from "../lib/catalog";
 import {
@@ -279,7 +279,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
       const cancelledJobs: string[] = [];
       for (const job of await listOpenJobs(workspaceId)) {
-        if (job.room !== room || job.everyMinutes !== null) continue;
+        if (job.room !== room || isRoutine(job)) continue;
         const cancelled = await cancelJob(workspaceId, job.id);
         if (!cancelled.ok) continue;
         cancelledJobs.push(job.id);

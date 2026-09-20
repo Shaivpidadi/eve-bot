@@ -49,6 +49,8 @@ export function scheduleText(routine: Routine, paused: boolean): string {
   if (paused) return "Paused";
   const next = new Date(routine.nextRunAt);
   const at = clock(next);
+  // A clock routine already describes itself, in the operator's own timezone.
+  if (routine.schedule !== undefined) return routine.schedule.replace(/^every /, "Every ");
   const every = routine.everyMinutes;
   if (every === null) {
     return `Once, ${shortWhen(routine.nextRunAt)}${sameDay(next, new Date()) ? "" : ` at ${at}`}`;

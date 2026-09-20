@@ -1,6 +1,7 @@
 /** Everything Bot persists. One file so the shape of the product is readable in one place. */
 
 import type { JobEffort } from "./models";
+import type { Schedule } from "./schedule";
 
 export type BotStatus = "active" | "paused";
 
@@ -78,6 +79,11 @@ export interface Job {
   runAt: string;
   /** Repeat interval in minutes, or `null` for a one-shot job. */
   everyMinutes: number | null;
+  /**
+   * A clock schedule, for a routine that should run at a time rather than at
+   * an interval. Takes precedence over `everyMinutes`. Absent on older jobs.
+   */
+  schedule?: Schedule | null;
   /** Require a human to sign off on the deliverable before the job closes. */
   requiresSignoff: boolean;
   /** Address the result should be reported back to. */

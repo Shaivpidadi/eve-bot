@@ -9,7 +9,8 @@ import {
   type ScreenAllocation,
   type ServiceState,
 } from "./computer/screens";
-import { listOpenJobs } from "./jobs";
+import { isRoutine, listOpenJobs } from "./jobs";
+import { describeSchedule } from "./schedule";
 import { HQ_ROOM, roomForBot } from "./rooms";
 import { getRoomState, type AnsweredInput, type RoomState } from "./roomstate";
 import type { ActivityEvent, Bot, Job } from "./types";
@@ -28,6 +29,8 @@ export interface Routine {
   readonly jobId: string;
   readonly title: string;
   readonly everyMinutes: number | null;
+  /** How a clock routine reads, when it has one rather than an interval. */
+  readonly schedule?: string;
   readonly nextRunAt: string;
   readonly status: Job["status"];
   readonly lastRunAt: string | null;
@@ -280,11 +283,12 @@ function botMember(
     answered: answeredIn(room),
     computer: sharedComputer(screen, running, running?.id ?? lastRun?.jobId ?? null, handover),
     routines: jobs
-      .filter((job) => job.everyMinutes !== null || job.status === "scheduled")
+      .filter((job) => isRoutine(job) || job.status === "scheduled")
       .map((job) => ({
         jobId: job.id,
         title: job.title,
         everyMinutes: job.everyMinutes,
+        ...(job.schedule == null ? {} : { schedule: describeSchedule(job.schedule) }),
         nextRunAt: job.runAt,
         status: job.status,
         lastRunAt: job.lastRunAt,

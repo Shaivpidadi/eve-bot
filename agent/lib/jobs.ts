@@ -2,6 +2,7 @@ import { record } from "./activity";
 import { newId } from "./ids";
 import { getBot, patchBot } from "./bots";
 import { DEFAULT_EFFORT, type JobEffort } from "./models";
+import { nextRun, type Schedule } from "./schedule";
 import { deleteDoc, listDocs, readDoc, store, updateDoc, writeDoc } from "./store";
 import type { Job, JobArtifact, JobResult, JobStatus } from "./types";
 
@@ -44,6 +45,7 @@ export async function assignJob(input: {
   successCriteria?: string[];
   runAt?: string;
   everyMinutes?: number | null;
+  schedule?: Schedule | null;
   requiresSignoff?: boolean;
   priority?: "normal" | "high";
   effort?: JobEffort;
@@ -67,6 +69,7 @@ export async function assignJob(input: {
     ...(input.effortConfidence === undefined ? {} : { effortConfidence: input.effortConfidence }),
     runAt,
     everyMinutes: input.everyMinutes ?? null,
+    ...(input.schedule == null ? {} : { schedule: input.schedule }),
     requiresSignoff: input.requiresSignoff ?? false,
     room: input.room ?? "desk",
     requestedBy: input.requestedBy,
@@ -113,6 +116,22 @@ export function resultIsFromRun(
     return Date.parse(result.recordedAt) >= Date.parse(run.startedAt);
   }
   return JSON.stringify(result) !== run.resultAtClaim;
+}
+
+/** Whether a job runs again after it finishes: on a clock, or on an interval. */
+export const isRoutine = (job: Pick<Job, "everyMinutes" | "schedule">): boolean =>
+  (job.schedule !== undefined && job.schedule !== null) || (job.everyMinutes !== null && job.everyMinutes > 0);
+
+/**
+ * When a routine's next cycle is due.
+ *
+ * A clock schedule fires at the same wall-clock time whatever the last cycle
+ * took; an interval still counts from now, which is what "every 10 minutes"
+ * means for a monitor.
+ */
+export function nextRunAt(job: Pick<Job, "everyMinutes" | "schedule">, from: Date = new Date()): string {
+  if (job.schedule !== undefined && job.schedule !== null) return nextRun(job.schedule, from).toISOString();
+  return new Date(from.getTime() + (job.everyMinutes ?? 0) * 60_000).toISOString();
 }
 
 export async function getJob(workspaceId: string, jobId: string): Promise<Job | null> {
@@ -471,13 +490,11 @@ export async function completeJob(
       return null;
     }
     state.outcome = "closed";
-    const repeats = current.everyMinutes !== null && current.everyMinutes > 0;
+    const repeats = isRoutine(current);
     return stamp({
       ...current,
       status: repeats ? "scheduled" : "done",
-      runAt: repeats
-        ? new Date(Date.now() + (current.everyMinutes ?? 0) * 60_000).toISOString()
-        : current.runAt,
+      runAt: repeats ? nextRunAt(current) : current.runAt,
       lease: null,
       result,
       feedback: null,
@@ -629,7 +646,7 @@ export async function cancelJob(workspaceId: string, jobId: string): Promise<Can
       return null;
     }
     outcome.wasRunning = current.status === "running";
-    return stamp({ ...current, status: "cancelled", lease: null, everyMinutes: null });
+    return stamp({ ...current, status: "cancelled", lease: null, everyMinutes: null, schedule: null });
   });
   if (job === null) return { ok: false, reason: outcome.reason };
 
