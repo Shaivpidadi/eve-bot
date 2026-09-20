@@ -79,6 +79,22 @@ describe("trimTree", () => {
   });
 });
 
+describe("trimTree on input that is not a tree", () => {
+  it("keeps the text instead of trimming everything away", () => {
+    const notATree = '{"error":"the page could not be read","status":500}';
+    const trimmed = trimTree(notATree, 8_000);
+    expect(trimmed.text).toContain('"error"');
+    expect(trimmed.text).not.toMatch(/more lines not shown/);
+  });
+
+  it("clips a long non-tree page to the budget rather than dropping it", () => {
+    const long = "x".repeat(50_000);
+    const trimmed = trimTree(long, 1_000);
+    expect(trimmed.text.length).toBeLessThanOrEqual(1_000);
+    expect(trimmed.text).toContain("xxx");
+  });
+});
+
 describe("compareTrees", () => {
   const before = { url: "https://mail.example/inbox", tree: '- heading "Inbox"\n- link "Acme invoice" [ref=e3]\n- button "Compose" [ref=e4]' };
 

@@ -152,6 +152,14 @@ export function trimTree(snapshot: string, budget: number): Trimmed {
   const of = lines.length;
   const interactive = lines.filter((line) => line.interactive).length;
   const wrap = (body: string[]) => [markers[0], ...body, markers[1]].filter((entry): entry is string => entry !== undefined).join("\n");
+  // Nothing parsed as a tree: an error page, plain text, whatever a command
+  // wrote instead. Trimming by role would drop every line and hand the bot a
+  // note about lines it cannot see, so the text itself is clipped and kept.
+  if (lines.length > 0 && lines.every((line) => line.role === "")) {
+    const raw = lines.map((line) => line.rest).join("\n");
+    const room = Math.max(200, budget - markers.join("\n").length - 2);
+    return { text: wrap([clip(raw, room)]), shown: lines.length, of, interactive, level: 3 };
+  }
   // Indentation is relative to the shallowest line kept, so a tree does not start eight spaces in.
   const baseDepth = lines.reduce((min, line) => Math.min(min, line.depth), Number.POSITIVE_INFINITY);
   const show = (line: Line) =>
