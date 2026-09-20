@@ -54,7 +54,13 @@ Treat the page the way a person does: look, act, then confirm.
    interactive element has a `@ref` — that is what you click and fill, not CSS
    selectors or pixel coordinates.
 2. `page_click` and `page_fill` to act, one step at a time, reading the page
-   between steps. Call `request_takeover` at a sign-in.
+   between steps. Call `request_takeover` at a sign-in. When you already know
+   the control — the Send button, the field labelled Email — set `by` to
+   `text`, `label`, `placeholder`, `testid` or `role` and name it instead of
+   reading the page to find its ref.
+   `page_set` for a dropdown or a checkbox, by the state you want.
+   `page_get` for one fact (a field's value, how many rows, a link's href)
+   without paying for a whole tree. `page_upload` attaches a file you wrote.
 3. Read what came back. `page_click` and `page_fill` report `changed`: `none`
    means the page did not react, so do not repeat the same action; `some`
    lists what appeared under `added`, with fresh refs; `page` means you are
