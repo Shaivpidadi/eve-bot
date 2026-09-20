@@ -24,6 +24,7 @@ import {
 } from "../../../lib/computer/screens";
 import { posterKey, saveScreen } from "../../../lib/screens";
 import { operator } from "../../../lib/session";
+import { sessionState } from "./session-state";
 
 /**
  * The Bot's browser: the Google Chrome on the team's one screen, which every
@@ -41,7 +42,7 @@ import { operator } from "../../../lib/session";
 
 const MAX_OUTPUT = process.env.BOT_BROWSER_MAX_OUTPUT ?? "20000";
 
-const preparedDirectories = new Set<string>();
+const preparedDirectories = sessionState<true>();
 
 /**
  * Each run works in its own tab of the team's one browser, so two Bots never
@@ -53,7 +54,7 @@ const preparedDirectories = new Set<string>();
 const runSessionName = (ctx: ToolContext) => `run-${ctx.session.id.replace(/[^A-Za-z0-9_-]/g, "")}`.slice(0, 60);
 
 /** Runs opened with their tab ready, so the label lookup happens once per run. */
-const openedTabs = new Map<string, { targetId: string; at: number }>();
+const openedTabs = sessionState<{ targetId: string; at: number }>();
 const TAB_TRUSTED_MS = 60_000;
 
 /**
@@ -127,7 +128,7 @@ export async function sessionDirectory(ctx: ToolContext): Promise<string> {
   if (!preparedDirectories.has(directory)) {
     const sandbox = await ctx.getSandbox();
     const result = await sandbox.run({ command: `mkdir -p '${directory.replaceAll("'", "")}'` });
-    if (result.exitCode === 0) preparedDirectories.add(directory);
+    if (result.exitCode === 0) preparedDirectories.set(directory, true);
   }
   return directory;
 }
@@ -174,7 +175,7 @@ const FORBIDDEN = new Set(["close", "quit", "exit", "connect", "install"]);
 
 /** How long a run trusts that its screen is up before asking the computer again. */
 const SCREEN_TRUSTED_MS = 30_000;
-const readyScreens = new Map<string, { n: number; at: number }>();
+const readyScreens = sessionState<{ n: number; at: number }>();
 
 /**
  * Binds this run to the team's screen, allocating one if the workspace has
@@ -296,7 +297,7 @@ export async function browser(ctx: ToolContext, args: readonly string[]): Promis
 }
 
 const POSTER_EVERY_MS = 5_000;
-const lastPoster = new Map<string, number>();
+const lastPoster = sessionState<number>();
 
 /**
  * Refreshes the still frame the console shows for the team's screen when nobody

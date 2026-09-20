@@ -1,6 +1,7 @@
 import type { ToolContext } from "eve/tools";
 
 import { browser, refreshScreen } from "./browser";
+import { sessionState } from "./session-state";
 
 /**
  * What a Bot sees of a page, kept small.
@@ -277,7 +278,7 @@ export interface Look {
   readonly tree: string;
 }
 
-const lastLook = new Map<string, Look>();
+const lastLook = sessionState<Look>();
 
 /**
  * Reads the page after it has settled: the load event, then a moment for the
