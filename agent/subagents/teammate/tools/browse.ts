@@ -1,6 +1,9 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
+import { watchAuthWall } from "../../../lib/jev-watch";
+import { operator } from "../../../lib/session";
+
 import { browser, refreshScreen } from "../lib/browser";
 import { forgetLook, isLook, look } from "../lib/page";
 
@@ -29,6 +32,7 @@ export default defineTool({
     await refreshScreen(ctx);
     const seen = await look(ctx);
     if (!isLook(seen)) return { opened: true as const, url, page: opened.output, error: seen.error, detail: seen.detail };
+    await watchAuthWall(operator(ctx).workspaceId, seen.url, seen.page);
     return {
       opened: true as const,
       url: seen.url || url || "",

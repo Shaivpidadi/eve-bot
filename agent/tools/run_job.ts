@@ -24,6 +24,8 @@ import {
   sendBack,
   type Hold,
 } from "../lib/jobs";
+import { jevEnabled, judge } from "../lib/jev";
+import { completionQuestions, noteShadow, readVerdict, unmetCriteria } from "../lib/jev-watch";
 import { DEFAULT_EFFORT, nextEffort } from "../lib/models";
 import { ROUTINE_REPORT_PREFIX } from "../lib/rooms";
 import { operator } from "../lib/session";
@@ -190,6 +192,9 @@ export default defineWorkflowTool({
         const result: JobResult = salvaged;
 
         if (!claim.requiresSignoff && !result.needsHuman) {
+          // Observation only: what a grader would have said about this close,
+          // recorded beside what actually happened. It decides nothing yet.
+          await reviewClose(workspaceId, jobId, claim, result);
           done = { result, token: claim.token, title: claim.title, botName: claim.botName };
           break work;
         }
@@ -476,6 +481,50 @@ async function salvageResult(workspaceId: string, jobId: string, claim: Extract<
     needsHuman: false,
     completion: "recovered",
   };
+}
+
+/**
+ * Asks Jev whether the evidence supports the close, and files the answer.
+ *
+ * Shadow mode: the job closes exactly as it would have. The point is to find
+ * out, on this deployment's own jobs, whether the grader agrees with the bots
+ * before it is allowed to contradict one.
+ */
+async function reviewClose(
+  workspaceId: string,
+  jobId: string,
+  claim: Extract<Claim, { ok: true }>,
+  result: JobResult,
+): Promise<void> {
+  "use step";
+  if (!jevEnabled()) return;
+  const job = await getJob(workspaceId, jobId);
+  const criteria = job?.successCriteria ?? [];
+  const questions = completionQuestions(criteria);
+  const judgement = await judge(
+    {
+      brief: claim.brief.slice(0, 4_000),
+      successCriteria: criteria,
+      summary: result.summary,
+      deliverable: result.deliverable.slice(0, 4_000),
+      openQuestions: result.openQuestions,
+      artifacts: (job?.artifacts ?? []).slice(claim.artifactsAtClaim).map((artifact) => artifact.name),
+      closedBy: result.completion ?? "unknown",
+    },
+    questions,
+    { timeoutMs: 4_000 },
+  );
+  if (judgement === null) return;
+  const overall = readVerdict(judgement, "overall");
+  await noteShadow({
+    kind: "completion",
+    workspaceId,
+    jobId,
+    verdict: overall.verdict,
+    confidence: overall.confidence,
+    actual: result.completion ?? "unknown",
+    detail: { unmetCriteria: unmetCriteria(judgement, criteria.length), criteria: criteria.length },
+  });
 }
 
 /** The result the Bot recorded with finish_job during this run, if it recorded one. */

@@ -14,7 +14,8 @@
     "agent:dev": "eve dev",
     "agent:build": "eve build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "jev:report": "tsx scripts/jev-report.mjs"
   },
   "dependencies": {
     "@agent-browser/eve": "^0.38.1",
@@ -37,6 +38,7 @@
     "@types/react-dom": "^19.3.0",
     "just-bash": "^3.4.2",
     "microsandbox": "^0.5.10",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.2",
     "vitest": "^5.0.1"
   },

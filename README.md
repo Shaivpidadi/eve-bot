@@ -195,6 +195,22 @@ tests/                      vitest
 
 Swapping storage means implementing four methods in `agent/lib/store/`.
 
+### A second opinion on small decisions
+
+With an AI Gateway key, Bot can ask [Jev](https://vercel.com/ai-gateway/models/jev)
+the questions that are decisions rather than writing: is this page a sign-in
+wall, does this result actually meet the brief. It answers as a probability,
+priced per input token, and today it decides nothing — each answer is filed
+next to what the system did anyway:
+
+```bash
+npm run jev:report          # what Jev would have decided, against what happened
+```
+
+Turn it off with `BOT_JEV=off`. It is off on its own wherever the Gateway
+cannot be reached, so a standalone server on your own models never depends on
+it.
+
 ## Limits
 
 - One computer per deployment, shared by every Bot and workspace. Sign-ins are

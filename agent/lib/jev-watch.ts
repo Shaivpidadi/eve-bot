@@ -2,7 +2,7 @@ import type { Experimental_EvaluationQuestion as EvaluationQuestion } from "ai";
 
 import { newId } from "./ids";
 import { listDocs, writeDoc } from "./store";
-import { confidenceFloor, type Judgement, type Verdict, verdictOf } from "./jev";
+import { confidenceFloor, jevEnabled, judge, type Judgement, type Verdict, verdictOf } from "./jev";
 
 /**
  * What Jev would have decided, written down without acting on it.
@@ -95,6 +95,30 @@ export function authWallQuestions(): Record<string, EvaluationQuestion> {
       },
     },
   };
+}
+
+/**
+ * Notes whether a page a bot just opened looks like a wall.
+ *
+ * Shadow only: the bot is told nothing, and decides for itself as before. The
+ * record is here so the question "would this have caught the Gmail loop?" can
+ * be answered from real pages rather than from an opinion.
+ */
+export async function watchAuthWall(workspaceId: string, url: string, page: string): Promise<void> {
+  if (!jevEnabled()) return;
+  const judgement = await judge({ url, page: page.slice(0, 6_000) }, authWallQuestions(), { timeoutMs: 3_000 });
+  if (judgement === null) return;
+  const { verdict, confidence } = readVerdict(judgement, "wall");
+  if (verdict === "unknown") return;
+  await noteShadow({
+    kind: "auth-wall",
+    workspaceId,
+    jobId: null,
+    verdict,
+    confidence,
+    actual: "bot decided for itself",
+    detail: { url },
+  });
 }
 
 const probabilityOf = (answer: unknown): number | undefined => {
