@@ -8,6 +8,7 @@ import { assignJob } from "../lib/jobs";
 import { DEFAULT_EFFORT, EFFORT_DESCRIPTIONS, JOB_EFFORTS, type JobEffort } from "../lib/models";
 import { isRoomName } from "../lib/rooms";
 import { operator } from "../lib/session";
+import { briefFromRecipe, findRecipe, noteRecipeUsed } from "../lib/recipes";
 import { DAYS, defaultTimezone, describeSchedule, isSchedule, nextRun, type Schedule } from "../lib/schedule";
 import { looseBoolean } from "../lib/tool-input";
 import type { Bot } from "../lib/types";
@@ -101,6 +102,13 @@ export default defineTool({
       .describe(
         `How hard the job is, which picks the model and its cost. "quick": ${EFFORT_DESCRIPTIONS.quick} "standard": ${EFFORT_DESCRIPTIONS.standard} "deep": ${EFFORT_DESCRIPTIONS.deep} Choose the lowest that will do the job well; a failed job re-runs one level up. Defaults to standard.`,
       ),
+    recipe: z
+      .string()
+      .max(60)
+      .optional()
+      .describe(
+        "The name of a saved recipe to brief this job from, when the request matches one. Write brief as only what is different this time.",
+      ),
     room: z
       .string()
       .max(60)
@@ -130,6 +138,14 @@ export default defineTool({
       return { assigned: false as const, reason: `runAt must be an ISO 8601 timestamp.` };
     }
 
+    // A request the team has done before is briefed from how it went, plus
+    // whatever is different today.
+    const recipe = input.recipe === undefined ? null : await findRecipe(who.workspaceId, input.recipe);
+    if (input.recipe !== undefined && recipe === null) {
+      return { assigned: false as const, reason: `No recipe called ${input.recipe}. Write the brief yourself, or check the name.` };
+    }
+    const brief = recipe === null ? input.brief : briefFromRecipe(recipe, input.brief);
+
     const rating = rateEffort(input.effort);
 
     // A clock routine: "every weekday at 9" rather than "every 1440 minutes".
@@ -157,8 +173,12 @@ export default defineTool({
       botId: bot.id,
       requestedBy: who.label,
       title: input.title,
-      brief: input.brief,
-      ...(input.successCriteria ? { successCriteria: input.successCriteria } : {}),
+      brief,
+      ...(input.successCriteria
+        ? { successCriteria: input.successCriteria }
+        : recipe !== null && recipe.successCriteria.length > 0
+          ? { successCriteria: [...recipe.successCriteria] }
+          : {}),
       ...(input.runAt ? { runAt: input.runAt } : schedule === null ? {} : { runAt: nextRun(schedule, new Date()).toISOString() }),
       ...(input.everyMinutes !== undefined ? { everyMinutes: input.everyMinutes } : {}),
       ...(schedule === null ? {} : { schedule }),
@@ -170,8 +190,11 @@ export default defineTool({
       room: input.room !== undefined && isRoomName(input.room) ? input.room : who.room,
     });
 
+    if (recipe !== null) await noteRecipeUsed(who.workspaceId, recipe.id);
+
     return {
       assigned: true as const,
+      ...(recipe === null ? {} : { recipe: recipe.name }),
       job: {
         id: job.id,
         title: job.title,

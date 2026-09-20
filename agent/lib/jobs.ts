@@ -118,32 +118,6 @@ export function resultIsFromRun(
   return JSON.stringify(result) !== run.resultAtClaim;
 }
 
-/**
- * Whether a routine's cycle found the same thing as the cycle before it.
- *
- * A monitor that correctly reports "no change" every ten minutes should not
- * say so in the thread every ten minutes. Only what the bot found counts:
- * when it was recorded, and how it was closed, differ every time and say
- * nothing about the world.
- */
-export function sameFindings(previous: string | null, next: JobResult): boolean {
-  if (previous === null) return false;
-  let before: JobResult;
-  try {
-    before = JSON.parse(previous) as JobResult;
-  } catch {
-    return false;
-  }
-  const findings = (result: JobResult) =>
-    JSON.stringify({
-      summary: result.summary.trim(),
-      deliverable: result.deliverable.trim(),
-      openQuestions: [...result.openQuestions].map((question) => question.trim()).sort(),
-      needsHuman: result.needsHuman,
-    });
-  return findings(before) === findings(next);
-}
-
 /** Whether a job runs again after it finishes: on a clock, or on an interval. */
 export const isRoutine = (job: Pick<Job, "everyMinutes" | "schedule">): boolean =>
   (job.schedule !== undefined && job.schedule !== null) || (job.everyMinutes !== null && job.everyMinutes > 0);

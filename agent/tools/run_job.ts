@@ -21,10 +21,10 @@ import {
   releaseJob,
   renewLease,
   resultIsFromRun,
-  sameFindings,
   sendBack,
   type Hold,
 } from "../lib/jobs";
+import { sameFindings } from "../lib/findings";
 import { jevEnabled, judge } from "../lib/jev";
 import { completionQuestions, noteShadow, readVerdict, unmetCriteria } from "../lib/jev-watch";
 import { DEFAULT_EFFORT, nextEffort } from "../lib/models";

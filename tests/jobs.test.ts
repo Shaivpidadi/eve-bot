@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { isRoutine, nextRunAt, resultIsFromRun, sameFindings } from "../agent/lib/jobs";
+import { sameFindings } from "../agent/lib/findings";
+import { isRoutine, nextRunAt, resultIsFromRun } from "../agent/lib/jobs";
 import type { JobResult } from "../agent/lib/types";
 
 const result = (over: Partial<JobResult> = {}): JobResult => ({
