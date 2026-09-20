@@ -83,8 +83,19 @@ describe("compareTrees", () => {
   const before = { url: "https://mail.example/inbox", tree: '- heading "Inbox"\n- link "Acme invoice" [ref=e3]\n- button "Compose" [ref=e4]' };
 
   it("reports an action that changed nothing as exactly that", () => {
+    const same = { url: before.url, tree: before.tree };
+    const change = compareTrees(before, same);
+    expect(change.kind).toBe("none");
+    expect(change.refsMoved).toBe(false);
+  });
+
+  it("says the refs moved when the same page re-renders under new refs", () => {
     const renumbered = { url: before.url, tree: '- heading "Inbox"\n- link "Acme invoice" [ref=e9]\n- button "Compose" [ref=e10]' };
-    expect(compareTrees(before, renumbered).kind).toBe("none");
+    const change = compareTrees(before, renumbered);
+    // The words are unchanged, so the content question is still "none"...
+    expect(change.kind).toBe("none");
+    // ...but every handle the bot held is gone.
+    expect(change.refsMoved).toBe(true);
   });
 
   it("lists what appeared with its refs, and what went, when part of the page changed", () => {

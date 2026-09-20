@@ -191,6 +191,14 @@ export function trimTree(snapshot: string, budget: number): Trimmed {
 /** A line as it reads, without indentation or the ref that renumbers between snapshots. */
 const normalise = (raw: string): string => raw.trim().replace(/\s*\[ref=e\d+\]/g, "");
 
+const REF_ID = /\[ref=(e\d+)\]/g;
+
+/** Every ref in a tree, to tell a quiet re-render from a page that truly did not move. */
+const refsIn = (tree: string): Set<string> => new Set(Array.from(tree.matchAll(REF_ID), (match) => match[1] as string));
+
+const sameRefs = (before: Set<string>, after: Set<string>): boolean =>
+  before.size === after.size && [...before].every((ref) => after.has(ref));
+
 export interface PageChange {
   /** none: identical; some: parts changed; page: mostly different, read it as a new page. */
   readonly kind: "none" | "some" | "page";
@@ -198,6 +206,13 @@ export interface PageChange {
   readonly removed: readonly string[];
   readonly addedCount: number;
   readonly removedCount: number;
+  /**
+   * Whether the refs themselves changed. Text and refs are separate questions:
+   * a page that re-renders to exactly the same words still renumbers its refs,
+   * and a bot told "nothing changed, your refs still apply" would then act on
+   * handles that no longer exist.
+   */
+  readonly refsMoved: boolean;
 }
 
 const CHANGE_LINES = 40;
@@ -242,6 +257,7 @@ export function compareTrees(before: { url: string; tree: string }, after: { url
     removed: removed.slice(0, CHANGE_LINES).map((line) => clip(line, 160)),
     addedCount: added.length,
     removedCount: removed.length,
+    refsMoved: !sameRefs(refsIn(before.tree), refsIn(after.tree)),
   };
 }
 
@@ -292,7 +308,7 @@ export interface Acted {
   readonly removed?: readonly string[];
   readonly addedCount?: number;
   readonly removedCount?: number;
-  /** The page as it is now; null when nothing changed, since the last snapshot still stands. */
+  /** The page as it is now; null when nothing changed and the old refs still stand. */
   readonly page: string | null;
   readonly shown: Look["shown"] | null;
   readonly note: string;
@@ -315,13 +331,18 @@ export async function act(ctx: ToolContext, args: readonly string[]): Promise<Ac
   }
   const change = compareTrees(before, after);
   if (change.kind === "none") {
+    const stale = change.refsMoved;
     return {
       ok: true,
       url: after.url,
       changed: "none",
-      page: null,
-      shown: null,
-      note: "Nothing on the page changed. Your previous refs still apply. If you expected a change, the element was covered, disabled, or not the one you meant; do not repeat the same action.",
+      // The words are the same, but re-rendered refs are not: hand back the
+      // page so the bot has handles that exist.
+      page: stale ? after.page : null,
+      shown: stale ? after.shown : null,
+      note: stale
+        ? "Nothing on the page changed, but it re-rendered and the refs were renumbered: use the refs below, not the ones you had. If you expected a change, the element was covered, disabled, or not the one you meant; do not repeat the same action."
+        : "Nothing on the page changed. Your previous refs still apply. If you expected a change, the element was covered, disabled, or not the one you meant; do not repeat the same action.",
     };
   }
   return {
