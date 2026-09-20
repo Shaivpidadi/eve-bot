@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Bot \u2014 always-on AI teammates with their own computer, built on Vercel eve and Next.js.",
+  "description": "Bot — always-on AI teammates with their own computer, built on Vercel eve and Next.js.",
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "reset": "node scripts/reset.mjs",
@@ -17,7 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@agent-browser/eve": "^0.37.1",
+    "@agent-browser/eve": "^0.38.1",
     "@ai-sdk/openai-compatible": "^3.0.48",
     "@novnc/novnc": "^1.7.0",
     "@vercel/blob": "^2.8.0",

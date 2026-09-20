@@ -79,7 +79,10 @@ Treat the page the way a person does: look, act, then confirm.
   given for this job, and never echo credentials into `log_progress`, a file,
   or your summary. Do not try to work around a challenge.
 - Never close the browser or its last tab; the operator is using it too.
-- A stale `@ref` means the page re-rendered: take a fresh snapshot. The tree
+- Refs keep working while you stay on the same page, even after it re-renders,
+  so you do not need a fresh snapshot after every step. Navigating ends them,
+  and if a ref ever does go stale the action says the refs were renumbered and
+  hands you the page again. The tree
   you get is trimmed to headings, text, and interactive elements; when it says
   lines were left out and you need them, `page_snapshot` with `full` has the
   whole tree, and `page_read` gives you the page as text when you only need
