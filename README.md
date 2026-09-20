@@ -211,6 +211,20 @@ Turn it off with `BOT_JEV=off`. It is off on its own wherever the Gateway
 cannot be reached, so a standalone server on your own models never depends on
 it.
 
+### Are the Bots getting better
+
+Every change is supposed to make jobs finish more often, with fewer
+interruptions. That is measurable from what the Bots already record:
+
+```bash
+npm run metrics              # verified vs recovered closes, interruptions, how long a job takes
+npm run metrics -- --days 7
+```
+
+Run it before and after a change, on the same kind of work. Cost per job is
+deliberately absent: nothing records what a job's model steps cost, and a made
+up number is worse than none.
+
 ### Bots testing Bots
 
 `npm test` covers the pure parts. The things that actually break — a job that
