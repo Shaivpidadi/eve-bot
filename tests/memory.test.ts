@@ -39,6 +39,9 @@ describe("memory store", () => {
   it("refuses secrets and empties, keeps the rest once, and caps a slot", () => {
     expect(looksSecret("The Gmail password is hunter2")).toBe(true);
     expect(looksSecret("Card 4111 1111 1111 1111 for invoices")).toBe(true);
+    // Long numbers that are not card numbers, such as a timestamp or an order id, are fine.
+    expect(looksSecret("QA fixture 1758489281186: prefers no trace")).toBe(false);
+    expect(looksSecret("Order 9876543210123 shipped")).toBe(false);
     expect(looksSecret("Use token ghp_abcdefghijklmnop for GitHub")).toBe(true);
     expect(looksSecret("Prefers summaries as three bullets")).toBe(false);
     expect(acceptable({ text: "   ", kind: "fact" })).toMatchObject({ ok: false });

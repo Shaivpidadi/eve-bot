@@ -91,10 +91,25 @@ const comparable = (text: string): string => normalize(text).toLowerCase().repla
 export function looksSecret(text: string): boolean {
   return (
     /\b(password|passcode|passwd|api[ -]?key|secret|token|otp|one[- ]time code|verification code|cvv|ssn)\b\s*[:=]?\s*\S/i.test(text) ||
-    /\b(?:\d[ -]?){13,19}\b/.test(text) ||
+    looksLikeCard(text) ||
     /\b(sk|pk|ghp|gho|xox[abp]|vck|AKIA)[-_a-zA-Z0-9]{8,}/.test(text) ||
     /\beyJ[a-zA-Z0-9_-]{10,}\./.test(text)
   );
+}
+
+/** A run of 13 to 19 digits that passes the Luhn check, which is how card numbers are made; a timestamp or an order number almost never does. */
+function looksLikeCard(text: string): boolean {
+  for (const match of text.matchAll(/\b(?:\d[ -]?){13,19}\b/g)) {
+    const digits = match[0].replace(/\D/g, "");
+    let sum = 0;
+    for (let index = 0; index < digits.length; index += 1) {
+      let digit = Number(digits[digits.length - 1 - index]);
+      if (index % 2 === 1) digit = digit * 2 > 9 ? digit * 2 - 9 : digit * 2;
+      sum += digit;
+    }
+    if (sum % 10 === 0) return true;
+  }
+  return false;
 }
 
 /** A memory the store will take: non-empty, not a secret, not absurdly long. */
