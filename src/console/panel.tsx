@@ -7,7 +7,8 @@ import { Avatar } from "./avatar";
 import { posterUrl } from "./computer/browser-app";
 import { bytes, PRESENCE_LABEL, scheduleText, shortWhen } from "./format";
 import { Icon } from "./icons";
-import type { Hover, Member } from "./types";
+import { RoutineDialog } from "./routine-dialog";
+import type { Hover, Member, Routine } from "./types";
 
 export type PanelView = "overview" | "settings";
 
@@ -114,7 +115,7 @@ export function DetailsPanel({
         ) : settings ? (
           <SettingsPanel key={member.id} member={member} onChanged={onChanged} editRequest={editRequest} />
         ) : (
-          <BotPanel member={member} members={members} onTakeover={onTakeover} />
+          <BotPanel member={member} members={members} onTakeover={onTakeover} onChanged={onChanged} />
         )}
       </div>
     </aside>
@@ -180,12 +181,15 @@ function BotPanel({
   member,
   members,
   onTakeover,
+  onChanged,
 }: {
   member: Member;
   members: readonly Member[];
   onTakeover: () => void;
+  onChanged: () => Promise<void>;
 }) {
   const paused = member.status === "paused";
+  const [editing, setEditing] = useState<Routine | null>(null);
 
   return (
     <>
@@ -198,17 +202,21 @@ function BotPanel({
             <li className="muted-row">No routines yet</li>
           ) : (
             member.routines.map((routine) => (
-              <li key={routine.jobId}>
+              <li key={routine.jobId} className="routine-row">
                 <Icon name={paused ? "clock" : "check"} size={15} className={paused ? undefined : "ok"} />
                 <div>
                   <b>{routine.title}</b>
                   <span>{scheduleText(routine, paused)}</span>
                 </div>
+                <button type="button" className="btn routine-edit" onClick={() => setEditing(routine)} title="Change when it runs, or stop it">
+                  Edit
+                </button>
               </li>
             ))
           )}
         </ul>
       </div>
+      <RoutineDialog routine={editing} onClose={() => setEditing(null)} onChanged={onChanged} />
 
       {member.files.length === 0 ? null : (
         <div className="section">

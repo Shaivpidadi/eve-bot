@@ -7,6 +7,17 @@ import { Icon } from "./icons";
 
 type Slot = "profile" | "team" | "craft";
 
+interface RecipeRow {
+  readonly id: string;
+  readonly name: string;
+  readonly when: string;
+  readonly brief: string;
+  readonly successCriteria: readonly string[];
+  readonly notes: readonly string[];
+  readonly uses: number;
+  readonly createdAt: string;
+}
+
 interface SlotMemory {
   readonly slot: Slot;
   readonly shared: boolean;
@@ -42,6 +53,7 @@ const COPY: Readonly<Record<Slot, { title: string; detail: string; placeholder: 
 export function MemoryDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [slots, setSlots] = useState<readonly SlotMemory[] | null>(null);
+  const [recipes, setRecipes] = useState<readonly RecipeRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
@@ -52,6 +64,9 @@ export function MemoryDialog({ open, onClose }: { open: boolean; onClose: () => 
       const body: unknown = await response.json().catch(() => null);
       if (response.ok && isRecord(body) && Array.isArray(body.slots)) setSlots(body.slots as SlotMemory[]);
       else setError("Could not load memory.");
+      const saved = await api("/bot/v1/recipes");
+      const list: unknown = await saved.json().catch(() => null);
+      if (saved.ok && isRecord(list) && Array.isArray(list.recipes)) setRecipes(list.recipes as RecipeRow[]);
     } catch (caught) {
       if (!(caught instanceof SignedOutError)) setError("Could not load memory.");
     }
@@ -168,6 +183,52 @@ export function MemoryDialog({ open, onClose }: { open: boolean; onClose: () => 
             </section>
           );
         })}
+
+        <section className="connectors-section">
+          <h3>Recipes</h3>
+          <p className="faint">Work that went well, saved as the brief that worked. HQ briefs a repeat request from it; ask HQ to save one after a job you liked.</p>
+          {recipes === null ? (
+            <p className="faint">Loading…</p>
+          ) : recipes.length === 0 ? (
+            <p className="faint">No recipes yet.</p>
+          ) : (
+            <ul className="memory-list">
+              {recipes.map((recipe) => (
+                <li key={recipe.id}>
+                  <details className="recipe">
+                    <summary>
+                      <b>{recipe.name}</b>
+                      <span className="faint">
+                        {" · "}
+                        {recipe.when}
+                        {recipe.uses > 0 ? ` · used ${recipe.uses}×` : ""}
+                      </span>
+                    </summary>
+                    <p>{recipe.brief}</p>
+                    {recipe.successCriteria.length > 0 ? (
+                      <ul>
+                        {recipe.successCriteria.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {recipe.notes.length > 0 ? <p className="faint">{recipe.notes.join(" ")}</p> : null}
+                  </details>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    aria-label={`Forget recipe ${recipe.name}`}
+                    title="Forget this recipe"
+                    disabled={busy !== null}
+                    onClick={() => void act(`recipe:${recipe.id}`, () => api(`/bot/v1/recipes/${encodeURIComponent(recipe.id)}`, { method: "DELETE" }), "Could not forget that recipe.")}
+                  >
+                    <Icon name="x" size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
         <p className="faint">Each Bot also keeps its own Playbook of lessons, in its settings.</p>
         {error === null ? null : <p className="error-text">{error}</p>}

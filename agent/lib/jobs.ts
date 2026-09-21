@@ -2,7 +2,7 @@ import { record } from "./activity";
 import { newId } from "./ids";
 import { getBot, patchBot } from "./bots";
 import { DEFAULT_EFFORT, type JobEffort } from "./models";
-import { nextRun, type Schedule } from "./schedule";
+import { describeSchedule, nextRun, type Schedule } from "./schedule";
 import { deleteDoc, listDocs, readDoc, store, updateDoc, writeDoc } from "./store";
 import type { Job, JobArtifact, JobResult, JobStatus } from "./types";
 
@@ -434,6 +434,50 @@ export async function releaseJob(
     if (options.token !== undefined && current.lease?.token !== options.token) return null;
     return stamp({ ...current, status: "queued", lease: null });
   });
+}
+
+/**
+ * Changes when a routine runs, from the console: a new interval or a new clock
+ * schedule, effective from now. A routine waiting for its next cycle moves at
+ * once; a running cycle keeps its lease and the change lands when it closes,
+ * since completeJob computes the next run from the job as it is then.
+ */
+export async function rescheduleJob(
+  workspaceId: string,
+  jobId: string,
+  change: { readonly everyMinutes?: number | null; readonly schedule?: Schedule | null; readonly title?: string },
+): Promise<{ ok: true; job: Job } | { ok: false; reason: string }> {
+  let reason = "";
+  const job = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
+    if (current === null) {
+      reason = "No such job.";
+      return null;
+    }
+    if (current.status === "done" || current.status === "cancelled" || current.status === "failed") {
+      reason = "That job is over; nothing to reschedule.";
+      return null;
+    }
+    const next: Job = {
+      ...current,
+      ...(change.title === undefined ? {} : { title: change.title.trim().slice(0, 120) || current.title }),
+      ...(change.schedule !== undefined
+        ? { schedule: change.schedule, everyMinutes: change.schedule === null ? (change.everyMinutes ?? current.everyMinutes) : null }
+        : change.everyMinutes !== undefined
+          ? { everyMinutes: change.everyMinutes, schedule: null }
+          : {}),
+    };
+    const waiting = current.status === "scheduled" || current.status === "queued";
+    return stamp(waiting && isRoutine(next) ? { ...next, runAt: nextRunAt(next) } : next);
+  });
+  if (job === null) return { ok: false, reason: reason || "Could not reschedule." };
+  await record({
+    workspaceId,
+    kind: "job.assigned",
+    botId: job.botId,
+    jobId,
+    text: `"${job.title}" now runs ${job.schedule ? describeSchedule(job.schedule) : job.everyMinutes ? `every ${job.everyMinutes} minutes` : "once"}.`,
+  });
+  return { ok: true, job };
 }
 
 export async function patchJob(

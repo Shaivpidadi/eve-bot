@@ -181,28 +181,32 @@ export function ConnectorsDialog({ open, onClose }: { open: boolean; onClose: ()
                       {connector.auth.kind === "none" ? "" : " · key saved"}
                     </span>
                   </div>
-                  <select
-                    className="connector-gate"
-                    value={connector.gate}
-                    disabled={busy === connector.id}
-                    title="When a person is asked before a Bot uses it"
-                    onChange={(event) => void patch(connector, { gate: event.target.value })}
-                  >
-                    {(Object.keys(GATE_LABEL) as ConnectorGate[]).map((value) => (
-                      <option key={value} value={value}>
-                        {GATE_LABEL[value]}
-                      </option>
-                    ))}
-                  </select>
-                  <label className="connector-toggle" title="Every Bot can use it">
-                    <input
-                      type="checkbox"
-                      checked={connector.enabled}
-                      disabled={busy === connector.id}
-                      onChange={(event) => void patch(connector, { enabled: event.target.checked })}
-                    />
-                    On
-                  </label>
+                  <div className="connector-controls">
+                    <label className="connector-toggle" title="Every Bot can use it">
+                      <input
+                        type="checkbox"
+                        checked={connector.enabled}
+                        disabled={busy === connector.id}
+                        onChange={(event) => void patch(connector, { enabled: event.target.checked })}
+                      />
+                      On
+                    </label>
+                    <label className="connector-gate-field" title="When a person is asked before a Bot uses it">
+                      <span>Ask</span>
+                      <select
+                        className="connector-gate"
+                        value={connector.gate}
+                        disabled={busy === connector.id}
+                        onChange={(event) => void patch(connector, { gate: event.target.value })}
+                      >
+                        {(Object.keys(GATE_LABEL) as ConnectorGate[]).map((value) => (
+                          <option key={value} value={value}>
+                            {GATE_LABEL[value].replace(/^asks /, "")}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <span className="spacer" />
                   {connector.check.ok && connector.check.tools.length > 0 ? (
                     <details className="connector-tools">
                       <summary>{connector.check.tools.length} tools</summary>
@@ -244,6 +248,7 @@ export function ConnectorsDialog({ open, onClose }: { open: boolean; onClose: ()
                   >
                     Remove
                   </button>
+                  </div>
                 </li>
               ))}
             </ul>
