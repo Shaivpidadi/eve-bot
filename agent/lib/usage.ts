@@ -57,25 +57,59 @@ export function addUsage(left: Usage | undefined, right: Usage): Usage {
 export interface UsageLedger {
   readonly hq: Usage;
   readonly bots: Readonly<Record<string, Usage>>;
+  /** The same spend, by the model that ran the step. Absent on ledgers written before it was kept. */
+  readonly byModel?: Readonly<Record<string, Usage>>;
+  /** The same spend, by UTC day (`YYYY-MM-DD`), for the last `DAYS_KEPT` days. */
+  readonly byDay?: Readonly<Record<string, Usage>>;
   readonly updatedAt: string;
 }
 
+export const EMPTY_LEDGER: UsageLedger = { hq: NO_USAGE, bots: {}, byModel: {}, byDay: {}, updatedAt: "" };
+
+/** How many days of daily figures the ledger keeps; the all-time totals never expire. */
+export const DAYS_KEPT = 90;
+
+/** How the ledger names a step whose model eve did not report. */
+export const UNREPORTED_MODEL = "model not reported";
+
 const key = (workspaceId: string) => `usage/${workspaceId}.json`;
 
+/** A UTC calendar day, the unit the daily figures are kept in. */
+export const dayOf = (at: Date): string => at.toISOString().slice(0, 10);
+
 export async function readLedger(workspaceId: string): Promise<UsageLedger> {
-  return (await readDoc<UsageLedger>(key(workspaceId)))?.value ?? { hq: NO_USAGE, bots: {}, updatedAt: "" };
+  return (await readDoc<UsageLedger>(key(workspaceId)))?.value ?? EMPTY_LEDGER;
 }
 
-/** Adds one step's usage to HQ (`scope: "hq"`) or to a Bot by id. */
+/**
+ * One step, added to the ledger: to HQ (`scope: "hq"`) or to a Bot by id,
+ * and to the model and the day it ran on. Days older than `DAYS_KEPT` fall off
+ * as new ones are written.
+ */
+export function addToLedger(current: UsageLedger | null, scope: "hq" | { botId: string }, usage: Usage, at: Date = new Date()): UsageLedger {
+  const ledger = current ?? EMPTY_LEDGER;
+  const byModel: Record<string, Usage> = { ...ledger.byModel };
+  const modelNames = Object.keys(usage.models);
+  for (const model of modelNames.length === 0 ? [UNREPORTED_MODEL] : modelNames) byModel[model] = addUsage(byModel[model], usage);
+
+  const day = dayOf(at);
+  const oldest = dayOf(new Date(at.getTime() - DAYS_KEPT * 86_400_000));
+  const byDay: Record<string, Usage> = {};
+  for (const [kept, spent] of Object.entries(ledger.byDay ?? {})) if (kept >= oldest) byDay[kept] = spent;
+  byDay[day] = addUsage(byDay[day], usage);
+
+  return {
+    hq: scope === "hq" ? addUsage(ledger.hq, usage) : ledger.hq,
+    bots: scope === "hq" ? ledger.bots : { ...ledger.bots, [scope.botId]: addUsage(ledger.bots[scope.botId], usage) },
+    byModel,
+    byDay,
+    updatedAt: at.toISOString(),
+  };
+}
+
+/** Adds one step's usage to the workspace's ledger. */
 export async function recordUsage(workspaceId: string, scope: "hq" | { botId: string }, usage: Usage): Promise<void> {
-  await updateDoc<UsageLedger>(key(workspaceId), (current) => {
-    const ledger = current ?? { hq: NO_USAGE, bots: {}, updatedAt: "" };
-    return {
-      hq: scope === "hq" ? addUsage(ledger.hq, usage) : ledger.hq,
-      bots: scope === "hq" ? ledger.bots : { ...ledger.bots, [scope.botId]: addUsage(ledger.bots[scope.botId], usage) },
-      updatedAt: new Date().toISOString(),
-    };
-  });
+  await updateDoc<UsageLedger>(key(workspaceId), (current) => addToLedger(current, scope, usage));
 }
 
 export { describeUsage, modelsOf, tokens, usd } from "./usage-format";

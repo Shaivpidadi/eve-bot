@@ -13,6 +13,7 @@ import { DetailsPanel, type PanelView } from "./panel";
 import { PANEL_SLIDE_MS, PanelResizer, usePanelWidth } from "./panel-frame";
 import { ConnectorsDialog } from "./connectors-dialog";
 import { Sidebar } from "./sidebar";
+import { UsagePage } from "./usage-page";
 import type { Hover, Member } from "./types";
 import { useBoard } from "./use-board";
 
@@ -66,6 +67,8 @@ export function Console() {
   const [hiring, setHiring] = useState(false);
   const [connectorsOpen, setConnectorsOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  // The usage page is its own screen, and #usage in the address bar reopens it.
+  const [usageOpen, setUsageOpen] = useState(() => window.location.hash === "#usage");
   const [hover, setHover] = useState<Hover | null>(null);
   const [panelWidth, setPanelWidth] = usePanelWidth();
   const [resizing, setResizing] = useState(false);
@@ -117,6 +120,20 @@ export function Console() {
 
   const closeComputer = useCallback(() => setComputer(null), []);
 
+  const openUsage = useCallback(() => {
+    setUsageOpen(true);
+    if (window.location.hash !== "#usage") window.history.pushState(null, "", "#usage");
+  }, []);
+  const closeUsage = useCallback(() => {
+    setUsageOpen(false);
+    if (window.location.hash === "#usage") window.history.back();
+  }, []);
+  useEffect(() => {
+    const onHash = () => setUsageOpen(window.location.hash === "#usage");
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   const pending = members.reduce((count, entry) => count + entry.pending, 0);
   const needed = members.filter((entry) => entry.kind === "bot" && entry.computer.handover !== null);
   // Banners a person closed, by the request they were for: a later handover shows again.
@@ -165,6 +182,7 @@ export function Console() {
           onHire={() => setHiring(true)}
           onConnectors={() => setConnectorsOpen(true)}
           onMemory={() => setMemoryOpen(true)}
+          onUsage={openUsage}
           onHover={setHover}
           unread={unread}
           onUnread={markUnread}
@@ -255,6 +273,8 @@ export function Console() {
           onClose={closeComputer}
         />
       ) : null}
+
+      {usageOpen ? <UsagePage onClose={closeUsage} /> : null}
 
       <ConnectorsDialog open={connectorsOpen} onClose={() => setConnectorsOpen(false)} />
       <MemoryDialog open={memoryOpen} onClose={() => setMemoryOpen(false)} />

@@ -47,6 +47,7 @@ export function Sidebar({
   onHire,
   onConnectors,
   onMemory,
+  onUsage,
   onHover,
   onUnread,
   onChanged,
@@ -63,6 +64,7 @@ export function Sidebar({
   onHire: () => void;
   onConnectors: () => void;
   onMemory: () => void;
+  onUsage: () => void;
   onHover: (hover: Hover | null) => void;
   onUnread: (id: string, unread: boolean) => void;
   /** The roster changed on the server; re-read it. */
@@ -222,6 +224,10 @@ export function Sidebar({
         <button type="button" className="side-item" onClick={onMemory}>
           <Icon name="brain" />
           Memory
+        </button>
+        <button type="button" className="side-item" onClick={onUsage}>
+          <Icon name="chart" size={15} />
+          Usage
         </button>
         <div className="me">
           {profile?.avatarUrl ? (

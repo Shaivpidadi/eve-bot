@@ -119,10 +119,12 @@ on hover, for its menu: pin, move to a section, mark unread, clear chat,
 rename, edit profile, duplicate, copy conversation id, hide, delete. Pins,
 sections, and hiding are saved on the Bot; unread is yours alone.
 
-The panel on the right also shows what a thread has cost: which models it ran
-on, tokens in and out, cache reads, and the price the provider reported, kept
-for HQ and for each Bot over the workspace's life. Every finished job carries
-its own line in the feed. Off AI Gateway a provider reports no price, so set
+**Usage**, in the sidebar's footer, is a page of what the workspace has spent
+on models: the total, the last seven days, a bar per day for the last thirty,
+and tables by model, by who ran it (HQ and each Bot), and job by job, with
+tokens in and out, cache reads, and the price the provider reported. The
+thread panel repeats each member's own figures, and every finished job carries
+its line in the feed. Off AI Gateway a provider reports no price, so set
 `BOT_MODEL_PRICES` to see dollars instead of zeros.
 
 Behind Vercel Authentication the console shows who is signed in, with their

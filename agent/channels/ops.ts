@@ -35,6 +35,7 @@ import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/p
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
 import { getRoomState, noteAnswered, resetRoom, roomGeneration } from "../lib/roomstate";
 import { store } from "../lib/store";
+import { usageReport } from "../lib/usage-report";
 
 /**
  * The ops channel: how people and machines reach the team.
@@ -603,6 +604,13 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /** The recipes this team saved: briefs that worked, for HQ to reuse. */
+    /** What the workspace has spent on models: totals, by Bot, by model, by day, and by job. */
+    GET("/bot/v1/usage", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return json(await usageReport(gate.access.workspaceId));
+    }),
+
     GET("/bot/v1/recipes", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);

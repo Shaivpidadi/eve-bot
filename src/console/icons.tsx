@@ -7,6 +7,7 @@ const PATHS = {
     </>
   ),
   plug: <path d="M9 3v5M15 3v5M6.5 8h11v3.5a5.5 5.5 0 0 1-11 0ZM12 17v4" />,
+  chart: <path d="M4 20h16M7 16v-5M12 16V6M17 16v-8" />,
   monitor: (
     <>
       <rect x="3" y="4.5" width="18" height="12" rx="2" />
