@@ -1,11 +1,12 @@
 "use client";
 
 import type { InputRequest, InputResolution } from "eve/client";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
 import { AskCard } from "./ask-card";
 import { Avatar } from "./avatar";
 import { clock, dividerWhen, needsDivider } from "./format";
+import { api } from "./api";
 import { Icon } from "./icons";
 import { Prose } from "./prose";
 import type { RoomSnapshot, RoomStore, StepsItem, TimelineItem } from "./room-store";
@@ -116,15 +117,19 @@ export function Transcript({
       switch (item.kind) {
         case "you":
           rows.push(
-            <div key={item.key} className="msg you">
-              {item.text}
+            <div key={item.key} className="msg-wrap you">
+              <div className="msg you">{item.text}</div>
+              <RememberButton text={item.text} />
             </div>,
           );
           break;
         case "bot":
           rows.push(
-            <div key={item.key} className="msg bot">
-              <Prose text={item.text} />
+            <div key={item.key} className="msg-wrap bot">
+              <div className="msg bot">
+                <Prose text={item.text} />
+              </div>
+              <RememberButton text={item.text} />
             </div>,
           );
           break;
@@ -314,5 +319,35 @@ function EmptyChat({
         ) : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * Keeps one message as a memory about the person, by hand. Long messages are
+ * kept whole up to the store's limit; the Memory page is where to trim them.
+ */
+function RememberButton({ text }: { text: string }) {
+  const [state, setState] = useState<"idle" | "busy" | "done" | "failed">("idle");
+  if (text.trim() === "") return null;
+  return (
+    <button
+      type="button"
+      className="icon-btn msg-remember"
+      data-done={state === "done" ? "" : undefined}
+      aria-label={state === "done" ? "Remembered" : "Remember this"}
+      title={state === "done" ? "Remembered" : state === "failed" ? "Could not remember that" : "Remember this"}
+      disabled={state === "busy"}
+      onClick={async () => {
+        setState("busy");
+        try {
+          const response = await api("/bot/v1/memory/profile", { method: "POST", body: JSON.stringify({ text: text.slice(0, 500) }) });
+          setState(response.ok || response.status === 409 ? "done" : "failed");
+        } catch {
+          setState("failed");
+        }
+      }}
+    >
+      <Icon name={state === "done" ? "check" : "brain"} size={13} />
+    </button>
   );
 }

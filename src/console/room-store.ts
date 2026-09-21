@@ -604,9 +604,10 @@ export function buildTimeline(
     if (member.clearedAt !== null && event.at < member.clearedAt) continue;
     const relevant =
       member.kind === "bot"
-        ? event.botId === member.id && event.kind.startsWith("job.")
+        ? event.botId === member.id && (event.kind.startsWith("job.") || event.kind === "memory.saved")
         : event.kind === "bot.hired" ||
           event.kind === "bot.retired" ||
+          (event.kind === "memory.saved" && event.botId === null) ||
           event.kind.startsWith("computer.") ||
           ((event.kind === "job.done" || event.kind === "job.failed") && !relayedNear(event.at));
     if (relevant) entries.push({ at: event.at, event });
@@ -625,7 +626,12 @@ export function buildTimeline(
       // job's close when HQ did not relay it.
       const computer = event.kind.startsWith("computer.");
       const close = event.kind === "job.done" || event.kind === "job.failed";
+      const remembered = event.kind === "memory.saved";
       const cut = event.text.indexOf(": ");
+      if (remembered) {
+        out.push({ kind: "notice", key: event.id, at: event.at, icon: "brain", label: "Remembered", detail: event.text.slice(cut + 2) });
+        continue;
+      }
       out.push({
         kind: "notice",
         key: event.id,

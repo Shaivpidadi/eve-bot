@@ -157,6 +157,7 @@ export type ActivityKind =
   | "job.failed"
   | "job.cancelled"
   | "job.learned"
+  | "memory.saved"
   | "input.requested"
   | "computer.restored"
   | "computer.failed"

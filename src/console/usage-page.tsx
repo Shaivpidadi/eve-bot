@@ -14,6 +14,7 @@ interface Report {
   readonly total: UsageLike;
   readonly hq: UsageLike;
   readonly jev: UsageLike;
+  readonly memory: UsageLike;
   readonly account: { readonly balanceUsd: number; readonly totalUsedUsd: number; readonly at: string } | null;
   readonly bots: readonly (Line & { readonly botId: string; readonly name: string; readonly emoji: string | null; readonly retired: boolean })[];
   readonly models: readonly (Line & { readonly model: string })[];
@@ -230,6 +231,19 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
                       <td>
                         {usd(report.jev.costUsd)}
                         <small> · {share(report.jev.costUsd, report.total.costUsd)}</small>
+                      </td>
+                    </tr>
+                  )}
+                  {report.memory.steps === 0 ? null : (
+                    <tr>
+                      <td className="usage-name">
+                        Memory <small>reading exchanges to remember</small>
+                      </td>
+                      <td>{report.memory.steps}</td>
+                      <td>{tokens(report.memory.inputTokens + report.memory.outputTokens)}</td>
+                      <td>
+                        {usd(report.memory.costUsd)}
+                        <small> · {share(report.memory.costUsd, report.total.costUsd)}</small>
                       </td>
                     </tr>
                   )}

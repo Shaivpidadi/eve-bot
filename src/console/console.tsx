@@ -8,7 +8,7 @@ import { ComputerView } from "./computer/computer-view";
 import { PRESENCE_LABEL } from "./format";
 import { HireDialog } from "./hire-dialog";
 import { Icon } from "./icons";
-import { MemoryDialog } from "./memory-dialog";
+import { MemoryPage } from "./memory-page";
 import { DetailsPanel, type PanelView } from "./panel";
 import { PANEL_SLIDE_MS, PanelResizer, usePanelWidth } from "./panel-frame";
 import { ConnectorsDialog } from "./connectors-dialog";
@@ -55,6 +55,12 @@ function computerFor(member: Member, members: readonly Member[]): Member {
  * Bots on the left, the selected thread in the middle, and the team's computer
  * with that Bot's routines and files on the right.
  */
+/** Which full-page screen the address bar names, if any. */
+function pageInHash(): "usage" | "memory" | null {
+  const hash = window.location.hash;
+  return hash === "#usage" ? "usage" : hash === "#memory" ? "memory" : null;
+}
+
 export function Console() {
   const { board, online, refresh } = useBoard();
   const [selectedId, setSelectedId] = useState(() => read("bot.selected") ?? HQ_ID);
@@ -66,9 +72,8 @@ export function Console() {
   const [computer, setComputer] = useState<{ botId: string; requestId: string | null } | null>(null);
   const [hiring, setHiring] = useState(false);
   const [connectorsOpen, setConnectorsOpen] = useState(false);
-  const [memoryOpen, setMemoryOpen] = useState(false);
-  // The usage page is its own screen, and #usage in the address bar reopens it.
-  const [usageOpen, setUsageOpen] = useState(() => window.location.hash === "#usage");
+  // Usage and Memory are their own screens; #usage or #memory in the address bar reopens one.
+  const [page, setPage] = useState<"usage" | "memory" | null>(() => pageInHash());
   const [hover, setHover] = useState<Hover | null>(null);
   const [panelWidth, setPanelWidth] = usePanelWidth();
   const [resizing, setResizing] = useState(false);
@@ -120,16 +125,16 @@ export function Console() {
 
   const closeComputer = useCallback(() => setComputer(null), []);
 
-  const openUsage = useCallback(() => {
-    setUsageOpen(true);
-    if (window.location.hash !== "#usage") window.history.pushState(null, "", "#usage");
+  const openPage = useCallback((next: "usage" | "memory") => {
+    setPage(next);
+    if (window.location.hash !== `#${next}`) window.history.pushState(null, "", `#${next}`);
   }, []);
-  const closeUsage = useCallback(() => {
-    setUsageOpen(false);
-    if (window.location.hash === "#usage") window.history.back();
+  const closePage = useCallback(() => {
+    setPage(null);
+    if (pageInHash() !== null) window.history.back();
   }, []);
   useEffect(() => {
-    const onHash = () => setUsageOpen(window.location.hash === "#usage");
+    const onHash = () => setPage(pageInHash());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -181,8 +186,8 @@ export function Console() {
           onSelect={select}
           onHire={() => setHiring(true)}
           onConnectors={() => setConnectorsOpen(true)}
-          onMemory={() => setMemoryOpen(true)}
-          onUsage={openUsage}
+          onMemory={() => openPage("memory")}
+          onUsage={() => openPage("usage")}
           onHover={setHover}
           unread={unread}
           onUnread={markUnread}
@@ -274,10 +279,10 @@ export function Console() {
         />
       ) : null}
 
-      {usageOpen ? <UsagePage onClose={closeUsage} /> : null}
+      {page === "usage" ? <UsagePage onClose={closePage} /> : null}
+      {page === "memory" ? <MemoryPage onClose={closePage} /> : null}
 
       <ConnectorsDialog open={connectorsOpen} onClose={() => setConnectorsOpen(false)} />
-      <MemoryDialog open={memoryOpen} onClose={() => setMemoryOpen(false)} />
 
       <HireDialog
         open={hiring}

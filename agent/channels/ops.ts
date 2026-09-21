@@ -20,7 +20,7 @@ import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScree
 import { cancelJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
-import { addMemory, forgetMemory, isMemorySlot, readMemory } from "../lib/memory";
+import { forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, remember, rewrite as rewriteMemory, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
 import { CATALOG } from "../lib/catalog";
 import {
   addConnector,
@@ -572,34 +572,80 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
     /** The still frame of a Bot's screen. Never wakes the computer. */
     /**
-     * What HQ and the Bots remember for the caller: their own memories and the
-     * workspace's. Whose memory it is comes from the session, never the path.
+     * Everything the team remembers: the workspace's three slots, with where
+     * each memory came from, and each Bot's playbook. Whose memory it is comes
+     * from the session, never the path.
      */
     GET("/bot/v1/memory", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      return json({ slots: await readMemory(gate.access.workspaceId, gate.access.user) });
+      const [slots, bots] = await Promise.all([
+        Promise.all(
+          MEMORY_SLOTS.map(async (slot) => ({
+            slot,
+            label: MEMORY_SLOT_COPY[slot].label,
+            detail: MEMORY_SLOT_COPY[slot].detail,
+            maxEntries: MEMORY_SLOT_COPY[slot].maxEntries,
+            entries: await readEntries(gate.access.workspaceId, slot),
+          })),
+        ),
+        listBots(gate.access.workspaceId),
+      ]);
+      return json({
+        slots,
+        playbooks: bots.map((bot) => ({ botId: bot.id, name: bot.name, emoji: bot.emoji, playbook: bot.playbook })),
+      });
     }),
 
-    /** Adds one memory by hand, as if HQ or a Bot had saved it. */
+    /** Remembers one thing by hand, as the person. */
     POST("/bot/v1/memory/:slot", async (request, { params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const slot = params.slot ?? "";
       if (!isMemorySlot(slot)) return json({ error: "no such memory" }, 404);
       const body = await readJson(request);
-      const outcome = await addMemory(gate.access.workspaceId, gate.access.user, slot, typeof body?.text === "string" ? body.text : "");
-      return outcome.ok ? json({ saved: true }, 201) : json({ error: outcome.error }, outcome.status);
+      const kind = isMemoryKind(body?.kind) ? body.kind : slot === "craft" ? "lesson" : "fact";
+      const outcome = await remember(
+        gate.access.workspaceId,
+        slot,
+        [{ text: typeof body?.text === "string" ? body.text : "", kind }],
+        { who: "you", name: gate.access.profile.name },
+        { pinned: body?.pinned === true },
+      );
+      const entry = outcome.added[0];
+      if (entry !== undefined) return json({ saved: true, entry }, 201);
+      if (outcome.duplicates > 0) return json({ error: "Already remembered." }, 409);
+      if (outcome.refused > 0) return json({ error: "This memory is full. Forget something first." }, 409);
+      return json({ error: "That cannot be remembered: it is empty, too long, or looks like a secret." }, 400);
     }),
 
-    /** Forgets one memory by the index it was saved under. */
-    DELETE("/bot/v1/memory/:slot/:index", async (request, { params }) => {
+    /** Pins, unpins, or rewrites one memory. */
+    PATCH("/bot/v1/memory/:slot/:id", async (request, { params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const slot = params.slot ?? "";
-      const index = Number(params.index);
-      if (!isMemorySlot(slot) || !Number.isSafeInteger(index) || index < 0) return json({ error: "no such memory" }, 404);
-      const outcome = await forgetMemory(gate.access.workspaceId, gate.access.user, slot, index);
+      const id = params.id ?? "";
+      if (!isMemorySlot(slot) || id === "") return json({ error: "no such memory" }, 404);
+      const body = await readJson(request);
+      if (typeof body?.text === "string") {
+        const outcome = await rewriteMemory(gate.access.workspaceId, slot, id, body.text);
+        if (!outcome.ok) return json({ error: outcome.error }, outcome.status);
+      }
+      if (typeof body?.pinned === "boolean") {
+        const outcome = await pinMemory(gate.access.workspaceId, slot, id, body.pinned);
+        if (!outcome.ok) return json({ error: outcome.error }, outcome.status);
+      }
+      return json({ changed: true });
+    }),
+
+    /** Forgets one memory. */
+    DELETE("/bot/v1/memory/:slot/:id", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const slot = params.slot ?? "";
+      const id = params.id ?? "";
+      if (!isMemorySlot(slot) || id === "") return json({ error: "no such memory" }, 404);
+      const outcome = await forgetMemory(gate.access.workspaceId, slot, id);
       return outcome.ok ? json({ forgotten: true }) : json({ error: outcome.error }, outcome.status);
     }),
 

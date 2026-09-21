@@ -64,6 +64,8 @@ export interface UsageLedger {
   readonly bots: Readonly<Record<string, Usage>>;
   /** Jev's second opinions, which are Gateway calls but not steps of any session. Absent on older ledgers. */
   readonly jev?: Usage;
+  /** The quick model reading exchanges for memories to keep. Absent on older ledgers. */
+  readonly memory?: Usage;
   /** The same spend, by the model that ran the step. Absent on ledgers written before it was kept. */
   readonly byModel?: Readonly<Record<string, Usage>>;
   /** The same spend, by UTC day (`YYYY-MM-DD`), for the last `DAYS_KEPT` days. */
@@ -74,7 +76,7 @@ export interface UsageLedger {
 export const EMPTY_LEDGER: UsageLedger = { hq: NO_USAGE, bots: {}, jev: NO_USAGE, byModel: {}, byDay: {}, updatedAt: "" };
 
 /** Who spent it: HQ's own turns, Jev's judgements, or a Bot by id. */
-export type UsageScope = "hq" | "jev" | { readonly botId: string };
+export type UsageScope = "hq" | "jev" | "memory" | { readonly botId: string };
 
 /** How many days of daily figures the ledger keeps; the all-time totals never expire. */
 export const DAYS_KEPT = 90;
@@ -111,6 +113,7 @@ export function addToLedger(current: UsageLedger | null, scope: UsageScope, usag
   return {
     hq: scope === "hq" ? addUsage(ledger.hq, usage) : ledger.hq,
     jev: scope === "jev" ? addUsage(ledger.jev, usage) : (ledger.jev ?? NO_USAGE),
+    memory: scope === "memory" ? addUsage(ledger.memory, usage) : (ledger.memory ?? NO_USAGE),
     bots: typeof scope === "string" ? ledger.bots : { ...ledger.bots, [scope.botId]: addUsage(ledger.bots[scope.botId], usage) },
     byModel,
     byDay,
@@ -120,7 +123,7 @@ export function addToLedger(current: UsageLedger | null, scope: UsageScope, usag
 
 /** Everything on the ledger added up: HQ, every Bot, and Jev. */
 export const ledgerTotal = (ledger: UsageLedger): Usage =>
-  Object.values(ledger.bots).reduce((sum, usage) => addUsage(sum, usage), addUsage(ledger.hq, ledger.jev ?? NO_USAGE));
+  Object.values(ledger.bots).reduce((sum, usage) => addUsage(sum, usage), addUsage(addUsage(ledger.hq, ledger.jev ?? NO_USAGE), ledger.memory ?? NO_USAGE));
 
 /** Adds one step's usage to the workspace's ledger. */
 export async function recordUsage(workspaceId: string, scope: UsageScope, usage: Usage): Promise<void> {

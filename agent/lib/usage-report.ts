@@ -14,6 +14,8 @@ export interface UsageReport {
   readonly hq: Usage;
   /** Jev's judgements: Gateway calls that belong to no session, so they are their own line. */
   readonly jev: Usage;
+  /** The quick model reading exchanges for memories to keep. */
+  readonly memory: Usage;
   /** What Gateway says the whole account has spent, when a key is set and Gateway answers. */
   readonly account: GatewayAccount | null;
   /** Each Bot that has spent anything, biggest spender first. Retired Bots keep their line. */
@@ -63,6 +65,7 @@ export async function usageReport(workspaceId: string, options: { days?: number;
     total: ledgerTotal(ledger),
     hq: ledger.hq,
     jev: ledger.jev ?? NO_USAGE,
+    memory: ledger.memory ?? NO_USAGE,
     account,
     bots: Object.entries(ledger.bots)
       .map(([botId, usage]) => ({ botId, ...nameOf(botId), usage }))

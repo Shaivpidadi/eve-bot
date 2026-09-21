@@ -631,7 +631,6 @@ dialog.routine-dialog { width: min(440px, calc(100vw - 32px)); }
 .connector-tools code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .connector-tools select { font-size: 11px; padding: 2px 4px; }
 .connector-custom { align-self: flex-start; }
-dialog.memory-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; }
 dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
 .memory-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .memory-list li { display: flex; align-items: flex-start; gap: 8px; padding: 5px 4px 5px 8px; border-radius: 8px; font-size: 12.5px; }
@@ -839,3 +838,35 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
   .usage-card b { font-size: 20px; }
   .usage-chart { height: 100px; }
 }
+
+/* ------------------------------------------------------------ memory page */
+
+.memory-search { flex: 1; max-width: 420px; margin: 0 8px; }
+.memory-intro { margin: 0; }
+.memory-slot h2 small { font-weight: 400; }
+.memory-entries { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line-2); border-radius: 12px; background: var(--card); }
+.memory-entries li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.memory-entries li:last-child { border-bottom: 0; }
+.memory-entries li.pinned { background: color-mix(in srgb, var(--purple) 6%, var(--card)); }
+.memory-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.memory-text small { font-size: 11.5px; }
+.memory-pin { color: var(--purple); margin-right: 5px; vertical-align: -1px; }
+.memory-actions { display: flex; gap: 2px; flex: none; opacity: 0.55; }
+.memory-entries li:hover .memory-actions, .memory-entries li:focus-within .memory-actions { opacity: 1; }
+.memory-add, .memory-edit { display: flex; gap: 8px; }
+.memory-edit { flex: 1; }
+.memory-add input, .memory-edit input {
+  flex: 1; min-width: 0; padding: 7px 10px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--field); color: var(--text); font: inherit; font-size: 13px;
+}
+.memory-add input:focus, .memory-edit input:focus { outline: 2px solid var(--purple); outline-offset: -1px; }
+.memory-playbooks { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.memory-playbook { padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--card); font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+.memory-playbook ul { margin: 0; padding-left: 18px; color: var(--muted); }
+.memory-playbook li { margin: 2px 0; }
+.msg-wrap { display: flex; align-items: center; gap: 4px; max-width: 100%; }
+.msg-wrap.you { align-self: flex-end; flex-direction: row-reverse; }
+.msg-wrap.bot { align-self: flex-start; }
+.msg-wrap .msg { max-width: min(72vw, 560px); }
+.msg-remember { opacity: 0; transition: opacity 0.15s; flex: none; }
+.msg-wrap:hover .msg-remember, .msg-wrap:focus-within .msg-remember, .msg-remember[data-done] { opacity: 1; }
+.msg-remember[data-done] { color: var(--purple); }

@@ -105,8 +105,12 @@ tools.
   a day for your sign-off. A daily watchdog re-dispatches anything stranded.
 - **Approvals.** Sending email, retiring a Bot, and any connector tool that
   changes something stop for a person first.
-- **Memory.** Per-person, per-workspace, and per-craft memory, plus each Bot's
-  playbook. Open **Memory** in the console to see and edit it.
+- **Memory.** The team remembers on its own. After each exchange with HQ, and
+  after each job, Jev judges whether anything said is worth keeping, a quick
+  model phrases it, and it lands in one of three shared slots: about you, your
+  team, how to do your work. HQ and every Bot recall what is relevant on each
+  turn. Open **Memory** in the console to search it, pin what should always be
+  recalled, correct it, or forget it. Each Bot also keeps a playbook.
 - **Connectors.** Add GitHub or a documentation source by name, or any MCP
   server by address, once, and every Bot can use it. Tools that change
   something ask first.
@@ -174,6 +178,7 @@ of it; these are the ones that matter.
 | `BOT_SEARCH_PROVIDER` / `BOT_SEARCH_URL` / `BOT_SEARCH_API_KEY` | web search on your own endpoint: `searxng`, `brave`, `tavily`, `exa` |
 | `BOT_MODEL_PRICES` | `model=in/out` USD per million tokens, so spend caps hold off Gateway; OpenRouter is read automatically |
 | `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`) |
+| `BOT_MEMORY_FLOOR` | how sure Jev must be before something is remembered (`0`–`1`; defaults to `BOT_JEV_CONFIDENCE`) |
 | `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console passwords, each bound to a workspace |
 | `BOT_PUBLIC_URL` | the front door's public origin for canonical URLs and the sitemap; Vercel supplies its own |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
