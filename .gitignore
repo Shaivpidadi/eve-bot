@@ -17,3 +17,4 @@ certificates
 
 # QA runs
 .qa/
+.vid
