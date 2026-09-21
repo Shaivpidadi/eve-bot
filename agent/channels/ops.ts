@@ -15,15 +15,7 @@ import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
 import { forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, remember, rewrite as rewriteMemory, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
 import { CATALOG } from "../lib/catalog";
-import {
-  addConnector,
-  getConnector,
-  listConnectors,
-  publicConnector,
-  recheckConnector,
-  removeConnector,
-  updateConnector,
-} from "../lib/connectors";
+import { addConnector, getConnector, listConnectors, publicConnector, recheckConnector, removeConnector, replaceKey, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
 import { getRoomState, noteAnswered, resetRoom, roomGeneration } from "../lib/roomstate";
@@ -68,6 +60,14 @@ const POLICY_TOOLS = 200;
  * Only "read" and "write" are accepted, and only for plausible tool names, so
  * a typo cannot quietly become a third kind of permission nothing checks.
  */
+/** `{ toolName: true | false }`, or null when the body carries nothing usable. */
+function toolsPatch(value: unknown): Record<string, boolean> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const out: Record<string, boolean> = {};
+  for (const [tool, on] of Object.entries(value as Record<string, unknown>)) if (typeof on === "boolean" && tool.trim() !== "") out[tool] = on;
+  return Object.keys(out).length === 0 ? null : out;
+}
+
 function policyPatch(value: unknown): Record<string, "read" | "write"> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const patch: Record<string, "read" | "write"> = {};
@@ -757,8 +757,22 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         ...(body?.gate === "none" || body?.gate === "writes" || body?.gate === "all" ? { gate: body.gate } : {}),
         ...(typeof body?.description === "string" ? { description: body.description } : {}),
         ...(policyPatch(body?.policy) === null ? {} : { policy: policyPatch(body?.policy) as Record<string, "read" | "write"> }),
+        ...(toolsPatch(body?.tools) === null ? {} : { tools: toolsPatch(body?.tools) as Record<string, boolean> }),
       });
       return updated === null ? json({ error: "no such connector" }, 404) : json({ connector: publicConnector(updated) });
+    }),
+
+    /** Swaps the connector's key, once the server has accepted the new one. */
+    POST("/bot/v1/connectors/:connectorId/key", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const replaced = await replaceKey(gate.access.workspaceId, params.connectorId ?? "", {
+        ...(body?.kind === "bearer" || body?.kind === "header" || body?.kind === "none" ? { kind: body.kind } : {}),
+        ...(typeof body?.header === "string" ? { header: body.header } : {}),
+        secret: typeof body?.secret === "string" ? body.secret : "",
+      });
+      return replaced.ok ? json({ connector: publicConnector(replaced.connector) }) : json({ error: replaced.error }, replaced.error === "no such connector" ? 404 : 422);
     }),
 
     DELETE("/bot/v1/connectors/:connectorId", async (request, { params }) => {

@@ -112,7 +112,9 @@ tools.
   turn. Open **Memory** in the console to search it, pin what should always be
   recalled, correct it, or forget it. Each Bot also keeps a playbook.
 - **Connectors.** Add GitHub or a documentation source by name, or any MCP
-  server by address, once, and every Bot can use it. Tools that change
+  server by address, once, and every Bot can use it. Each connector has its
+  own page: its account and key, every tool with a switch and a read-or-change
+  tag, when a person is asked first, and the facts about it. Tools that change
   something ask first.
 
 ## The console

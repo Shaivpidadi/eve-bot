@@ -2,7 +2,7 @@ import { defineDynamic, defineMcpClientConnection } from "eve/connections";
 import { once } from "eve/tools/approval";
 
 import { effectOf } from "../../../lib/catalog";
-import { connectorHeaders, listConnectors } from "../../../lib/connectors";
+import { allowedTools, connectorHeaders, listConnectors } from "../../../lib/connectors";
 import { operator } from "../../../lib/session";
 
 /**
@@ -26,6 +26,8 @@ export default defineDynamic({
 
       const entries = await Promise.all(
         connectors.map(async (connector) => {
+          const allow = allowedTools(connector);
+          if (allow.length === 0) return null;
           const headers = await connectorHeaders(connector);
           return [
             connector.name,
@@ -33,6 +35,8 @@ export default defineDynamic({
               url: connector.url,
               description: connector.description,
               instanceKey: connector.id,
+              // Only the tools the operator left on; a server that grew new tools offers them after the next check.
+              ...((connector.disabledTools ?? []).length === 0 ? {} : { tools: { allow } }),
               ...(Object.keys(headers).length === 0
                 ? {}
                 : { headers: Object.fromEntries(Object.entries(headers).map(([name, value]) => [name, () => value])) }),
@@ -48,7 +52,8 @@ export default defineDynamic({
           ] as const;
         }),
       );
-      return Object.fromEntries(entries);
+      const present = entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+      return present.length === 0 ? null : Object.fromEntries(present);
     },
   },
 });
