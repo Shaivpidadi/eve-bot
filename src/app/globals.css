@@ -363,7 +363,10 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .panel { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .panel-head { height: 44px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--line); }
 .panel-head .spacer { flex: 1; }
-.panel-body { flex: 1; overflow-y: auto; padding: 12px; }
+/* The team's computer stays in view; routines, usage and files scroll beneath it. */
+.panel-pinned { flex: none; padding: 12px 12px 0; border-bottom: 1px solid var(--line); }
+.panel-pinned .screen-caption { margin-bottom: 12px; }
+.panel-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
 /* The panel slides open and closed by animating its slot's width: grid columns sized in fr do not
    animate. PANEL_SLIDE_MS in panel-frame.tsx matches. The panel keeps its own width and is clipped
    by the slot, so it slides rather than squeezes. */

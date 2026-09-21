@@ -37,7 +37,10 @@ function UsageSection({ member }: { member: Member }) {
             <b>
               {tokens(usage.inputTokens)} in · {tokens(usage.outputTokens)} out
             </b>
-            <span>{usage.cacheReadTokens > 0 ? `${tokens(usage.cacheReadTokens)} read from cache` : "no cache reads"}</span>
+            <span>
+              {usage.cacheReadTokens > 0 ? `${tokens(usage.cacheReadTokens)} read from cache` : "no cache reads"}
+              {(usage.cacheWriteTokens ?? 0) > 0 ? ` · ${tokens(usage.cacheWriteTokens ?? 0)} written` : ""}
+            </span>
           </div>
         </li>
         <li>
@@ -151,13 +154,18 @@ export function DetailsPanel({
           <Icon name="x" />
         </button>
       </div>
+      {settings ? null : (
+        <div className="panel-pinned">
+          <ScreenPreview member={member} members={members} onTakeover={onTakeover} />
+        </div>
+      )}
       <div className="panel-body">
         {member.kind === "hq" ? (
-          <HqPanel member={member} members={members} onTakeover={onTakeover} onSelect={onSelect} onHover={onHover} />
+          <HqPanel member={member} members={members} onSelect={onSelect} onHover={onHover} />
         ) : settings ? (
           <SettingsPanel key={member.id} member={member} onChanged={onChanged} editRequest={editRequest} />
         ) : (
-          <BotPanel member={member} members={members} onTakeover={onTakeover} onChanged={onChanged} />
+          <BotPanel member={member} members={members} onChanged={onChanged} />
         )}
       </div>
     </aside>
@@ -222,12 +230,10 @@ function ScreenPreview({
 function BotPanel({
   member,
   members,
-  onTakeover,
   onChanged,
 }: {
   member: Member;
   members: readonly Member[];
-  onTakeover: () => void;
   onChanged: () => Promise<void>;
 }) {
   const paused = member.status === "paused";
@@ -235,8 +241,6 @@ function BotPanel({
 
   return (
     <>
-      <ScreenPreview member={member} members={members} onTakeover={onTakeover} />
-
       <div className="section">
         <h3>Routines</h3>
         <ul className="list">
@@ -449,13 +453,11 @@ function SettingsPanel({
 function HqPanel({
   member,
   members,
-  onTakeover,
   onSelect,
   onHover,
 }: {
   member: Member;
   members: readonly Member[];
-  onTakeover: () => void;
   onSelect: (id: string) => void;
   onHover: (hover: Hover | null) => void;
 }) {
@@ -464,8 +466,6 @@ function HqPanel({
 
   return (
     <>
-      <ScreenPreview member={member} members={members} onTakeover={onTakeover} />
-
       <div className="section">
         <h3>Team</h3>
         <ul className="list">
