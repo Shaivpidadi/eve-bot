@@ -132,8 +132,9 @@ its line in the feed. Off AI Gateway a provider reports no price, so set
 `BOT_MODEL_PRICES` to see dollars instead of zeros.
 
 Behind Vercel Authentication the console shows who is signed in, with their
-Vercel name and picture. Elsewhere it shows the name in `X-Bot-User`, or
-"operator".
+Vercel name and picture. Elsewhere it shows the name in `X-Bot-User`, or the
+name you set by clicking the footer of the sidebar; HQ and the Bots use that
+name too.
 
 Opening the console from another device over plain http puts the browser in
 an insecure context, and the live screen will not connect. Use

@@ -12,7 +12,7 @@ export interface BoardResponse extends Board {
 export interface Profile {
   readonly name: string;
   readonly avatarUrl: string | null;
-  readonly source: "header" | "vercel" | "none";
+  readonly source: "header" | "vercel" | "workspace" | "none";
 }
 
 /** An avatar the pointer is over, and where to anchor its card. */

@@ -11,6 +11,7 @@ describe("authenticate", () => {
     vi.stubEnv("BOT_CONSOLE_TOKENS", "");
     vi.stubEnv("BOT_CONSOLE_OPEN", "");
     vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("BOT_STORE", "memory");
   });
 
   it("binds each token to one workspace, from a header or the console's cookie", async () => {
@@ -100,5 +101,25 @@ describe("profile", () => {
     // A damaged cookie is nobody, not an error.
     expect(profile(request({ cookie: "_vercel_jwt=not.a.jwt" }))).toEqual({ name: "operator", avatarUrl: null, source: "none" });
     expect(profile(request({ cookie: "_vercel_jwt=abc" }))).toEqual({ name: "operator", avatarUrl: null, source: "none" });
+  });
+});
+
+/** A name set in the console stands in when nothing signs the person in by name. */
+describe("stored name", () => {
+  it("shows once set, yields to a header or Vercel, and clears with an empty name", async () => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+    vi.stubEnv("VERCEL", "");
+    vi.stubEnv("BOT_CONSOLE_TOKEN", "");
+    vi.stubEnv("BOT_CONSOLE_TOKENS", "");
+    vi.stubEnv("NODE_ENV", "test");
+    const { authenticate, setStoredName, storedName } = await import("../agent/lib/access");
+    expect(await storedName("default")).toBeNull();
+    expect(await setStoredName("default", "  Shaishav   Pidadi ")).toBe("Shaishav Pidadi");
+    expect(await authenticate(request())).toMatchObject({ ok: true, access: { user: "operator", profile: { name: "Shaishav Pidadi", source: "workspace" } } });
+    expect(await authenticate(request({ "x-bot-user": "ann@acme.test" }))).toMatchObject({ ok: true, access: { profile: { name: "ann@acme.test", source: "header" } } });
+    expect(await authenticate(request({ "x-bot-workspace": "team-b" }))).toMatchObject({ ok: true, access: { profile: { source: "none" } } });
+    expect(await setStoredName("default", "   ")).toBeNull();
+    expect(await authenticate(request())).toMatchObject({ ok: true, access: { profile: { name: "operator", source: "none" } } });
   });
 });

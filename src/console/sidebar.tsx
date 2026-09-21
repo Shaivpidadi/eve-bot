@@ -72,6 +72,7 @@ export function Sidebar({
   /** Open this Bot's profile for editing in the details panel. */
   onEditProfile: (id: string) => void;
 }) {
+  const [editingName, setEditingName] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [theme, toggleTheme] = useTheme();
   const [menu, setMenu] = useState<Menu | null>(null);
@@ -236,9 +237,53 @@ export function Sidebar({
           ) : (
             <span className="me-avatar">{(profile?.name ?? user ?? "You").charAt(0).toUpperCase()}</span>
           )}
-          <span className="me-name" title={profile?.source === "vercel" ? "Signed in with Vercel" : undefined}>
-            {profile?.name ?? user ?? "You"} <span className="me-ws">{workspaceId}</span>
-          </span>
+          {editingName !== null ? (
+            <form
+              className="me-name-form"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                try {
+                  await api("/bot/v1/profile", { method: "PATCH", body: JSON.stringify({ name: editingName }) });
+                  await onChanged();
+                } catch {
+                  // The sidebar keeps its old name; the next refresh tells the truth.
+                }
+                setEditingName(null);
+              }}
+            >
+              <input
+                value={editingName}
+                onChange={(event) => setEditingName(event.target.value)}
+                onBlur={() => setEditingName(null)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setEditingName(null);
+                }}
+                placeholder="Your name"
+                maxLength={80}
+                aria-label="Your name"
+                autoFocus
+              />
+            </form>
+          ) : (
+            <button
+              type="button"
+              className="me-name"
+              title={
+                profile?.source === "vercel"
+                  ? "Signed in with Vercel"
+                  : profile?.source === "header"
+                    ? "Named by the caller"
+                    : profile?.source === "workspace"
+                      ? "Click to change your name"
+                      : "Click to tell the team your name"
+              }
+              disabled={profile?.source === "vercel" || profile?.source === "header"}
+              onClick={() => setEditingName(profile?.source === "workspace" ? (profile.name ?? "") : "")}
+            >
+              {profile === undefined || profile === null || profile.source === "none" ? "Set your name" : profile.name}
+              {workspaceId === "default" ? null : <span className="me-ws"> {workspaceId}</span>}
+            </button>
+          )}
           <button
             type="button"
             className="icon-btn"

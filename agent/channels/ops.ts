@@ -2,14 +2,7 @@ import { DELETE, GET, PATCH, POST, defineChannel } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
 
-import {
-  authenticate,
-  sessionCookie,
-  tokensConfigured,
-  workspaceForToken,
-  type Access,
-  type Gate,
-} from "../lib/access";
+import { authenticate, sessionCookie, setStoredName, tokensConfigured, type Access, type Gate, workspaceForToken } from "../lib/access";
 import { record } from "../lib/activity";
 import { readArtifact } from "../lib/artifacts";
 import { buildBoard } from "../lib/board";
@@ -91,7 +84,7 @@ const seeOther = (location: string, headers: Record<string, string> = {}) =>
 
 function principal(access: Access, room: string): SessionAuthContext {
   return {
-    attributes: roomAttributes(access.workspaceId, room),
+    attributes: { ...roomAttributes(access.workspaceId, room), ...(access.profile.source === "none" ? {} : { name: access.profile.name }) },
     authenticator: "bot-console",
     principalId: access.user,
     principalType: "user",
@@ -571,6 +564,18 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     // desktop people can watch and take over; Files move things on and off the computer.
 
     /** The still frame of a Bot's screen. Never wakes the computer. */
+    /** What the console calls the person in this workspace, when nothing signs them in by name. */
+    PATCH("/bot/v1/profile", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (gate.access.profile.source === "vercel" || gate.access.profile.source === "header") {
+        return json({ error: "Your name comes from your sign-in here." }, 409);
+      }
+      const body = await readJson(request);
+      const name = await setStoredName(gate.access.workspaceId, typeof body?.name === "string" ? body.name : "");
+      return json({ profile: name === null ? { name: "operator", avatarUrl: null, source: "none" } : { name, avatarUrl: null, source: "workspace" } });
+    }),
+
     /**
      * Everything the team remembers: the workspace's three slots, with where
      * each memory came from, and each Bot's playbook. Whose memory it is comes

@@ -170,7 +170,14 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
   width: 20px; height: 20px; border-radius: 50%; flex: none; display: grid; place-items: center;
   background: linear-gradient(135deg, #c9a37c, #7d5a44); color: #fff; font-size: 10px; font-weight: 600;
 }
-.me-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;
+  border: 0; background: none; color: inherit; font: inherit; padding: 2px 4px; margin: -2px -4px; border-radius: 6px; cursor: pointer;
+}
+.me-name:hover:not(:disabled) { background: var(--hover); }
+.me-name:disabled { cursor: default; }
+.me-name-form { flex: 1; min-width: 0; }
+.me-name-form input { width: 100%; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line-2); background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; }
 .me-ws { color: var(--faint); font-size: 11px; }
 .me form { margin: 0; }
 .me-photo { object-fit: cover; background: var(--field); }
