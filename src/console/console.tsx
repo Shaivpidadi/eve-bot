@@ -159,6 +159,7 @@ export function Console() {
           members={members}
           selectedId={member.id}
           user={board.user}
+          profile={board.profile}
           workspaceId={board.workspaceId}
           onSelect={select}
           onHire={() => setHiring(true)}

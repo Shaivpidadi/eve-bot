@@ -185,7 +185,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const board = await buildBoard(gate.access.workspaceId, {
         ...(after !== null && !Number.isNaN(Date.parse(after)) ? { after } : {}),
       });
-      return json({ ...board, user: gate.access.user });
+      return json({ ...board, user: gate.access.user, profile: gate.access.profile });
     }),
 
     POST("/bot/v1/rooms/:room/messages", async (request, { from, params }) => {

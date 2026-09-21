@@ -6,6 +6,13 @@ export type { ActivityEvent, Board, FileRef, Member, Presence, Routine };
 
 export interface BoardResponse extends Board {
   readonly user: string;
+  readonly profile?: Profile;
+}
+
+export interface Profile {
+  readonly name: string;
+  readonly avatarUrl: string | null;
+  readonly source: "header" | "vercel" | "none";
 }
 
 /** An avatar the pointer is over, and where to anchor its card. */

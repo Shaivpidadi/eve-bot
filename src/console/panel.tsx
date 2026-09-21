@@ -9,6 +9,48 @@ import { bytes, PRESENCE_LABEL, scheduleText, shortWhen } from "./format";
 import { Icon } from "./icons";
 import { RoutineDialog } from "./routine-dialog";
 import type { Hover, Member, Routine } from "./types";
+import { modelsOf, tokens, usd } from "../../agent/lib/usage-format";
+
+/**
+ * What a member's model steps have cost, all time: which models, how many
+ * tokens in and out, and the bill as the provider priced it. Nothing shows
+ * until the first step has been counted.
+ */
+function UsageSection({ member }: { member: Member }) {
+  const usage = member.usage;
+  if (usage === undefined || usage.steps === 0) return null;
+  const models = Object.entries(usage.models).sort((left, right) => right[1] - left[1]);
+  return (
+    <div className="section">
+      <h3>Usage</h3>
+      <ul className="list usage">
+        <li>
+          <Icon name="dot" size={15} />
+          <div>
+            <b>{models.length === 0 ? "Model not reported" : models.length === 1 ? models[0]![0] : `${models.length} models`}</b>
+            <span>{models.length > 1 ? models.map(([model, steps]) => `${model} ×${steps}`).join(" · ") : `${usage.steps} model ${usage.steps === 1 ? "step" : "steps"}`}</span>
+          </div>
+        </li>
+        <li>
+          <Icon name="dot" size={15} />
+          <div>
+            <b>
+              {tokens(usage.inputTokens)} in · {tokens(usage.outputTokens)} out
+            </b>
+            <span>{usage.cacheReadTokens > 0 ? `${tokens(usage.cacheReadTokens)} read from cache` : "no cache reads"}</span>
+          </div>
+        </li>
+        <li>
+          <Icon name="dot" size={15} />
+          <div>
+            <b>{usd(usage.costUsd)}</b>
+            <span>{usage.costUsd === 0 && usage.steps > 0 ? "provider reported no cost; set BOT_MODEL_PRICES on a custom endpoint" : `as ${modelsOf(usage) ?? "the provider"} priced it`}</span>
+          </div>
+        </li>
+      </ul>
+    </div>
+  );
+}
 
 export type PanelView = "overview" | "settings";
 
@@ -217,6 +259,7 @@ function BotPanel({
         </ul>
       </div>
       <RoutineDialog routine={editing} onClose={() => setEditing(null)} onChanged={onChanged} />
+      <UsageSection member={member} />
 
       {member.files.length === 0 ? null : (
         <div className="section">
@@ -445,6 +488,7 @@ function HqPanel({
           )}
         </ul>
       </div>
+      <UsageSection member={member} />
 
       {waiting.length === 0 ? null : (
         <div className="section">

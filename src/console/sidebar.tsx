@@ -9,7 +9,7 @@ import { Icon, type IconName } from "./icons";
 import { PromptDialog, type Prompt } from "./prompt-dialog";
 import { roomStore } from "./room-store";
 import { useTheme } from "./theme";
-import type { Hover, Member } from "./types";
+import type { Hover, Member, Profile } from "./types";
 
 /** Where a row's menu is anchored, and for whom. */
 interface Menu {
@@ -40,6 +40,7 @@ export function Sidebar({
   members,
   selectedId,
   user,
+  profile,
   workspaceId,
   unread,
   onSelect,
@@ -54,6 +55,7 @@ export function Sidebar({
   members: readonly Member[];
   selectedId: string;
   user: string;
+  profile: Profile | null;
   workspaceId: string;
   /** Rooms the person marked unread, or that have not been opened since a mark. */
   unread: ReadonlySet<string>;
@@ -222,9 +224,14 @@ export function Sidebar({
           Memory
         </button>
         <div className="me">
-          <span className="me-avatar">{(user || "You").charAt(0).toUpperCase()}</span>
-          <span className="me-name">
-            {user || "You"} <span className="me-ws">{workspaceId}</span>
+          {profile?.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="me-avatar me-photo" src={profile.avatarUrl} alt="" width={20} height={20} />
+          ) : (
+            <span className="me-avatar">{(profile?.name ?? user ?? "You").charAt(0).toUpperCase()}</span>
+          )}
+          <span className="me-name" title={profile?.source === "vercel" ? "Signed in with Vercel" : undefined}>
+            {profile?.name ?? user ?? "You"} <span className="me-ws">{workspaceId}</span>
           </span>
           <button
             type="button"

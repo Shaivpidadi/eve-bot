@@ -5,6 +5,7 @@ import { DEFAULT_EFFORT, type JobEffort } from "./models";
 import { describeSchedule, nextRun, type Schedule } from "./schedule";
 import { deleteDoc, listDocs, readDoc, store, updateDoc, writeDoc } from "./store";
 import type { Job, JobArtifact, JobResult, JobStatus } from "./types";
+import { describeUsage } from "./usage";
 
 const key = (workspaceId: string, jobId: string) => `jobs/${workspaceId}/${jobId}.json`;
 
@@ -27,6 +28,12 @@ const RUNNABLE: readonly JobStatus[] = [...DISPATCHABLE, "blocked", "failed"];
 const CLOSED: readonly JobStatus[] = ["done", "failed", "cancelled"];
 
 const stamp = (job: Job): Job => ({ ...job, updatedAt: new Date().toISOString() });
+
+/** " · claude-sonnet-5 · 12.3k tokens · $0.04" when the job's steps were counted, else nothing. */
+const spent = (job: Job): string => {
+  const line = describeUsage(job.usage);
+  return line === null ? "" : ` · ${line}`;
+};
 
 async function markOpen(workspaceId: string, jobId: string): Promise<void> {
   await store().put(openMarker(workspaceId, jobId), new Date().toISOString());
@@ -557,7 +564,7 @@ export async function completeJob(
       kind: "job.done",
       botId: job.botId,
       jobId,
-      text: `Finished "${job.title}"${result.completion === "recovered" ? " (recovered, unverified)" : ""}: ${result.summary}`,
+      text: `Finished "${job.title}"${result.completion === "recovered" ? " (recovered, unverified)" : ""}${spent(job)}: ${result.summary}`,
     });
   }
   return job;
@@ -605,7 +612,7 @@ export async function failJob(
       kind: "job.failed",
       botId: job.botId,
       jobId,
-      text: `Could not finish "${job.title}": ${error}`,
+      text: `Could not finish "${job.title}"${spent(job)}: ${error}`,
     });
   }
   return job;

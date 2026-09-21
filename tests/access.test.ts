@@ -24,9 +24,12 @@ describe("authenticate", () => {
     expect(workspaceForToken("nope")).toBeNull();
 
     const bearer = await authenticate(request({ authorization: "Bearer acme-token", "x-bot-user": "ann@acme.test" }));
-    expect(bearer).toEqual({ ok: true, access: { workspaceId: "acme", user: "ann@acme.test" } });
+    expect(bearer).toEqual({
+      ok: true,
+      access: { workspaceId: "acme", user: "ann@acme.test", profile: { name: "ann@acme.test", avatarUrl: null, source: "header" } },
+    });
     const cookie = await authenticate(request({ cookie: "theme=dark; bot_console=globex-token" }));
-    expect(cookie).toEqual({ ok: true, access: { workspaceId: "globex", user: "operator" } });
+    expect(cookie).toEqual({ ok: true, access: { workspaceId: "globex", user: "operator", profile: { name: "operator", avatarUrl: null, source: "none" } } });
     // Holding a token never grants another workspace.
     const wrong = await authenticate(request({ authorization: "Bearer acme-token", "x-bot-workspace": "globex" }));
     expect(wrong).toMatchObject({ ok: true, access: { workspaceId: "acme" } });
@@ -41,7 +44,10 @@ describe("authenticate", () => {
 
   it("is open on a local dev server, where the caller may name the workspace", async () => {
     const { authenticate } = await import("../agent/lib/access");
-    expect(await authenticate(request())).toEqual({ ok: true, access: { workspaceId: "default", user: "operator" } });
+    expect(await authenticate(request())).toEqual({
+      ok: true,
+      access: { workspaceId: "default", user: "operator", profile: { name: "operator", avatarUrl: null, source: "none" } },
+    });
     expect(await authenticate(request({ "x-bot-workspace": "team-b" }))).toMatchObject({ ok: true, access: { workspaceId: "team-b" } });
     expect(await authenticate(request({}, "http://localhost:3000/bot/v1/state?workspace=team%20c"))).toMatchObject({ ok: false, status: 400 });
   });
@@ -75,5 +81,24 @@ describe("authenticate", () => {
     expect(sessionCookie(null, request({}, "http://localhost:3000/bot/v1/session/end"))).toBe(
       "bot_console=; Path=/bot; HttpOnly; SameSite=Strict; Max-Age=0",
     );
+  });
+});
+
+/** Who the console shows, from the cookie Vercel Authentication sets. */
+describe("profile", () => {
+  it("names the Vercel user from the protection cookie, with a picture, and falls back in order", async () => {
+    const { profile } = await import("../agent/lib/access");
+    const claims = Buffer.from(JSON.stringify({ sub: "usr_123", username: "shaivpidadi", ownerId: "team_1", aud: "dpl_1" })).toString("base64url");
+    const jwt = `header.${claims}.signature`;
+    expect(profile(request({ cookie: `theme=dark; _vercel_jwt=${jwt}` }))).toEqual({
+      name: "shaivpidadi",
+      avatarUrl: "https://vercel.com/api/www/avatar/usr_123?s=64",
+      source: "vercel",
+    });
+    // A caller who says who they are wins over the cookie.
+    expect(profile(request({ cookie: `_vercel_jwt=${jwt}`, "x-bot-user": "ann@acme.test" })).name).toBe("ann@acme.test");
+    // A damaged cookie is nobody, not an error.
+    expect(profile(request({ cookie: "_vercel_jwt=not.a.jwt" }))).toEqual({ name: "operator", avatarUrl: null, source: "none" });
+    expect(profile(request({ cookie: "_vercel_jwt=abc" }))).toEqual({ name: "operator", avatarUrl: null, source: "none" });
   });
 });

@@ -11,6 +11,7 @@ import {
 } from "./computer/screens";
 import { isRoutine, listOpenJobs } from "./jobs";
 import { describeSchedule } from "./schedule";
+import { addUsage, NO_USAGE, readLedger, type Usage } from "./usage";
 import { HQ_ROOM, roomForBot } from "./rooms";
 import { getRoomState, type AnsweredInput, type RoomState } from "./roomstate";
 import type { ActivityEvent, Bot, Job } from "./types";
@@ -86,6 +87,8 @@ export interface Member {
   readonly preview: { text: string; from: "you" | "bot" | "activity"; at: string } | null;
   /** When the thread was last started over; activity before it stays out of the thread. */
   readonly clearedAt: string | null;
+  /** What this member's model steps have cost, all time. */
+  readonly usage: Usage;
   readonly pending: number;
   /** Requests in this room a person has answered, for cards the stream never resolves. */
   readonly answered: Readonly<Record<string, { readonly outcome: AnsweredInput["outcome"]; readonly optionId: string | null }>>;
@@ -116,6 +119,8 @@ export interface Board {
     /** Why the computer cannot start, or its most recent failure. */
     readonly error: string | null;
   };
+  /** What the workspace has spent on models, all time: HQ's own turns and every Bot's jobs. */
+  readonly usage: { readonly total: Usage; readonly hq: Usage; readonly bots: Readonly<Record<string, Usage>> };
 }
 
 export const HQ_MEMBER_ID = "hq";
@@ -158,11 +163,12 @@ export async function buildBoard(
   workspaceId: string,
   options: { after?: string } = {},
 ): Promise<Board> {
-  const [bots, open, recent, screens] = await Promise.all([
+  const [bots, open, recent, screens, ledger] = await Promise.all([
     listBots(workspaceId),
     listOpenJobs(workspaceId),
     recentActivity(workspaceId, { limit: FEED_WINDOW }),
     readScreens(),
+    readLedger(workspaceId),
   ]);
   const rooms = await Promise.all(
     [HQ_ROOM, ...bots.map((bot) => roomForBot(bot.id))].map((room) =>
@@ -173,7 +179,7 @@ export async function buildBoard(
   const now = Date.now();
   const screen = workspaceScreen(screens, workspaceId);
   const members: Member[] = [
-    hqMember(rooms[0] ?? null, open, screen),
+    hqMember(rooms[0] ?? null, open, screen, ledger.hq),
     ...bots
       .map((bot, index) =>
         botMember(
@@ -183,6 +189,7 @@ export async function buildBoard(
           recent.filter((event) => event.botId === bot.id),
           screen,
           now,
+          ledger.bots[bot.id] ?? NO_USAGE,
         ),
       )
       // Pinned Bots first, then the most recently active; sections and hiding are the console's to draw.
@@ -202,6 +209,11 @@ export async function buildBoard(
       backend,
       error: (backend === "vercel" ? vercelCredentialsError() : null) ?? failure?.text ?? null,
     },
+    usage: {
+      total: Object.values(ledger.bots).reduce((sum, usage) => addUsage(sum, usage), ledger.hq),
+      hq: ledger.hq,
+      bots: ledger.bots,
+    },
   };
 }
 
@@ -210,7 +222,7 @@ const recency = (member: Member) => member.preview?.at ?? member.profile?.hiredA
 const answeredIn = (room: RoomState | null): Member["answered"] =>
   Object.fromEntries((room?.answered ?? []).map((entry) => [entry.requestId, { outcome: entry.outcome, optionId: entry.optionId }]));
 
-function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAllocation | null): Member {
+function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAllocation | null, usage: Usage): Member {
   const pending = room?.pending ?? [];
   // From HQ's desk the team's browser is whoever is on it right now.
   const running = open.find((job) => job.status === "running");
@@ -225,6 +237,7 @@ function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAl
     action: pending[0]?.prompt ?? (room?.active === true ? "Thinking" : null),
     preview: room?.preview ?? null,
     clearedAt: room?.clearedAt ?? null,
+    usage,
     pending: pending.length,
     answered: answeredIn(room),
     computer: sharedComputer(screen, running, running?.id ?? null, openHandover(screen?.handover ?? null, open)),
@@ -255,6 +268,7 @@ function botMember(
   events: readonly ActivityEvent[],
   screen: ScreenAllocation | null,
   now: number,
+  usage: Usage,
 ): Member {
   const own = openHandover(screen?.handover ?? null, jobs);
   const handover = handoverBelongsTo(own, bot.id, jobs.map((job) => job.id)) ? own : null;
@@ -283,6 +297,7 @@ function botMember(
       room?.preview ??
       (latest === undefined ? null : { text: latest.text, from: "activity", at: latest.at }),
     clearedAt: room?.clearedAt ?? null,
+    usage,
     pending: room?.pending.length ?? 0,
     answered: answeredIn(room),
     computer: sharedComputer(screen, running, running?.id ?? lastRun?.jobId ?? null, handover),

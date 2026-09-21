@@ -119,6 +119,16 @@ on hover, for its menu: pin, move to a section, mark unread, clear chat,
 rename, edit profile, duplicate, copy conversation id, hide, delete. Pins,
 sections, and hiding are saved on the Bot; unread is yours alone.
 
+The panel on the right also shows what a thread has cost: which models it ran
+on, tokens in and out, cache reads, and the price the provider reported, kept
+for HQ and for each Bot over the workspace's life. Every finished job carries
+its own line in the feed. Off AI Gateway a provider reports no price, so set
+`BOT_MODEL_PRICES` to see dollars instead of zeros.
+
+Behind Vercel Authentication the console shows who is signed in, with their
+Vercel name and picture. Elsewhere it shows the name in `X-Bot-User`, or
+"operator".
+
 Opening the console from another device over plain http puts the browser in
 an insecure context, and the live screen will not connect. Use
 `npm run dev:https`, or on a standalone server set `BOT_COMPUTER_LOCAL_BIND=0.0.0.0`
@@ -221,9 +231,9 @@ npm run metrics              # verified vs recovered closes, interruptions, how 
 npm run metrics -- --days 7
 ```
 
-Run it before and after a change, on the same kind of work. Cost per job is
-deliberately absent: nothing records what a job's model steps cost, and a made
-up number is worse than none.
+Run it before and after a change, on the same kind of work. What a job cost
+is on the job itself and in its Bot's panel, as the provider priced it; the
+report leaves it out rather than average numbers from different models.
 
 ### Bots testing Bots
 

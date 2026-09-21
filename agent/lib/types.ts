@@ -1,3 +1,4 @@
+import type { Usage } from "./usage";
 /** Everything Bot persists. One file so the shape of the product is readable in one place. */
 
 import type { JobEffort } from "./models";
@@ -75,6 +76,8 @@ export interface Job {
   effort?: JobEffort;
   /** Who set the effort: HQ in its brief, or the default. Absent on older jobs. */
   effortBy?: "hq" | "default";
+  /** What the job's model steps cost so far (see `usage.ts`). Absent until the first step completes. */
+  usage?: Usage;
   /** When the job becomes eligible to run. */
   runAt: string;
   /** Repeat interval in minutes, or `null` for a one-shot job. */

@@ -173,6 +173,7 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .me-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .me-ws { color: var(--faint); font-size: 11px; }
 .me form { margin: 0; }
+.me-photo { object-fit: cover; background: var(--field); }
 
 .popover {
   position: absolute; left: 8px; right: 8px; bottom: calc(100% - 2px); z-index: 20;
