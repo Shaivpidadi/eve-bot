@@ -14,10 +14,13 @@
     "agent:dev": "eve dev",
     "agent:build": "eve build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "jev:report": "npx --yes tsx scripts/jev-report.mjs",
+    "qa": "node qa/run.mjs",
+    "metrics": "npx --yes tsx scripts/metrics.mjs"
   },
   "dependencies": {
-    "@agent-browser/eve": "^0.37.1",
+    "@agent-browser/eve": "^0.38.1",
     "@ai-sdk/openai-compatible": "^3.0.48",
     "@novnc/novnc": "^1.7.0",
     "@vercel/blob": "^2.8.0",
@@ -37,6 +40,7 @@
     "@types/react-dom": "^19.3.0",
     "just-bash": "^3.4.2",
     "microsandbox": "^0.5.10",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.2",
     "vitest": "^5.0.1"
   },

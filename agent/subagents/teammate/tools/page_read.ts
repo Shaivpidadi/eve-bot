@@ -2,6 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { browser, refreshScreen } from "../lib/browser";
+import { forgetLook } from "../lib/page";
 
 /**
  * The page as text, always read from the Bot's own browser.
@@ -26,6 +27,8 @@ export default defineTool({
       const opened = await browser(ctx, ["open", url]);
       if (!opened.ok) return { text: null, source: url, error: opened.error, detail: opened.output };
       await browser(ctx, ["wait", "--load", "domcontentloaded"]);
+      // This is a different page from the one the last snapshot described.
+      forgetLook(ctx);
       await refreshScreen(ctx);
     }
     const result = await browser(ctx, ["read", ...(filter ? ["--filter", filter] : [])]);

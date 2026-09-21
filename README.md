@@ -195,6 +195,53 @@ tests/                      vitest
 
 Swapping storage means implementing four methods in `agent/lib/store/`.
 
+### A second opinion on small decisions
+
+With an AI Gateway key, Bot can ask [Jev](https://vercel.com/ai-gateway/models/jev)
+the questions that are decisions rather than writing: is this page a sign-in
+wall, does this result actually meet the brief. It answers as a probability,
+priced per input token, and today it decides nothing — each answer is filed
+next to what the system did anyway:
+
+```bash
+npm run jev:report          # what Jev would have decided, against what happened
+```
+
+Turn it off with `BOT_JEV=off`. It is off on its own wherever the Gateway
+cannot be reached, so a standalone server on your own models never depends on
+it.
+
+### Are the Bots getting better
+
+Every change is supposed to make jobs finish more often, with fewer
+interruptions. That is measurable from what the Bots already record:
+
+```bash
+npm run metrics              # verified vs recovered closes, interruptions, how long a job takes
+npm run metrics -- --days 7
+```
+
+Run it before and after a change, on the same kind of work. Cost per job is
+deliberately absent: nothing records what a job's model steps cost, and a made
+up number is worse than none.
+
+### Bots testing Bots
+
+`npm test` covers the pure parts. The things that actually break — a job that
+closes without doing the work, an approval that does not hold, a cancelled job
+that comes back — need a running deployment, so there is a suite that drives
+one over its own console API:
+
+```bash
+QA_URL=https://staging.example QA_TOKEN=… npm run qa    # free, no model calls
+QA_JOBS=1 … npm run qa                                  # also runs real jobs
+```
+
+It hires bots, writes memory and (with `QA_JOBS=1`) runs jobs, so point it at a
+deployment with its own computer and its own data, never at the one you work
+in. Failures are written to `.qa/` with what was expected and what the
+deployment actually answered.
+
 ## Limits
 
 - One computer per deployment, shared by every Bot and workspace. Sign-ins are

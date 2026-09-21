@@ -1,7 +1,7 @@
 import { defineDynamic, defineMcpClientConnection } from "eve/connections";
 import { once } from "eve/tools/approval";
 
-import { isWriteTool } from "../../../lib/catalog";
+import { effectOf } from "../../../lib/catalog";
 import { connectorHeaders, listConnectors } from "../../../lib/connectors";
 import { operator } from "../../../lib/session";
 
@@ -39,7 +39,10 @@ export default defineDynamic({
               ...(connector.gate === "all"
                 ? { approval: once() }
                 : connector.gate === "writes"
-                  ? { approval: ({ toolName }: { toolName: string }) => (isWriteTool(toolName) ? "user-approval" : "not-applicable") }
+                  ? {
+                      approval: ({ toolName }: { toolName: string }) =>
+                        effectOf(connector.policy, toolName) === "write" ? "user-approval" : "not-applicable",
+                    }
                   : {}),
             }),
           ] as const;

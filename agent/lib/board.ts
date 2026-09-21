@@ -9,7 +9,8 @@ import {
   type ScreenAllocation,
   type ServiceState,
 } from "./computer/screens";
-import { listOpenJobs } from "./jobs";
+import { isRoutine, listOpenJobs } from "./jobs";
+import { describeSchedule } from "./schedule";
 import { HQ_ROOM, roomForBot } from "./rooms";
 import { getRoomState, type AnsweredInput, type RoomState } from "./roomstate";
 import type { ActivityEvent, Bot, Job } from "./types";
@@ -28,6 +29,8 @@ export interface Routine {
   readonly jobId: string;
   readonly title: string;
   readonly everyMinutes: number | null;
+  /** How a clock routine reads, when it has one rather than an interval. */
+  readonly schedule?: string;
   readonly nextRunAt: string;
   readonly status: Job["status"];
   readonly lastRunAt: string | null;
@@ -81,6 +84,8 @@ export interface Member {
   /** What it is doing right now, in a line; shown on hover. */
   readonly action: string | null;
   readonly preview: { text: string; from: "you" | "bot" | "activity"; at: string } | null;
+  /** When the thread was last started over; activity before it stays out of the thread. */
+  readonly clearedAt: string | null;
   readonly pending: number;
   /** Requests in this room a person has answered, for cards the stream never resolves. */
   readonly answered: Readonly<Record<string, { readonly outcome: AnsweredInput["outcome"]; readonly optionId: string | null }>>;
@@ -219,6 +224,7 @@ function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAl
     presence: pending.length > 0 ? "waiting" : room?.active === true ? "thinking" : "idle",
     action: pending[0]?.prompt ?? (room?.active === true ? "Thinking" : null),
     preview: room?.preview ?? null,
+    clearedAt: room?.clearedAt ?? null,
     pending: pending.length,
     answered: answeredIn(room),
     computer: sharedComputer(screen, running, running?.id ?? null, openHandover(screen?.handover ?? null, open)),
@@ -276,15 +282,17 @@ function botMember(
     preview:
       room?.preview ??
       (latest === undefined ? null : { text: latest.text, from: "activity", at: latest.at }),
+    clearedAt: room?.clearedAt ?? null,
     pending: room?.pending.length ?? 0,
     answered: answeredIn(room),
     computer: sharedComputer(screen, running, running?.id ?? lastRun?.jobId ?? null, handover),
     routines: jobs
-      .filter((job) => job.everyMinutes !== null || job.status === "scheduled")
+      .filter((job) => isRoutine(job) || job.status === "scheduled")
       .map((job) => ({
         jobId: job.id,
         title: job.title,
         everyMinutes: job.everyMinutes,
+        ...(job.schedule == null ? {} : { schedule: describeSchedule(job.schedule) }),
         nextRunAt: job.runAt,
         status: job.status,
         lastRunAt: job.lastRunAt,

@@ -17,7 +17,9 @@ import { findBot, getBot, hireBot, listBots, patchBot, retireBot } from "../lib/
 import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
-import { cancelJob, listOpenJobs } from "../lib/jobs";
+import { cancelJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
+import { listRecipes, removeRecipe } from "../lib/recipes";
+import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
 import { addMemory, forgetMemory, isMemorySlot, readMemory } from "../lib/memory";
 import { CATALOG } from "../lib/catalog";
 import {
@@ -63,6 +65,24 @@ const json = (body: unknown, status = 200) =>
   });
 
 const denied = (gate: Extract<Gate, { ok: false }>) => json({ error: gate.error }, gate.status);
+
+const POLICY_TOOLS = 200;
+
+/**
+ * Corrections to what a connector's tools do, from the console.
+ *
+ * Only "read" and "write" are accepted, and only for plausible tool names, so
+ * a typo cannot quietly become a third kind of permission nothing checks.
+ */
+function policyPatch(value: unknown): Record<string, "read" | "write"> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const patch: Record<string, "read" | "write"> = {};
+  for (const [tool, effect] of Object.entries(value as Record<string, unknown>).slice(0, POLICY_TOOLS)) {
+    if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(tool)) continue;
+    if (effect === "read" || effect === "write") patch[tool] = effect;
+  }
+  return Object.keys(patch).length === 0 ? null : patch;
+}
 
 /** The console is the Next.js app; sign-in outcomes send the browser back to its pages. */
 const seeOther = (location: string, headers: Record<string, string> = {}) =>
@@ -261,7 +281,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
       const cancelledJobs: string[] = [];
       for (const job of await listOpenJobs(workspaceId)) {
-        if (job.room !== room || job.everyMinutes !== null) continue;
+        if (job.room !== room || isRoutine(job)) continue;
         const cancelled = await cancelJob(workspaceId, job.id);
         if (!cancelled.ok) continue;
         cancelledJobs.push(job.id);
@@ -582,6 +602,64 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return outcome.ok ? json({ forgotten: true }) : json({ error: outcome.error }, outcome.status);
     }),
 
+    /** The recipes this team saved: briefs that worked, for HQ to reuse. */
+    GET("/bot/v1/recipes", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return json({ recipes: await listRecipes(gate.access.workspaceId) });
+    }),
+
+    DELETE("/bot/v1/recipes/:recipeId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const removed = await removeRecipe(gate.access.workspaceId, params.recipeId ?? "");
+      return removed ? json({ removed: true }) : json({ error: "no such recipe" }, 404);
+    }),
+
+    /** A routine, changed from the console: a new interval or clock schedule, or a new title. */
+    PATCH("/bot/v1/jobs/:jobId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      let schedule: Schedule | null | undefined;
+      if (typeof body?.dailyAt === "string") {
+        const [hour = "0", minute = "0"] = body.dailyAt.split(":");
+        const days = Array.isArray(body.onDays)
+          ? body.onDays.filter((day): day is Day => typeof day === "string" && (DAYS as readonly string[]).includes(day))
+          : [];
+        const candidate: unknown = {
+          hour: Number(hour),
+          minute: Number(minute),
+          ...(days.length === 0 ? {} : { days }),
+          timezone: typeof body.timezone === "string" && body.timezone.trim() !== "" ? body.timezone.trim() : defaultTimezone(),
+        };
+        if (!isSchedule(candidate)) {
+          return json({ error: "That is not a time and timezone I know. Use HH:MM and an IANA name such as America/New_York." }, 422);
+        }
+        schedule = candidate;
+      } else if (body?.dailyAt === null) {
+        schedule = null;
+      }
+      const every = body?.everyMinutes;
+      const everyMinutes =
+        every === null ? null : typeof every === "number" && Number.isInteger(every) && every >= 5 && every <= 525_600 ? every : undefined;
+      if (every !== undefined && every !== null && everyMinutes === undefined) return json({ error: "The interval is minutes, from 5 up to a year." }, 422);
+      const changed = await rescheduleJob(gate.access.workspaceId, params.jobId ?? "", {
+        ...(schedule === undefined ? {} : { schedule }),
+        ...(everyMinutes === undefined ? {} : { everyMinutes }),
+        ...(typeof body?.title === "string" ? { title: body.title } : {}),
+      });
+      return changed.ok ? json({ job: changed.job }) : json({ error: changed.reason }, 422);
+    }),
+
+    /** Stops a job or routine from the console; what it already delivered stays. */
+    DELETE("/bot/v1/jobs/:jobId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const cancelled = await cancelJob(gate.access.workspaceId, params.jobId ?? "");
+      return cancelled.ok ? json({ cancelled: true, job: { id: cancelled.job.id, title: cancelled.job.title } }) : json({ error: cancelled.reason }, 422);
+    }),
+
     /** The team's connectors: services every Bot can use. Keys never come back out. */
     GET("/bot/v1/connectors", async (request) => {
       const gate = await authenticate(request);
@@ -619,6 +697,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         ...(typeof body?.enabled === "boolean" ? { enabled: body.enabled } : {}),
         ...(body?.gate === "none" || body?.gate === "writes" || body?.gate === "all" ? { gate: body.gate } : {}),
         ...(typeof body?.description === "string" ? { description: body.description } : {}),
+        ...(policyPatch(body?.policy) === null ? {} : { policy: policyPatch(body?.policy) as Record<string, "read" | "write"> }),
       });
       return updated === null ? json({ error: "no such connector" }, 404) : json({ connector: publicConnector(updated) });
     }),

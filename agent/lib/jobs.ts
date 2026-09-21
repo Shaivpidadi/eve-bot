@@ -2,6 +2,7 @@ import { record } from "./activity";
 import { newId } from "./ids";
 import { getBot, patchBot } from "./bots";
 import { DEFAULT_EFFORT, type JobEffort } from "./models";
+import { describeSchedule, nextRun, type Schedule } from "./schedule";
 import { deleteDoc, listDocs, readDoc, store, updateDoc, writeDoc } from "./store";
 import type { Job, JobArtifact, JobResult, JobStatus } from "./types";
 
@@ -44,6 +45,7 @@ export async function assignJob(input: {
   successCriteria?: string[];
   runAt?: string;
   everyMinutes?: number | null;
+  schedule?: Schedule | null;
   requiresSignoff?: boolean;
   priority?: "normal" | "high";
   effort?: JobEffort;
@@ -67,6 +69,7 @@ export async function assignJob(input: {
     ...(input.effortConfidence === undefined ? {} : { effortConfidence: input.effortConfidence }),
     runAt,
     everyMinutes: input.everyMinutes ?? null,
+    ...(input.schedule == null ? {} : { schedule: input.schedule }),
     requiresSignoff: input.requiresSignoff ?? false,
     room: input.room ?? "desk",
     requestedBy: input.requestedBy,
@@ -94,6 +97,41 @@ export async function assignJob(input: {
     text: `${bot?.name ?? job.botId} was assigned "${job.title}".`,
   });
   return job;
+}
+
+/**
+ * Whether the result now on a job was recorded by the run that is asking.
+ *
+ * A routine's cycle can record a result identical to the last cycle's — a
+ * monitor that correctly reports "nothing changed" does it every time — so the
+ * text of a result cannot say whether this run recorded anything. Results carry
+ * the moment they were recorded, and that is the answer. Results written before
+ * that was kept fall back to the old comparison against the text at claim time.
+ */
+export function resultIsFromRun(
+  result: JobResult,
+  run: { readonly startedAt: string; readonly resultAtClaim: string | null },
+): boolean {
+  if (result.recordedAt !== undefined) {
+    return Date.parse(result.recordedAt) >= Date.parse(run.startedAt);
+  }
+  return JSON.stringify(result) !== run.resultAtClaim;
+}
+
+/** Whether a job runs again after it finishes: on a clock, or on an interval. */
+export const isRoutine = (job: Pick<Job, "everyMinutes" | "schedule">): boolean =>
+  (job.schedule !== undefined && job.schedule !== null) || (job.everyMinutes !== null && job.everyMinutes > 0);
+
+/**
+ * When a routine's next cycle is due.
+ *
+ * A clock schedule fires at the same wall-clock time whatever the last cycle
+ * took; an interval still counts from now, which is what "every 10 minutes"
+ * means for a monitor.
+ */
+export function nextRunAt(job: Pick<Job, "everyMinutes" | "schedule">, from: Date = new Date()): string {
+  if (job.schedule !== undefined && job.schedule !== null) return nextRun(job.schedule, from).toISOString();
+  return new Date(from.getTime() + (job.everyMinutes ?? 0) * 60_000).toISOString();
 }
 
 export async function getJob(workspaceId: string, jobId: string): Promise<Job | null> {
@@ -398,6 +436,50 @@ export async function releaseJob(
   });
 }
 
+/**
+ * Changes when a routine runs, from the console: a new interval or a new clock
+ * schedule, effective from now. A routine waiting for its next cycle moves at
+ * once; a running cycle keeps its lease and the change lands when it closes,
+ * since completeJob computes the next run from the job as it is then.
+ */
+export async function rescheduleJob(
+  workspaceId: string,
+  jobId: string,
+  change: { readonly everyMinutes?: number | null; readonly schedule?: Schedule | null; readonly title?: string },
+): Promise<{ ok: true; job: Job } | { ok: false; reason: string }> {
+  let reason = "";
+  const job = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
+    if (current === null) {
+      reason = "No such job.";
+      return null;
+    }
+    if (current.status === "done" || current.status === "cancelled" || current.status === "failed") {
+      reason = "That job is over; nothing to reschedule.";
+      return null;
+    }
+    const next: Job = {
+      ...current,
+      ...(change.title === undefined ? {} : { title: change.title.trim().slice(0, 120) || current.title }),
+      ...(change.schedule !== undefined
+        ? { schedule: change.schedule, everyMinutes: change.schedule === null ? (change.everyMinutes ?? current.everyMinutes) : null }
+        : change.everyMinutes !== undefined
+          ? { everyMinutes: change.everyMinutes, schedule: null }
+          : {}),
+    };
+    const waiting = current.status === "scheduled" || current.status === "queued";
+    return stamp(waiting && isRoutine(next) ? { ...next, runAt: nextRunAt(next) } : next);
+  });
+  if (job === null) return { ok: false, reason: reason || "Could not reschedule." };
+  await record({
+    workspaceId,
+    kind: "job.assigned",
+    botId: job.botId,
+    jobId,
+    text: `"${job.title}" now runs ${job.schedule ? describeSchedule(job.schedule) : job.everyMinutes ? `every ${job.everyMinutes} minutes` : "once"}.`,
+  });
+  return { ok: true, job };
+}
+
 export async function patchJob(
   workspaceId: string,
   jobId: string,
@@ -452,13 +534,11 @@ export async function completeJob(
       return null;
     }
     state.outcome = "closed";
-    const repeats = current.everyMinutes !== null && current.everyMinutes > 0;
+    const repeats = isRoutine(current);
     return stamp({
       ...current,
       status: repeats ? "scheduled" : "done",
-      runAt: repeats
-        ? new Date(Date.now() + (current.everyMinutes ?? 0) * 60_000).toISOString()
-        : current.runAt,
+      runAt: repeats ? nextRunAt(current) : current.runAt,
       lease: null,
       result,
       feedback: null,
@@ -477,7 +557,7 @@ export async function completeJob(
       kind: "job.done",
       botId: job.botId,
       jobId,
-      text: `Finished "${job.title}": ${result.summary}`,
+      text: `Finished "${job.title}"${result.completion === "recovered" ? " (recovered, unverified)" : ""}: ${result.summary}`,
     });
   }
   return job;
@@ -610,7 +690,7 @@ export async function cancelJob(workspaceId: string, jobId: string): Promise<Can
       return null;
     }
     outcome.wasRunning = current.status === "running";
-    return stamp({ ...current, status: "cancelled", lease: null, everyMinutes: null });
+    return stamp({ ...current, status: "cancelled", lease: null, everyMinutes: null, schedule: null });
   });
   if (job === null) return { ok: false, reason: outcome.reason };
 

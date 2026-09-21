@@ -72,3 +72,47 @@ const WRITE_VERB =
 
 /** Whether a connector tool, by its bare name, changes something rather than reads. */
 export const isWriteTool = (toolName: string): boolean => WRITE_VERB.test(toolName.split("__").pop() ?? toolName);
+
+/** What a connector's tool does, as this workspace has it recorded. */
+export type ToolEffect = "read" | "write";
+export type ToolPolicy = Readonly<Record<string, ToolEffect>>;
+
+/**
+ * The first guess at what each of a server's tools does, made once when the
+ * connector is added and then kept.
+ *
+ * The verb in a tool's name is a guess, and a guess is the wrong thing to
+ * consult at the moment a bot is about to act: it can change under you when a
+ * regex is edited, and it cannot be corrected when it is wrong. Recording the
+ * answer per tool makes it a decision the operator owns, that a person can see
+ * and change, and that is the same on every call.
+ */
+export function classifyTools(tools: readonly string[]): Record<string, ToolEffect> {
+  const policy: Record<string, ToolEffect> = {};
+  for (const tool of tools) policy[tool] = isWriteTool(tool) ? "write" : "read";
+  return policy;
+}
+
+/**
+ * What a tool does, for the code that gates it.
+ *
+ * A tool nobody classified — one the server grew since it was connected — is
+ * treated as changing something. The cost of that is one approval prompt; the
+ * cost of the other default is a bot doing something irreversible because a
+ * name was unfamiliar.
+ */
+export function effectOf(policy: ToolPolicy | undefined, toolName: string): ToolEffect {
+  const bare = toolName.split("__").pop() ?? toolName;
+  return policy?.[toolName] ?? policy?.[bare] ?? "write";
+}
+
+/** Keeps what the operator decided, classifies what is new, forgets what is gone. */
+export function mergePolicy(existing: ToolPolicy | undefined, tools: readonly string[]): Record<string, ToolEffect> {
+  const merged = classifyTools(tools);
+  if (existing === undefined) return merged;
+  for (const tool of tools) {
+    const kept = existing[tool];
+    if (kept === "read" || kept === "write") merged[tool] = kept;
+  }
+  return merged;
+}

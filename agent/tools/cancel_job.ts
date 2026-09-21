@@ -17,7 +17,7 @@ export default defineTool({
       cancelled: true as const,
       job: { id: cancelled.job.id, title: cancelled.job.title, status: cancelled.job.status },
       note: cancelled.wasRunning
-        ? "The bot may still be mid-step; use task_cancel on the running task to stop it immediately. Its result will be kept, but the job stays cancelled."
+        ? "The bot may finish its current step before it notices; the job stays cancelled and nothing more starts. Do not cancel the task underneath."
         : undefined,
     };
   },

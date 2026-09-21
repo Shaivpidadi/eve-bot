@@ -8,6 +8,8 @@ import { assignJob } from "../lib/jobs";
 import { DEFAULT_EFFORT, EFFORT_DESCRIPTIONS, JOB_EFFORTS, type JobEffort } from "../lib/models";
 import { isRoomName } from "../lib/rooms";
 import { operator } from "../lib/session";
+import { briefFromRecipe, findRecipe, noteRecipeUsed } from "../lib/recipes";
+import { DAYS, defaultTimezone, describeSchedule, isSchedule, nextRun, type Schedule } from "../lib/schedule";
 import { looseBoolean } from "../lib/tool-input";
 import type { Bot } from "../lib/types";
 
@@ -72,7 +74,22 @@ export default defineTool({
       .max(525_600)
       .nullable()
       .optional()
-      .describe("Repeat interval. Omit or null for a one-off job."),
+      .describe("Repeat interval. Omit or null for a one-off job. For a time of day, use dailyAt instead."),
+    dailyAt: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .optional()
+      .describe('A clock time such as "09:00" for a routine that runs at a time of day rather than on an interval. This is what "every weekday at 9" means; it does not drift when a cycle runs long.'),
+    onDays: z
+      .array(z.enum(DAYS))
+      .max(7)
+      .optional()
+      .describe('Which days a dailyAt routine runs, such as ["mon","tue","wed","thu","fri"]. Omit for every day.'),
+    timezone: z
+      .string()
+      .max(60)
+      .optional()
+      .describe("IANA timezone for dailyAt, such as America/New_York. Defaults to the deployment's own."),
     requiresSignoff: looseBoolean()
       .optional()
       .describe(
@@ -84,6 +101,13 @@ export default defineTool({
       .optional()
       .describe(
         `How hard the job is, which picks the model and its cost. "quick": ${EFFORT_DESCRIPTIONS.quick} "standard": ${EFFORT_DESCRIPTIONS.standard} "deep": ${EFFORT_DESCRIPTIONS.deep} Choose the lowest that will do the job well; a failed job re-runs one level up. Defaults to standard.`,
+      ),
+    recipe: z
+      .string()
+      .max(60)
+      .optional()
+      .describe(
+        "The name of a saved recipe to brief this job from, when the request matches one. Write brief as only what is different this time.",
       ),
     room: z
       .string()
@@ -114,17 +138,50 @@ export default defineTool({
       return { assigned: false as const, reason: `runAt must be an ISO 8601 timestamp.` };
     }
 
+    // A request the team has done before is briefed from how it went, plus
+    // whatever is different today.
+    const recipe = input.recipe === undefined ? null : await findRecipe(who.workspaceId, input.recipe);
+    if (input.recipe !== undefined && recipe === null) {
+      return { assigned: false as const, reason: `No recipe called ${input.recipe}. Write the brief yourself, or check the name.` };
+    }
+    const brief = recipe === null ? input.brief : briefFromRecipe(recipe, input.brief);
+
     const rating = rateEffort(input.effort);
+
+    // A clock routine: "every weekday at 9" rather than "every 1440 minutes".
+    let schedule: Schedule | null = null;
+    if (input.dailyAt !== undefined) {
+      const [hour = "0", minute = "0"] = input.dailyAt.split(":");
+      const timezone = input.timezone?.trim() || defaultTimezone();
+      const candidate: unknown = {
+        hour: Number(hour),
+        minute: Number(minute),
+        ...(input.onDays === undefined || input.onDays.length === 0 ? {} : { days: input.onDays }),
+        timezone,
+      };
+      if (!isSchedule(candidate)) {
+        return {
+          assigned: false as const,
+          reason: `${timezone} is not a timezone I know. Use an IANA name such as America/New_York.`,
+        };
+      }
+      schedule = candidate;
+    }
 
     const job = await assignJob({
       workspaceId: who.workspaceId,
       botId: bot.id,
       requestedBy: who.label,
       title: input.title,
-      brief: input.brief,
-      ...(input.successCriteria ? { successCriteria: input.successCriteria } : {}),
-      ...(input.runAt ? { runAt: input.runAt } : {}),
+      brief,
+      ...(input.successCriteria
+        ? { successCriteria: input.successCriteria }
+        : recipe !== null && recipe.successCriteria.length > 0
+          ? { successCriteria: [...recipe.successCriteria] }
+          : {}),
+      ...(input.runAt ? { runAt: input.runAt } : schedule === null ? {} : { runAt: nextRun(schedule, new Date()).toISOString() }),
       ...(input.everyMinutes !== undefined ? { everyMinutes: input.everyMinutes } : {}),
+      ...(schedule === null ? {} : { schedule }),
       ...(input.requiresSignoff !== undefined ? { requiresSignoff: input.requiresSignoff } : {}),
       ...(input.priority ? { priority: input.priority } : {}),
       effort: rating.effort,
@@ -133,14 +190,18 @@ export default defineTool({
       room: input.room !== undefined && isRoomName(input.room) ? input.room : who.room,
     });
 
+    if (recipe !== null) await noteRecipeUsed(who.workspaceId, recipe.id);
+
     return {
       assigned: true as const,
+      ...(recipe === null ? {} : { recipe: recipe.name }),
       job: {
         id: job.id,
         title: job.title,
         status: job.status,
         runAt: job.runAt,
         everyMinutes: job.everyMinutes,
+        ...(schedule === null ? {} : { schedule: describeSchedule(schedule) }),
         requiresSignoff: job.requiresSignoff,
         effort: job.effort,
         effortBy: rating.by,

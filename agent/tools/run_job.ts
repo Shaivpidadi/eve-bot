@@ -20,9 +20,13 @@ import {
   patchJob,
   releaseJob,
   renewLease,
+  resultIsFromRun,
   sendBack,
   type Hold,
 } from "../lib/jobs";
+import { sameFindings } from "../lib/findings";
+import { jevEnabled, judge } from "../lib/jev";
+import { completionQuestions, noteShadow, readVerdict, unmetCriteria } from "../lib/jev-watch";
 import { DEFAULT_EFFORT, nextEffort } from "../lib/models";
 import { ROUTINE_REPORT_PREFIX } from "../lib/rooms";
 import { operator } from "../lib/session";
@@ -140,7 +144,7 @@ export default defineWorkflowTool({
       // 2. Work. A person's review, when needed, is the only card this run shows:
       // a run's later cards do not reach the thread, so whatever follows is a new run.
       let signedOff = false;
-      let done: { result: JobResult; token: string; title: string; botName: string } | null = null;
+      let done: { result: JobResult; token: string; title: string; botName: string; previous: string | null } | null = null;
       work: {
         const claim = await claimForRun(workspaceId, jobId, {
           waitToken,
@@ -189,7 +193,10 @@ export default defineWorkflowTool({
         const result: JobResult = salvaged;
 
         if (!claim.requiresSignoff && !result.needsHuman) {
-          done = { result, token: claim.token, title: claim.title, botName: claim.botName };
+          // Observation only: what a grader would have said about this close,
+          // recorded beside what actually happened. It decides nothing yet.
+          await reviewClose(workspaceId, jobId, claim, result);
+          done = { result, token: claim.token, title: claim.title, botName: claim.botName, previous: claim.resultAtClaim };
           break work;
         }
         if (cycle > 1) {
@@ -253,7 +260,7 @@ export default defineWorkflowTool({
         }
         if (answer.optionId === "approve") {
           signedOff = true;
-          done = { result, token: claim.token, title: claim.title, botName: claim.botName };
+          done = { result, token: claim.token, title: claim.title, botName: claim.botName, previous: claim.resultAtClaim };
           break work;
         }
 
@@ -312,7 +319,13 @@ export default defineWorkflowTool({
           result: done.result,
         };
       }
-      yield task.postMessage(cycleReport(done.title, jobId, done.result, closed.nextRunAt));
+      // A monitor that finds the same thing again says nothing: the feed keeps
+      // the record, and the thread stays worth reading.
+      if (sameFindings(done.previous, done.result)) {
+        await noteQuietCycle(workspaceId, jobId, done.botName, closed.nextRunAt);
+      } else {
+        yield task.postMessage(cycleReport(done.title, jobId, done.result, closed.nextRunAt));
+      }
     }
   },
 });
@@ -424,14 +437,15 @@ const TEXT_MEDIA = /^text\/|json|markdown|csv|xml/i;
  */
 async function salvageResult(workspaceId: string, jobId: string, claim: Extract<Claim, { ok: true }>, raw: unknown): Promise<JobResult | null> {
   "use step";
-  const recorded = await resultRecordedSince(workspaceId, jobId, claim.token, claim.resultAtClaim);
+  const recorded = await resultRecordedSince(workspaceId, jobId, claim.token, claim.resultAtClaim, claim.startedAt);
   if (recorded !== null) return recorded;
 
   const text = typeof raw === "string" ? raw.trim() : "";
   if (text.startsWith("{")) {
     try {
       const parsed = JobResultZ.safeParse(JSON.parse(text));
-      if (parsed.success) return parsed.data;
+      // The shape is the bot's, but the close is not: it never called finish_job.
+      if (parsed.success) return { ...parsed.data, completion: "recovered" };
     } catch {
       // Not the result as JSON; treat it as prose below.
     }
@@ -472,7 +486,63 @@ async function salvageResult(workspaceId: string, jobId: string, claim: Extract<
     deliverable,
     openQuestions: [`${claim.botName} did not close this job itself; this result was assembled from what it left. Treat it as unverified.`],
     needsHuman: false,
+    completion: "recovered",
   };
+}
+
+/**
+ * Asks Jev whether the evidence supports the close, and files the answer.
+ *
+ * Shadow mode: the job closes exactly as it would have. The point is to find
+ * out, on this deployment's own jobs, whether the grader agrees with the bots
+ * before it is allowed to contradict one.
+ */
+async function reviewClose(
+  workspaceId: string,
+  jobId: string,
+  claim: Extract<Claim, { ok: true }>,
+  result: JobResult,
+): Promise<void> {
+  "use step";
+  if (!jevEnabled()) return;
+  const job = await getJob(workspaceId, jobId);
+  const criteria = job?.successCriteria ?? [];
+  const questions = completionQuestions(criteria);
+  const judgement = await judge(
+    {
+      brief: claim.brief.slice(0, 4_000),
+      successCriteria: criteria,
+      summary: result.summary,
+      deliverable: result.deliverable.slice(0, 4_000),
+      openQuestions: result.openQuestions,
+      artifacts: (job?.artifacts ?? []).slice(claim.artifactsAtClaim).map((artifact) => artifact.name),
+      closedBy: result.completion ?? "unknown",
+    },
+    questions,
+    { timeoutMs: 4_000 },
+  );
+  if (judgement === null) return;
+  const overall = readVerdict(judgement, "overall");
+  await noteShadow({
+    kind: "completion",
+    workspaceId,
+    jobId,
+    verdict: overall.verdict,
+    confidence: overall.confidence,
+    actual: result.completion ?? "unknown",
+    detail: { unmetCriteria: unmetCriteria(judgement, criteria.length), criteria: criteria.length },
+  });
+}
+
+/** Records a cycle that found nothing new, where the operator can still see it. */
+async function noteQuietCycle(workspaceId: string, jobId: string, botName: string, nextRunAt: string): Promise<void> {
+  "use step";
+  await record({
+    workspaceId,
+    kind: "job.progress",
+    jobId,
+    text: `${botName} checked again and found nothing new; next at ${nextRunAt}.`,
+  });
 }
 
 /** The result the Bot recorded with finish_job during this run, if it recorded one. */
@@ -481,11 +551,12 @@ async function resultRecordedSince(
   jobId: string,
   token: string,
   atClaim: string | null,
+  startedAt: string,
 ): Promise<JobResult | null> {
   "use step";
   const job = await getJob(workspaceId, jobId);
   if (job === null || job.lease?.token !== token || job.result === null) return null;
-  return JSON.stringify(job.result) === atClaim ? null : job.result;
+  return resultIsFromRun(job.result, { startedAt, resultAtClaim: atClaim }) ? job.result : null;
 }
 
 async function newWaitToken(): Promise<string> {

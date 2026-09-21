@@ -1,6 +1,7 @@
 /** Everything Bot persists. One file so the shape of the product is readable in one place. */
 
 import type { JobEffort } from "./models";
+import type { Schedule } from "./schedule";
 
 export type BotStatus = "active" | "paused";
 
@@ -78,6 +79,11 @@ export interface Job {
   runAt: string;
   /** Repeat interval in minutes, or `null` for a one-shot job. */
   everyMinutes: number | null;
+  /**
+   * A clock schedule, for a routine that should run at a time rather than at
+   * an interval. Takes precedence over `everyMinutes`. Absent on older jobs.
+   */
+  schedule?: Schedule | null;
   /** Require a human to sign off on the deliverable before the job closes. */
   requiresSignoff: boolean;
   /** Address the result should be reported back to. */
@@ -106,11 +112,33 @@ export interface Job {
   lastRunAt: string | null;
 }
 
+/**
+ * How far a bot got to proving its own result, so "done" cannot hide how much
+ * of it to trust.
+ *
+ * - `verified`: the bot re-checked the outcome after acting.
+ * - `recorded`: the bot closed the job with `finish_job` but did not re-check.
+ * - `recovered`: the bot never closed the job, and the result was assembled
+ *   from what the run left behind (see `run_job`).
+ *
+ * Absent on results recorded before this was kept.
+ */
+export type JobCompletion = "verified" | "recorded" | "recovered";
+
 export interface JobResult {
   readonly summary: string;
   readonly deliverable: string;
   readonly openQuestions: string[];
   readonly needsHuman: boolean;
+  /** How the result came to be. Absent on older results. */
+  readonly completion?: JobCompletion;
+  /**
+   * When `finish_job` recorded it. This is what tells one cycle's result from
+   * the last one's: a routine that correctly reports "nothing changed" records
+   * the same words every cycle, so the text cannot say whether a run recorded
+   * anything. Absent on older results.
+   */
+  readonly recordedAt?: string;
 }
 
 export type ActivityKind =

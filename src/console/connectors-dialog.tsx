@@ -18,6 +18,8 @@ interface ConnectorRow {
   readonly gate: ConnectorGate;
   readonly auth: { readonly kind: ConnectorKeyKind; readonly header?: string };
   readonly check: { readonly ok: boolean; readonly at: string; readonly tools: readonly string[]; readonly error: string | null };
+  /** What each tool does, as this workspace has it recorded. Missing means "treat as changing". */
+  readonly policy?: Readonly<Record<string, "read" | "write">>;
 }
 
 /** What every Bot has without connecting anything. */
@@ -179,28 +181,53 @@ export function ConnectorsDialog({ open, onClose }: { open: boolean; onClose: ()
                       {connector.auth.kind === "none" ? "" : " · key saved"}
                     </span>
                   </div>
-                  <select
-                    className="connector-gate"
-                    value={connector.gate}
-                    disabled={busy === connector.id}
-                    title="When a person is asked before a Bot uses it"
-                    onChange={(event) => void patch(connector, { gate: event.target.value })}
-                  >
-                    {(Object.keys(GATE_LABEL) as ConnectorGate[]).map((value) => (
-                      <option key={value} value={value}>
-                        {GATE_LABEL[value]}
-                      </option>
-                    ))}
-                  </select>
-                  <label className="connector-toggle" title="Every Bot can use it">
-                    <input
-                      type="checkbox"
-                      checked={connector.enabled}
-                      disabled={busy === connector.id}
-                      onChange={(event) => void patch(connector, { enabled: event.target.checked })}
-                    />
-                    On
-                  </label>
+                  <div className="connector-controls">
+                    <label className="connector-toggle" title="Every Bot can use it">
+                      <input
+                        type="checkbox"
+                        checked={connector.enabled}
+                        disabled={busy === connector.id}
+                        onChange={(event) => void patch(connector, { enabled: event.target.checked })}
+                      />
+                      On
+                    </label>
+                    <label className="connector-gate-field" title="When a person is asked before a Bot uses it">
+                      <span>Ask</span>
+                      <select
+                        className="connector-gate"
+                        value={connector.gate}
+                        disabled={busy === connector.id}
+                        onChange={(event) => void patch(connector, { gate: event.target.value })}
+                      >
+                        {(Object.keys(GATE_LABEL) as ConnectorGate[]).map((value) => (
+                          <option key={value} value={value}>
+                            {GATE_LABEL[value].replace(/^asks /, "")}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <span className="spacer" />
+                  {connector.check.ok && connector.check.tools.length > 0 ? (
+                    <details className="connector-tools">
+                      <summary>{connector.check.tools.length} tools</summary>
+                      <ul>
+                        {connector.check.tools.map((tool) => (
+                          <li key={tool}>
+                            <code>{tool}</code>
+                            <select
+                              value={connector.policy?.[tool] ?? "write"}
+                              disabled={busy === connector.id}
+                              title="Whether this tool changes something, which is what the gate above asks about"
+                              onChange={(event) => void patch(connector, { policy: { [tool]: event.target.value } })}
+                            >
+                              <option value="read">reads</option>
+                              <option value="write">changes</option>
+                            </select>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
                   <button
                     type="button"
                     className="btn"
@@ -221,6 +248,7 @@ export function ConnectorsDialog({ open, onClose }: { open: boolean; onClose: ()
                   >
                     Remove
                   </button>
+                  </div>
                 </li>
               ))}
             </ul>

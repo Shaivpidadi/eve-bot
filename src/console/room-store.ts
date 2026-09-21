@@ -594,11 +594,21 @@ export function buildTimeline(
 ): TimelineItem[] {
   type Entry = { readonly at: string; readonly item: RoomItem } | { readonly at: string; readonly event: ActivityEvent };
   const entries: Entry[] = items.map((item) => ({ at: item.at, item }));
+  // HQ relays a finished job itself when its session wakes for it. When that
+  // wake never comes, the feed still knows the job closed; a notice here keeps
+  // the result in front of the person either way, skipped when the relay came.
+  const relayed = items.filter((item) => item.kind === "notice" && item.label === "Work came back").map((item) => Date.parse(item.at));
+  const relayedNear = (at: string) => relayed.some((when) => Math.abs(when - Date.parse(at)) < 3 * 60_000);
   for (const event of activity) {
+    // A thread that was started over shows nothing from before that moment.
+    if (member.clearedAt !== null && event.at < member.clearedAt) continue;
     const relevant =
       member.kind === "bot"
         ? event.botId === member.id && event.kind.startsWith("job.")
-        : event.kind === "bot.hired" || event.kind === "bot.retired" || event.kind.startsWith("computer.");
+        : event.kind === "bot.hired" ||
+          event.kind === "bot.retired" ||
+          event.kind.startsWith("computer.") ||
+          ((event.kind === "job.done" || event.kind === "job.failed") && !relayedNear(event.at));
     if (relevant) entries.push({ at: event.at, event });
   }
   entries.sort((left, right) => left.at.localeCompare(right.at));
@@ -611,15 +621,19 @@ export function buildTimeline(
     }
     const { event } = entry;
     if (member.kind === "hq") {
-      // HQ's thread also carries what happened to the team's computer.
+      // HQ's thread also carries what happened to the team's computer, and a
+      // job's close when HQ did not relay it.
       const computer = event.kind.startsWith("computer.");
+      const close = event.kind === "job.done" || event.kind === "job.failed";
+      const cut = event.text.indexOf(": ");
       out.push({
         kind: "notice",
         key: event.id,
         at: event.at,
-        icon: computer ? "monitor" : "person",
-        label: withoutEmoji(event.text),
-        ...(event.kind === "computer.failed" ? { tone: "error" as const } : {}),
+        icon: computer ? "monitor" : close ? (event.kind === "job.done" ? "check" : "alert") : "person",
+        label: close && cut > 0 ? withoutEmoji(event.text.slice(0, cut)) : withoutEmoji(event.text),
+        ...(close && cut > 0 ? { detail: event.text.slice(cut + 2) } : {}),
+        ...(event.kind === "computer.failed" || event.kind === "job.failed" ? { tone: "error" as const } : {}),
       });
       continue;
     }

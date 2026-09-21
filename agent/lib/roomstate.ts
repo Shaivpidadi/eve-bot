@@ -39,6 +39,8 @@ export interface RoomState {
   sessionId?: string | null;
   /** How many times the room was started over; part of its session address (see `rooms.ts`). */
   generation?: number;
+  /** When the room was last started over: the thread shows nothing recorded before this. */
+  clearedAt?: string | null;
   updatedAt: string;
 }
 
@@ -87,6 +89,7 @@ export async function resetRoom(workspaceId: string, room: string): Promise<numb
       active: false,
       sessionId: null,
       generation,
+      clearedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
   });
