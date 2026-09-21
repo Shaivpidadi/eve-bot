@@ -519,7 +519,7 @@ async function reviewClose(
       closedBy: result.completion ?? "unknown",
     },
     questions,
-    { timeoutMs: 4_000 },
+    { timeoutMs: 4_000, workspaceId },
   );
   if (judgement === null) return;
   const overall = readVerdict(judgement, "overall");

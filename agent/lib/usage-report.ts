@@ -1,7 +1,8 @@
 import { getBot } from "./bots";
 import { listJobs } from "./jobs";
 import type { Job } from "./types";
-import { addUsage, dayOf, NO_USAGE, readLedger, type Usage } from "./usage";
+import { gatewayAccount, type GatewayAccount } from "./gateway-account";
+import { dayOf, ledgerTotal, NO_USAGE, readLedger, type Usage } from "./usage";
 
 /**
  * The usage page: everything the workspace has spent, cut four ways, plus the
@@ -11,6 +12,10 @@ import { addUsage, dayOf, NO_USAGE, readLedger, type Usage } from "./usage";
 export interface UsageReport {
   readonly total: Usage;
   readonly hq: Usage;
+  /** Jev's judgements: Gateway calls that belong to no session, so they are their own line. */
+  readonly jev: Usage;
+  /** What Gateway says the whole account has spent, when a key is set and Gateway answers. */
+  readonly account: GatewayAccount | null;
   /** Each Bot that has spent anything, biggest spender first. Retired Bots keep their line. */
   readonly bots: readonly { readonly botId: string; readonly name: string; readonly emoji: string | null; readonly retired: boolean; readonly usage: Usage }[];
   /** Each model that ran a step, biggest spender first. */
@@ -36,7 +41,7 @@ const byCost = (left: { usage: Usage }, right: { usage: Usage }) =>
 export async function usageReport(workspaceId: string, options: { days?: number; jobs?: number; now?: Date } = {}): Promise<UsageReport> {
   const now = options.now ?? new Date();
   const span = options.days ?? 30;
-  const [ledger, jobs] = await Promise.all([readLedger(workspaceId), listJobs(workspaceId, { limit: 500 })]);
+  const [ledger, jobs, account] = await Promise.all([readLedger(workspaceId), listJobs(workspaceId, { limit: 500 }), gatewayAccount()]);
 
   const botIds = new Set([...Object.keys(ledger.bots), ...jobs.filter((job) => job.usage !== undefined).map((job) => job.botId)]);
   const names = new Map<string, { name: string; emoji: string | null; retired: boolean }>();
@@ -55,8 +60,10 @@ export async function usageReport(workspaceId: string, options: { days?: number;
   }
 
   return {
-    total: Object.values(ledger.bots).reduce((sum, usage) => addUsage(sum, usage), ledger.hq),
+    total: ledgerTotal(ledger),
     hq: ledger.hq,
+    jev: ledger.jev ?? NO_USAGE,
+    account,
     bots: Object.entries(ledger.bots)
       .map(([botId, usage]) => ({ botId, ...nameOf(botId), usage }))
       .sort(byCost),

@@ -15,6 +15,8 @@ export interface Usage {
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
+  /** Tokens written to the provider's prompt cache; billed, and counted in Gateway's token totals. */
+  readonly cacheWriteTokens: number;
   readonly costUsd: number;
   /** Model steps counted. */
   readonly steps: number;
@@ -22,7 +24,7 @@ export interface Usage {
   readonly models: Readonly<Record<string, number>>;
 }
 
-export const NO_USAGE: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: 0, steps: 0, models: {} };
+export const NO_USAGE: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, steps: 0, models: {} };
 
 const num = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 
@@ -33,6 +35,7 @@ export function usageOfStep(data: unknown, modelId: string | null): Usage {
     inputTokens: num(raw.inputTokens),
     outputTokens: num(raw.outputTokens),
     cacheReadTokens: num(raw.cacheReadTokens),
+    cacheWriteTokens: num(raw.cacheWriteTokens),
     costUsd: num(raw.costUsd),
     steps: 1,
     models: modelId === null ? {} : { [modelId]: 1 },
@@ -40,13 +43,15 @@ export function usageOfStep(data: unknown, modelId: string | null): Usage {
 }
 
 export function addUsage(left: Usage | undefined, right: Usage): Usage {
-  const base = left ?? NO_USAGE;
+  // Records written before cache writes were kept read as zero there.
+  const base = { ...NO_USAGE, ...left };
   const models: Record<string, number> = { ...base.models };
   for (const [model, steps] of Object.entries(right.models)) models[model] = (models[model] ?? 0) + steps;
   return {
     inputTokens: base.inputTokens + right.inputTokens,
     outputTokens: base.outputTokens + right.outputTokens,
     cacheReadTokens: base.cacheReadTokens + right.cacheReadTokens,
+    cacheWriteTokens: base.cacheWriteTokens + num(right.cacheWriteTokens),
     costUsd: Math.round((base.costUsd + right.costUsd) * 1e6) / 1e6,
     steps: base.steps + right.steps,
     models,
@@ -57,6 +62,8 @@ export function addUsage(left: Usage | undefined, right: Usage): Usage {
 export interface UsageLedger {
   readonly hq: Usage;
   readonly bots: Readonly<Record<string, Usage>>;
+  /** Jev's second opinions, which are Gateway calls but not steps of any session. Absent on older ledgers. */
+  readonly jev?: Usage;
   /** The same spend, by the model that ran the step. Absent on ledgers written before it was kept. */
   readonly byModel?: Readonly<Record<string, Usage>>;
   /** The same spend, by UTC day (`YYYY-MM-DD`), for the last `DAYS_KEPT` days. */
@@ -64,7 +71,10 @@ export interface UsageLedger {
   readonly updatedAt: string;
 }
 
-export const EMPTY_LEDGER: UsageLedger = { hq: NO_USAGE, bots: {}, byModel: {}, byDay: {}, updatedAt: "" };
+export const EMPTY_LEDGER: UsageLedger = { hq: NO_USAGE, bots: {}, jev: NO_USAGE, byModel: {}, byDay: {}, updatedAt: "" };
+
+/** Who spent it: HQ's own turns, Jev's judgements, or a Bot by id. */
+export type UsageScope = "hq" | "jev" | { readonly botId: string };
 
 /** How many days of daily figures the ledger keeps; the all-time totals never expire. */
 export const DAYS_KEPT = 90;
@@ -86,7 +96,7 @@ export async function readLedger(workspaceId: string): Promise<UsageLedger> {
  * and to the model and the day it ran on. Days older than `DAYS_KEPT` fall off
  * as new ones are written.
  */
-export function addToLedger(current: UsageLedger | null, scope: "hq" | { botId: string }, usage: Usage, at: Date = new Date()): UsageLedger {
+export function addToLedger(current: UsageLedger | null, scope: UsageScope, usage: Usage, at: Date = new Date()): UsageLedger {
   const ledger = current ?? EMPTY_LEDGER;
   const byModel: Record<string, Usage> = { ...ledger.byModel };
   const modelNames = Object.keys(usage.models);
@@ -100,15 +110,20 @@ export function addToLedger(current: UsageLedger | null, scope: "hq" | { botId: 
 
   return {
     hq: scope === "hq" ? addUsage(ledger.hq, usage) : ledger.hq,
-    bots: scope === "hq" ? ledger.bots : { ...ledger.bots, [scope.botId]: addUsage(ledger.bots[scope.botId], usage) },
+    jev: scope === "jev" ? addUsage(ledger.jev, usage) : (ledger.jev ?? NO_USAGE),
+    bots: typeof scope === "string" ? ledger.bots : { ...ledger.bots, [scope.botId]: addUsage(ledger.bots[scope.botId], usage) },
     byModel,
     byDay,
     updatedAt: at.toISOString(),
   };
 }
 
+/** Everything on the ledger added up: HQ, every Bot, and Jev. */
+export const ledgerTotal = (ledger: UsageLedger): Usage =>
+  Object.values(ledger.bots).reduce((sum, usage) => addUsage(sum, usage), addUsage(ledger.hq, ledger.jev ?? NO_USAGE));
+
 /** Adds one step's usage to the workspace's ledger. */
-export async function recordUsage(workspaceId: string, scope: "hq" | { botId: string }, usage: Usage): Promise<void> {
+export async function recordUsage(workspaceId: string, scope: UsageScope, usage: Usage): Promise<void> {
   await updateDoc<UsageLedger>(key(workspaceId), (current) => addToLedger(current, scope, usage));
 }
 

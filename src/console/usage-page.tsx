@@ -13,6 +13,8 @@ interface Line {
 interface Report {
   readonly total: UsageLike;
   readonly hq: UsageLike;
+  readonly jev: UsageLike;
+  readonly account: { readonly balanceUsd: number; readonly totalUsedUsd: number; readonly at: string } | null;
   readonly bots: readonly (Line & { readonly botId: string; readonly name: string; readonly emoji: string | null; readonly retired: boolean })[];
   readonly models: readonly (Line & { readonly model: string })[];
   readonly days: readonly (Line & { readonly day: string })[];
@@ -33,7 +35,7 @@ const modelName = (usage: UsageLike) => {
   const names = Object.keys(usage.models);
   return names.length === 0 ? "—" : names.length === 1 ? names[0] : `${names.length} models`;
 };
-const share = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—");
+const share = (part: number, whole: number) => (whole <= 0 ? "—" : part > 0 && part / whole < 0.005 ? "<1%" : `${Math.round((part / whole) * 100)}%`);
 
 /**
  * The whole workspace's spend on one page: what it cost in total, by day, by
@@ -117,10 +119,21 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
               </small>
             </div>
             <div className="usage-card">
-              <span>Read from cache</span>
+              <span>Prompt cache</span>
               <b>{tokens(report.total.cacheReadTokens)}</b>
-              <small>{share(report.total.cacheReadTokens, report.total.inputTokens + report.total.cacheReadTokens)} of input</small>
+              <small>
+                read · {tokens(report.total.cacheWriteTokens ?? 0)} written
+              </small>
             </div>
+            {report.account === null ? null : (
+              <div className="usage-card usage-account">
+                <span>Gateway account · every project on this key</span>
+                <b>{usd(report.account.totalUsedUsd)}</b>
+                <small>
+                  {usd(report.account.balanceUsd)} credit left · this workspace is {share(report.total.costUsd, report.account.totalUsedUsd)} of it
+                </small>
+              </div>
+            )}
           </section>
 
           {unpriced ? (
@@ -207,6 +220,19 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
                       <small> · {share(report.hq.costUsd, report.total.costUsd)}</small>
                     </td>
                   </tr>
+                  {report.jev.steps === 0 ? null : (
+                    <tr>
+                      <td className="usage-name">
+                        Jev <small>second opinions</small>
+                      </td>
+                      <td>{report.jev.steps}</td>
+                      <td>{tokens(report.jev.inputTokens + report.jev.outputTokens)}</td>
+                      <td>
+                        {usd(report.jev.costUsd)}
+                        <small> · {share(report.jev.costUsd, report.total.costUsd)}</small>
+                      </td>
+                    </tr>
+                  )}
                   {report.bots.map((row) => (
                     <tr key={row.botId}>
                       <td className="usage-name">
@@ -265,8 +291,9 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
           </section>
 
           <p className="faint usage-foot">
-            Counted from every model step eve reports, as the provider counted it. HQ's own turns count under HQ; a Bot's steps count under the Bot and on the
-            job. Daily figures keep 90 days; totals keep forever.
+            Counted from every model step eve reports, as the provider counted it, plus Jev's judgements. HQ's own turns count under HQ; a Bot's steps count
+            under the Bot and on the job. Not counted: anything before this ledger existed, eve's own housekeeping calls such as compaction, and other
+            projects on the same key, which is why the Gateway account figure runs higher. Daily figures keep 90 days; totals keep forever.
           </p>
         </div>
       )}

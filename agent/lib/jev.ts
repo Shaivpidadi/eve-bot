@@ -1,5 +1,7 @@
 import { experimental_evaluate as evaluate, type Experimental_EvaluationQuestion as EvaluationQuestion } from "ai";
 
+import { recordUsage, type Usage } from "./usage";
+
 /**
  * Jev: small decisions, for a tenth of a cent.
  *
@@ -82,6 +84,23 @@ export interface Judgement<QUESTIONS extends Record<string, EvaluationQuestion>>
   readonly inputTokens: number | undefined;
 }
 
+const count = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+
+/** One judgement's usage as the ledger counts it, with Gateway's price when it sent one. */
+export function spent(usage: unknown, metadata: unknown, model: string = process.env.BOT_JEV_MODEL?.trim() || DEFAULT_MODEL): Usage {
+  const raw = (usage ?? {}) as { inputTokens?: unknown; outputTokens?: unknown; inputTokenDetails?: { cacheReadTokens?: unknown; cacheWriteTokens?: unknown } };
+  const cost = (metadata as { gateway?: { cost?: unknown } } | undefined)?.gateway?.cost;
+  return {
+    inputTokens: count(raw.inputTokens),
+    outputTokens: count(raw.outputTokens),
+    cacheReadTokens: count(raw.inputTokenDetails?.cacheReadTokens),
+    cacheWriteTokens: count(raw.inputTokenDetails?.cacheWriteTokens),
+    costUsd: typeof cost === "string" || typeof cost === "number" ? count(Number(cost)) : 0,
+    steps: 1,
+    models: { [model]: 1 },
+  };
+}
+
 function confidenceFrom(metadata: unknown): Record<string, number> {
   const typesafe = (metadata as { typesafe?: { confidence?: unknown } } | undefined)?.typesafe?.confidence;
   if (typeof typesafe !== "object" || typesafe === null) return {};
@@ -102,7 +121,7 @@ function confidenceFrom(metadata: unknown): Record<string, number> {
 export async function judge<const QUESTIONS extends Record<string, EvaluationQuestion>>(
   state: unknown,
   questions: QUESTIONS,
-  options: { readonly timeoutMs?: number; readonly abortSignal?: AbortSignal } = {},
+  options: { readonly timeoutMs?: number; readonly abortSignal?: AbortSignal; readonly workspaceId?: string } = {},
 ): Promise<Judgement<QUESTIONS> | null> {
   if (!jevEnabled()) return null;
   try {
@@ -113,6 +132,10 @@ export async function judge<const QUESTIONS extends Record<string, EvaluationQue
       maxRetries: 0,
       abortSignal: options.abortSignal ?? AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
+    if (options.workspaceId !== undefined) {
+      // Jev is a Gateway call like any other; the usage page should see it. Never in the way of the answer.
+      void recordUsage(options.workspaceId, "jev", spent(result.usage, result.providerMetadata)).catch(() => undefined);
+    }
     return {
       answers: result.answers,
       confidence: confidenceFrom(result.providerMetadata),

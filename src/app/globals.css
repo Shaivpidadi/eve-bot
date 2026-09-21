@@ -792,6 +792,7 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .usage-loading, .usage-error { padding: 24px 16px; }
 .usage-body { max-width: 1040px; margin: 0 auto; padding: 22px 16px 40px; display: flex; flex-direction: column; gap: 26px; }
 .usage-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.usage-account { grid-column: 1 / -1; border-color: var(--purple); }
 .usage-card {
   display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; min-width: 0;
   background: var(--card); border: 1px solid var(--line-2); border-radius: 12px;

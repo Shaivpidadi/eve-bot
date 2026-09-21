@@ -5,6 +5,8 @@ export interface UsageLike {
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
+  /** Absent on records written before cache writes were kept. */
+  readonly cacheWriteTokens?: number;
   readonly costUsd: number;
   readonly steps: number;
   readonly models: Readonly<Record<string, number>>;

@@ -11,7 +11,7 @@ import {
 } from "./computer/screens";
 import { isRoutine, listOpenJobs } from "./jobs";
 import { describeSchedule } from "./schedule";
-import { addUsage, NO_USAGE, readLedger, type Usage } from "./usage";
+import { ledgerTotal, NO_USAGE, readLedger, type Usage } from "./usage";
 import { HQ_ROOM, roomForBot } from "./rooms";
 import { getRoomState, type AnsweredInput, type RoomState } from "./roomstate";
 import type { ActivityEvent, Bot, Job } from "./types";
@@ -210,7 +210,7 @@ export async function buildBoard(
       error: (backend === "vercel" ? vercelCredentialsError() : null) ?? failure?.text ?? null,
     },
     usage: {
-      total: Object.values(ledger.bots).reduce((sum, usage) => addUsage(sum, usage), ledger.hq),
+      total: ledgerTotal(ledger),
       hq: ledger.hq,
       bots: ledger.bots,
     },
