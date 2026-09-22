@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, SignedOutError } from "./api";
-import type { ActivityEvent, BoardResponse, Member } from "./types";
+import type { ActivityEvent, BoardResponse, Member, Profile } from "./types";
 
 export interface BoardState {
   readonly workspaceId: string;
   readonly user: string;
+  readonly profile: Profile | null;
   readonly members: readonly Member[];
   /** Oldest first. */
   readonly activity: readonly ActivityEvent[];
@@ -43,7 +44,7 @@ export function useBoard(): { board: BoardState | null; online: boolean; refresh
         events.current.delete(stale.id);
       }
 
-      setBoard({ workspaceId: next.workspaceId, user: next.user, members: next.members, activity });
+      setBoard({ workspaceId: next.workspaceId, user: next.user, profile: next.profile ?? null, members: next.members, activity });
       setOnline(true);
     } catch (error) {
       if (!(error instanceof SignedOutError)) setOnline(false);

@@ -9,11 +9,38 @@ const decode = (path: string) => path.split(sep).map(decodeURIComponent).join("/
 const hash = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 32);
 
 /**
+ * Runs one key's writes one at a time. A conditional put reads the version and
+ * then writes; without this, two writers that both read the same version both
+ * pass the check and the later one silently overwrites the earlier one. That
+ * lost the model's memory saves when it saved two things in one step. Blob
+ * checks the version on the server; on disk this queue is the check.
+ */
+function perKey() {
+  const tails = new Map<string, Promise<void>>();
+  return async function serial<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = tails.get(key) ?? Promise.resolve();
+    let release: () => void = () => undefined;
+    const tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    tails.set(key, tail);
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
+      if (tails.get(key) === tail) tails.delete(key);
+    }
+  };
+}
+
+/**
  * Local-disk storage for `eve dev`, so a roster of bots and their job history
  * survive a restart without any cloud dependency.
  */
 export function fileKv(root: string): Kv {
   const pathFor = (key: string) => join(root, encode(key));
+  const serial = perKey();
 
   return {
     name: `fs(${root})`,
@@ -26,24 +53,26 @@ export function fileKv(root: string): Kv {
         throw error;
       }
     },
-    async put(key, value, options: KvPutOptions = {}) {
-      const path = pathFor(key);
-      if (options.expectedVersion !== undefined) {
-        const current = await this.get(key);
-        const matches =
-          options.expectedVersion === null
-            ? current === null
-            : current?.version === options.expectedVersion;
-        if (!matches) throw new KvConflictError(key);
-      }
-      await mkdir(dirname(path), { recursive: true });
-      const staging = `${path}.${process.pid}.${hash(value)}.tmp`;
-      await writeFile(staging, value, "utf8");
-      await rename(staging, path);
-      return hash(value);
+    put(key, value, options: KvPutOptions = {}) {
+      return serial(key, async () => {
+        const path = pathFor(key);
+        if (options.expectedVersion !== undefined) {
+          const current = await this.get(key);
+          const matches =
+            options.expectedVersion === null
+              ? current === null
+              : current?.version === options.expectedVersion;
+          if (!matches) throw new KvConflictError(key);
+        }
+        await mkdir(dirname(path), { recursive: true });
+        const staging = `${path}.${process.pid}.${hash(value)}.tmp`;
+        await writeFile(staging, value, "utf8");
+        await rename(staging, path);
+        return hash(value);
+      });
     },
-    async delete(key) {
-      await rm(pathFor(key), { force: true });
+    delete(key) {
+      return serial(key, () => rm(pathFor(key), { force: true }));
     },
     async putBytes(key, bytes) {
       const path = pathFor(key);

@@ -9,6 +9,51 @@ import { bytes, PRESENCE_LABEL, scheduleText, shortWhen } from "./format";
 import { Icon } from "./icons";
 import { RoutineDialog } from "./routine-dialog";
 import type { Hover, Member, Routine } from "./types";
+import { modelsOf, tokens, usd } from "../../agent/lib/usage-format";
+
+/**
+ * What a member's model steps have cost, all time: which models, how many
+ * tokens in and out, and the bill as the provider priced it. Nothing shows
+ * until the first step has been counted.
+ */
+function UsageSection({ member }: { member: Member }) {
+  const usage = member.usage;
+  if (usage === undefined || usage.steps === 0) return null;
+  const models = Object.entries(usage.models).sort((left, right) => right[1] - left[1]);
+  return (
+    <div className="section">
+      <h3>Usage</h3>
+      <ul className="list usage">
+        <li>
+          <Icon name="dot" size={15} />
+          <div>
+            <b>{models.length === 0 ? "Model not reported" : models.length === 1 ? models[0]![0] : `${models.length} models`}</b>
+            <span>{models.length > 1 ? models.map(([model, steps]) => `${model} ×${steps}`).join(" · ") : `${usage.steps} model ${usage.steps === 1 ? "step" : "steps"}`}</span>
+          </div>
+        </li>
+        <li>
+          <Icon name="dot" size={15} />
+          <div>
+            <b>
+              {tokens(usage.inputTokens)} in · {tokens(usage.outputTokens)} out
+            </b>
+            <span>
+              {usage.cacheReadTokens > 0 ? `${tokens(usage.cacheReadTokens)} read from cache` : "no cache reads"}
+              {(usage.cacheWriteTokens ?? 0) > 0 ? ` · ${tokens(usage.cacheWriteTokens ?? 0)} written` : ""}
+            </span>
+          </div>
+        </li>
+        <li>
+          <Icon name="dot" size={15} />
+          <div>
+            <b>{usd(usage.costUsd)}</b>
+            <span>{usage.costUsd === 0 && usage.steps > 0 ? "provider reported no cost; set BOT_MODEL_PRICES on a custom endpoint" : `as ${modelsOf(usage) ?? "the provider"} priced it`}</span>
+          </div>
+        </li>
+      </ul>
+    </div>
+  );
+}
 
 export type PanelView = "overview" | "settings";
 
@@ -109,13 +154,18 @@ export function DetailsPanel({
           <Icon name="x" />
         </button>
       </div>
+      {settings ? null : (
+        <div className="panel-pinned">
+          <ScreenPreview member={member} members={members} onTakeover={onTakeover} />
+        </div>
+      )}
       <div className="panel-body">
         {member.kind === "hq" ? (
-          <HqPanel member={member} members={members} onTakeover={onTakeover} onSelect={onSelect} onHover={onHover} />
+          <HqPanel member={member} members={members} onSelect={onSelect} onHover={onHover} />
         ) : settings ? (
           <SettingsPanel key={member.id} member={member} onChanged={onChanged} editRequest={editRequest} />
         ) : (
-          <BotPanel member={member} members={members} onTakeover={onTakeover} onChanged={onChanged} />
+          <BotPanel member={member} members={members} onChanged={onChanged} />
         )}
       </div>
     </aside>
@@ -180,12 +230,10 @@ function ScreenPreview({
 function BotPanel({
   member,
   members,
-  onTakeover,
   onChanged,
 }: {
   member: Member;
   members: readonly Member[];
-  onTakeover: () => void;
   onChanged: () => Promise<void>;
 }) {
   const paused = member.status === "paused";
@@ -193,8 +241,6 @@ function BotPanel({
 
   return (
     <>
-      <ScreenPreview member={member} members={members} onTakeover={onTakeover} />
-
       <div className="section">
         <h3>Routines</h3>
         <ul className="list">
@@ -217,6 +263,7 @@ function BotPanel({
         </ul>
       </div>
       <RoutineDialog routine={editing} onClose={() => setEditing(null)} onChanged={onChanged} />
+      <UsageSection member={member} />
 
       {member.files.length === 0 ? null : (
         <div className="section">
@@ -406,13 +453,11 @@ function SettingsPanel({
 function HqPanel({
   member,
   members,
-  onTakeover,
   onSelect,
   onHover,
 }: {
   member: Member;
   members: readonly Member[];
-  onTakeover: () => void;
   onSelect: (id: string) => void;
   onHover: (hover: Hover | null) => void;
 }) {
@@ -421,8 +466,6 @@ function HqPanel({
 
   return (
     <>
-      <ScreenPreview member={member} members={members} onTakeover={onTakeover} />
-
       <div className="section">
         <h3>Team</h3>
         <ul className="list">
@@ -445,6 +488,7 @@ function HqPanel({
           )}
         </ul>
       </div>
+      <UsageSection member={member} />
 
       {waiting.length === 0 ? null : (
         <div className="section">

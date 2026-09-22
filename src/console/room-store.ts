@@ -6,7 +6,8 @@ import type { IconName } from "./icons";
 import type { ActivityEvent, Member } from "./types";
 
 /** How long a sent message may go unacknowledged by its thread before the console says so. */
-const NO_REPLY_MS = 60_000;
+/** How long a sent message may go without a turn before the thread is restarted; a little past the server's own grace. */
+const NO_REPLY_MS = 50_000;
 
 export interface Notice {
   readonly icon: IconName;
@@ -145,6 +146,8 @@ export class RoomStore {
   private optimistic: string[] = [];
   /** Sent messages the thread has not picked up yet, each with a deadline. */
   private readonly unanswered = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Messages the watchdog already sent again once; a second silence is shown, not retried. */
+  private readonly recovered = new Set<string>();
   private live = false;
   private liveLabel: string | null = null;
   private loaded = false;
@@ -214,24 +217,72 @@ export class RoomStore {
       message,
       setTimeout(() => {
         this.unanswered.delete(message);
-        const pending = this.optimistic.indexOf(message);
-        if (pending < 0) return;
-        this.optimistic.splice(pending, 1);
-        this.items.push({
-          kind: "notice",
-          key: `unanswered:${Date.now()}:${this.items.length}`,
-          at: new Date().toISOString(),
-          icon: "alert",
-          label: "No reply",
-          detail:
-            "The message was accepted, but this thread never picked it up. If the server was just switched between npm run dev and npm start, the thread cannot continue here: start it over. Otherwise check the server logs.",
-          tone: "error",
-          action: "start-over",
-        });
-        this.settle();
-        this.emit();
+        if (!this.optimistic.includes(message)) return;
+        if (this.recovered.has(message)) {
+          this.giveUp(message);
+          return;
+        }
+        void this.recover(message);
       }, NO_REPLY_MS),
     );
+  }
+
+  /**
+   * The watchdog. The server moves the thread to a fresh session and sends the
+   * message again; here the conversation shown stays as it was, and the new
+   * session is read from its start. A thread that is still answering is left
+   * alone by the server, in which case the wait simply continues.
+   */
+  private async recover(message: string): Promise<void> {
+    this.recovered.add(message);
+    try {
+      const response = await api(`/bot/v1/rooms/${encodeURIComponent(this.room)}/recover`, { method: "POST", body: JSON.stringify({ message }) });
+      if (response.status === 409) {
+        // Not wedged after all: a slow turn. Wait once more, then say so.
+        this.expectReply(message);
+        return;
+      }
+      if (!response.ok) throw new Error(await errorMessage(response, "The server refused."));
+    } catch (error) {
+      if (!(error instanceof SignedOutError)) this.giveUp(message);
+      return;
+    }
+    // Same thread, new session: drop the old follower and read the new one from its first event.
+    this.controller?.abort();
+    this.controller = null;
+    this.following = false;
+    this.sessionId = null;
+    this.index = 0;
+    this.terminal = false;
+    this.items.push({
+      kind: "notice",
+      key: `recovered:${Date.now()}:${this.items.length}`,
+      at: new Date().toISOString(),
+      icon: "check",
+      label: "Thread restarted",
+      detail: "It had stopped answering, so it was started fresh and your message sent again. It will not remember this conversation, only what is in Memory.",
+    });
+    this.emit();
+    this.expectReply(message);
+    void this.follow();
+  }
+
+  private giveUp(message: string): void {
+    const pending = this.optimistic.indexOf(message);
+    if (pending < 0) return;
+    this.optimistic.splice(pending, 1);
+    this.items.push({
+      kind: "notice",
+      key: `unanswered:${Date.now()}:${this.items.length}`,
+      at: new Date().toISOString(),
+      icon: "alert",
+      label: "No reply",
+      detail: "The message was accepted, but this thread never picked it up, even after a restart. Check the server logs, or start the thread over.",
+      tone: "error",
+      action: "start-over",
+    });
+    this.settle();
+    this.emit();
   }
 
   private replied(message: string): void {
@@ -604,9 +655,10 @@ export function buildTimeline(
     if (member.clearedAt !== null && event.at < member.clearedAt) continue;
     const relevant =
       member.kind === "bot"
-        ? event.botId === member.id && event.kind.startsWith("job.")
+        ? event.botId === member.id && (event.kind.startsWith("job.") || event.kind === "memory.saved")
         : event.kind === "bot.hired" ||
           event.kind === "bot.retired" ||
+          (event.kind === "memory.saved" && event.botId === null) ||
           event.kind.startsWith("computer.") ||
           ((event.kind === "job.done" || event.kind === "job.failed") && !relayedNear(event.at));
     if (relevant) entries.push({ at: event.at, event });
@@ -625,7 +677,12 @@ export function buildTimeline(
       // job's close when HQ did not relay it.
       const computer = event.kind.startsWith("computer.");
       const close = event.kind === "job.done" || event.kind === "job.failed";
+      const remembered = event.kind === "memory.saved";
       const cut = event.text.indexOf(": ");
+      if (remembered) {
+        out.push({ kind: "notice", key: event.id, at: event.at, icon: "brain", label: "Remembered", detail: event.text.slice(cut + 2) });
+        continue;
+      }
       out.push({
         kind: "notice",
         key: event.id,

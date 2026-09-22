@@ -35,6 +35,20 @@ describe("fileKv", () => {
     expect((await kv.get("jobs/a"))?.value).toBe("two");
   });
 
+  it("lets exactly one of several simultaneous conditional writers win", async () => {
+    // Three saves in one model step all read the same version; only the first may land.
+    const kv = fileKv(root);
+    const base = await kv.put("memory/doc", "0: name");
+    const results = await Promise.allSettled(
+      ["a", "b", "c"].map((who) => kv.put("memory/doc", `0: name\n1: ${who}`, { expectedVersion: base })),
+    );
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected" && result.reason instanceof KvConflictError)).toHaveLength(2);
+    // Unconditional writes still queue rather than interleave, so the last one is what is read back.
+    await Promise.all(["x", "y", "z"].map((who) => kv.put("memory/other", who)));
+    expect((await kv.get("memory/other"))?.value).toBe("z");
+  });
+
   it("lists by prefix and deletes", async () => {
     const kv = fileKv(root);
     await kv.put("jobs/default/j1", "a");

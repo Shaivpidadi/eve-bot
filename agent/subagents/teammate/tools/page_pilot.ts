@@ -2,6 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { jevEnabled, judge } from "../../../lib/jev";
+import { operator } from "../../../lib/session";
 import { looseBoolean } from "../../../lib/tool-input";
 
 import { act, isLook, look } from "../lib/page";
@@ -86,6 +87,7 @@ export default defineTool({
 
       const judgement = await judge({ goal, url: seen.url, page: seen.page.slice(0, 8_000) }, stepQuestion(goal, candidates), {
         timeoutMs: 5_000,
+        workspaceId: operator(ctx).workspaceId,
       });
       const choice = readChoice(judgement, candidates, { allowConsequential: allowSpending === true });
       if (choice.stop !== null) {

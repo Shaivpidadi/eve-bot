@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
 import { hostIsProtected, requestHost } from "./protection";
+import { readDoc, writeDoc } from "./store";
 
 /**
  * Who may use the console routes, and which workspace they see.
@@ -18,6 +19,15 @@ export interface Access {
   readonly workspaceId: string;
   /** Trusted from the header once the caller holds a token for the workspace. */
   readonly user: string;
+  /** Who that is, for the console: a display name and, when Vercel knows them, a picture. */
+  readonly profile: Profile;
+}
+
+export interface Profile {
+  readonly name: string;
+  readonly avatarUrl: string | null;
+  /** Where the name came from: the caller's header, Vercel's sign-in, a name set in the console, or nothing (the shared operator). */
+  readonly source: "header" | "vercel" | "workspace" | "none";
 }
 
 export type Gate =
@@ -79,8 +89,41 @@ function presentedToken(request: Request): string | null {
 }
 
 function user(request: Request): string {
+  return profile(request).name;
+}
+
+/**
+ * The signed-in Vercel user, from the cookie Vercel Authentication sets.
+ *
+ * On a protected deployment every request arrives with `_vercel_jwt`, whose
+ * payload names the account that passed the sign-in. Vercel is the one who
+ * checked it, at the edge, before the request reached here; reading the claims
+ * only puts a name and a face on a caller that is already trusted. Nothing here
+ * grants access: `authenticate` decides that from the protection probe.
+ */
+function vercelIdentity(request: Request): { name: string; avatarUrl: string | null } | null {
+  const cookie = request.headers.get("cookie") ?? "";
+  const match = /(?:^|;\s*)_vercel_jwt=([^;]+)/.exec(cookie);
+  if (match === null || match[1] === undefined) return null;
+  const parts = match[1].split(".");
+  if (parts.length < 2 || parts[1] === undefined) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as Record<string, unknown>;
+    const name = [claims.username, claims.email, claims.sub].find((value): value is string => typeof value === "string" && value.trim() !== "");
+    if (name === undefined) return null;
+    const id = typeof claims.sub === "string" ? claims.sub : null;
+    return { name: name.slice(0, 200), avatarUrl: id === null ? null : `https://vercel.com/api/www/avatar/${encodeURIComponent(id)}?s=64` };
+  } catch {
+    return null;
+  }
+}
+
+export function profile(request: Request): Profile {
   const header = request.headers.get("x-bot-user")?.trim();
-  return header ? header.slice(0, 200) : "operator";
+  if (header) return { name: header.slice(0, 200), avatarUrl: null, source: "header" };
+  const vercel = vercelIdentity(request);
+  if (vercel !== null) return { ...vercel, source: "vercel" };
+  return { name: "operator", avatarUrl: null, source: "none" };
 }
 
 /**
@@ -91,15 +134,45 @@ function user(request: Request): string {
 const vercelAuthentication = (): boolean =>
   process.env.VERCEL === "1" && process.env.BOT_CONSOLE_AUTH !== "token";
 
+// ---------------------------------------------------------------------------
+// A name set in the console, for a workspace nobody signs in to by name.
+// ---------------------------------------------------------------------------
+
+const nameKey = (workspaceId: string) => `settings/${workspaceId}/operator.json`;
+const NAME_MAX = 80;
+
+export async function storedName(workspaceId: string): Promise<string | null> {
+  const doc = (await readDoc<{ readonly name: string }>(nameKey(workspaceId)))?.value;
+  return doc === undefined || doc.name.trim() === "" ? null : doc.name;
+}
+
+/** Sets, or with an empty name clears, what the console calls the person in this workspace. */
+export async function setStoredName(workspaceId: string, raw: string): Promise<string | null> {
+  const name = raw.trim().replace(/\s+/g, " ").slice(0, NAME_MAX);
+  await writeDoc(nameKey(workspaceId), { name, at: new Date().toISOString() });
+  return name === "" ? null : name;
+}
+
+/** Who this is, for the console and the session: a header or Vercel first, then the name set in the console. */
+async function accessFor(request: Request, workspaceId: string): Promise<Access> {
+  const known = profile(request);
+  const name = known.source === "none" ? await storedName(workspaceId).catch(() => null) : null;
+  return {
+    workspaceId,
+    user: user(request),
+    profile: name === null ? known : { name, avatarUrl: null, source: "workspace" },
+  };
+}
+
 export async function authenticate(request: Request): Promise<Gate> {
   const token = presentedToken(request);
   const tokenWorkspace = token === null || !tokensConfigured() ? null : workspaceForToken(token);
-  if (tokenWorkspace !== null) return { ok: true, access: { workspaceId: tokenWorkspace, user: user(request) } };
+  if (tokenWorkspace !== null) return { ok: true, access: await accessFor(request, tokenWorkspace) };
 
   if (vercelAuthentication()) {
     const host = requestHost(request);
     if (host !== null && (await hostIsProtected(host))) {
-      return { ok: true, access: { workspaceId: DEFAULT_WORKSPACE, user: user(request) } };
+      return { ok: true, access: await accessFor(request, DEFAULT_WORKSPACE) };
     }
   }
 
@@ -119,7 +192,7 @@ export async function authenticate(request: Request): Promise<Gate> {
     new URL(request.url).searchParams.get("workspace") ??
     DEFAULT_WORKSPACE;
   if (!WORKSPACE.test(workspaceId)) return { ok: false, status: 400, error: "invalid workspace" };
-  return { ok: true, access: { workspaceId, user: user(request) } };
+  return { ok: true, access: await accessFor(request, workspaceId) };
 }
 
 /** Sets the console cookie, or clears it when `token` is null. */

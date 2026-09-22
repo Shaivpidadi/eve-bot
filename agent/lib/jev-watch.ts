@@ -106,7 +106,7 @@ export function authWallQuestions(): Record<string, EvaluationQuestion> {
  */
 export async function watchAuthWall(workspaceId: string, url: string, page: string): Promise<void> {
   if (!jevEnabled()) return;
-  const judgement = await judge({ url, page: page.slice(0, 6_000) }, authWallQuestions(), { timeoutMs: 3_000 });
+  const judgement = await judge({ url, page: page.slice(0, 6_000) }, authWallQuestions(), { timeoutMs: 3_000, workspaceId });
   if (judgement === null) return;
   const { verdict, confidence } = readVerdict(judgement, "wall");
   if (verdict === "unknown") return;
@@ -173,7 +173,7 @@ export async function watchToolPolicy(
   policy: Readonly<Record<string, "read" | "write">>,
 ): Promise<void> {
   if (!jevEnabled() || tools.length === 0) return;
-  const judgement = await judge({ tools: tools.slice(0, POLICY_QUESTIONS) }, toolPolicyQuestions(tools), { timeoutMs: 5_000 });
+  const judgement = await judge({ tools: tools.slice(0, POLICY_QUESTIONS) }, toolPolicyQuestions(tools), { timeoutMs: 5_000, workspaceId });
   const disagreements = policyDisagreements(judgement, tools, policy);
   if (disagreements.length === 0) return;
   await noteShadow({

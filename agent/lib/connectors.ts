@@ -1,14 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
-import {
-  type CatalogEntry,
-  catalogEntry,
-  type ConnectorGate,
-  type ConnectorKeyKind,
-  mergePolicy,
-  type ToolEffect,
-  type ToolPolicy,
-} from "./catalog";
+import { catalogEntry, effectOf, mergePolicy, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind, type ToolEffect, type ToolPolicy } from "./catalog";
 import { computerKey } from "./computer/keys";
 import { newId } from "./ids";
 import { watchToolPolicy } from "./jev-watch";
@@ -59,6 +51,8 @@ export interface Connector {
    * operator's to correct. A tool missing from it counts as a write.
    */
   readonly policy?: ToolPolicy;
+  /** Tools the operator switched off; Bots and HQ never see them. Absent means all on. */
+  readonly disabledTools?: readonly string[];
   readonly check: ConnectorCheck;
   readonly createdAt: string;
   readonly createdBy: string;
@@ -176,20 +170,58 @@ export async function updateConnector(
     check?: ConnectorCheck;
     /** Corrections to what a tool does, merged over what is recorded. */
     policy?: Readonly<Record<string, ToolEffect>>;
+    /** Tools switched on (true) or off (false), merged over what is recorded. */
+    tools?: Readonly<Record<string, boolean>>;
   },
 ): Promise<Connector | null> {
-  return updateDoc<Connector>(key(workspaceId, id), (current) =>
-    current === null
-      ? null
-      : {
-          ...current,
-          ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
-          ...(patch.gate === undefined || !GATES.includes(patch.gate) ? {} : { gate: patch.gate }),
-          ...(patch.description === undefined ? {} : { description: patch.description.trim().slice(0, DESCRIPTION_MAX) }),
-          ...(patch.check === undefined ? {} : { check: patch.check }),
-          ...(patch.policy === undefined ? {} : { policy: { ...current.policy, ...patch.policy } }),
-        },
+  return updateDoc<Connector>(key(workspaceId, id), (current) => {
+    if (current === null) return null;
+    const disabled = new Set(current.disabledTools ?? []);
+    for (const [tool, on] of Object.entries(patch.tools ?? {})) if (on) disabled.delete(tool); else disabled.add(tool);
+    return {
+      ...current,
+      ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
+      ...(patch.gate === undefined || !GATES.includes(patch.gate) ? {} : { gate: patch.gate }),
+      ...(patch.description === undefined ? {} : { description: patch.description.trim().slice(0, DESCRIPTION_MAX) }),
+      ...(patch.check === undefined ? {} : { check: patch.check }),
+      ...(patch.policy === undefined ? {} : { policy: { ...current.policy, ...patch.policy } }),
+      ...(patch.tools === undefined ? {} : { disabledTools: [...disabled].sort() }),
+    };
+  });
+}
+
+/**
+ * The tools a connector offers right now: what the server listed at the last
+ * check, less what the operator switched off, and for HQ only those that read.
+ */
+export function allowedTools(connector: Pick<Connector, "check" | "disabledTools" | "policy">, options: { readonly readsOnly?: boolean } = {}): string[] {
+  const off = new Set(connector.disabledTools ?? []);
+  return connector.check.tools.filter((tool) => !off.has(tool) && (!options.readsOnly || effectOf(connector.policy, tool) === "read"));
+}
+
+/**
+ * Swaps the key a connector uses, after proving the server accepts the new one.
+ * The old key stays until then, so a typo never breaks a working connector.
+ */
+export async function replaceKey(
+  workspaceId: string,
+  id: string,
+  input: { readonly kind?: ConnectorKeyKind; readonly header?: string; readonly secret: string },
+): Promise<{ ok: true; connector: Connector } | { ok: false; error: string }> {
+  const current = await getConnector(workspaceId, id);
+  if (current === null) return { ok: false, error: "no such connector" };
+  const kind: ConnectorKeyKind = input.kind ?? current.auth.kind;
+  const header = input.header ?? (current.auth.kind === "header" ? current.auth.header : "");
+  const secret = input.secret.trim();
+  if (kind !== "none" && (secret === "" || secret.length > SECRET_MAX)) return { ok: false, error: "Paste the new key." };
+  if (kind === "header" && !HEADER_NAME.test(header)) return { ok: false, error: "Header names use letters, digits, and dashes, such as X-Api-Key." };
+  const probe = await probeMcp(current.url, headersFor(kind, header, secret));
+  if (!probe.ok) return { ok: false, error: probe.error ?? "The server did not accept that key." };
+  const auth = await seal(kind, header, secret);
+  const updated = await updateDoc<Connector>(key(workspaceId, id), (record) =>
+    record === null ? null : { ...record, auth, check: probe, policy: mergePolicy(record.policy, probe.tools) },
   );
+  return updated === null ? { ok: false, error: "no such connector" } : { ok: true, connector: updated };
 }
 
 export async function removeConnector(workspaceId: string, id: string): Promise<boolean> {

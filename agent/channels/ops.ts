@@ -2,14 +2,7 @@ import { DELETE, GET, PATCH, POST, defineChannel } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
 
-import {
-  authenticate,
-  sessionCookie,
-  tokensConfigured,
-  workspaceForToken,
-  type Access,
-  type Gate,
-} from "../lib/access";
+import { authenticate, sessionCookie, setStoredName, tokensConfigured, type Access, type Gate, workspaceForToken } from "../lib/access";
 import { record } from "../lib/activity";
 import { readArtifact } from "../lib/artifacts";
 import { buildBoard } from "../lib/board";
@@ -20,21 +13,14 @@ import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScree
 import { cancelJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
-import { addMemory, forgetMemory, isMemorySlot, readMemory } from "../lib/memory";
+import { forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, remember, rewrite as rewriteMemory, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
 import { CATALOG } from "../lib/catalog";
-import {
-  addConnector,
-  getConnector,
-  listConnectors,
-  publicConnector,
-  recheckConnector,
-  removeConnector,
-  updateConnector,
-} from "../lib/connectors";
+import { addConnector, getConnector, listConnectors, publicConnector, recheckConnector, removeConnector, replaceKey, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
-import { getRoomState, noteAnswered, resetRoom, roomGeneration } from "../lib/roomstate";
+import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
 import { store } from "../lib/store";
+import { usageReport } from "../lib/usage-report";
 
 /**
  * The ops channel: how people and machines reach the team.
@@ -74,6 +60,14 @@ const POLICY_TOOLS = 200;
  * Only "read" and "write" are accepted, and only for plausible tool names, so
  * a typo cannot quietly become a third kind of permission nothing checks.
  */
+/** `{ toolName: true | false }`, or null when the body carries nothing usable. */
+function toolsPatch(value: unknown): Record<string, boolean> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const out: Record<string, boolean> = {};
+  for (const [tool, on] of Object.entries(value as Record<string, unknown>)) if (typeof on === "boolean" && tool.trim() !== "") out[tool] = on;
+  return Object.keys(out).length === 0 ? null : out;
+}
+
 function policyPatch(value: unknown): Record<string, "read" | "write"> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const patch: Record<string, "read" | "write"> = {};
@@ -88,9 +82,36 @@ function policyPatch(value: unknown): Record<string, "read" | "write"> | null {
 const seeOther = (location: string, headers: Record<string, string> = {}) =>
   new Response(null, { status: 303, headers: { location, ...headers } });
 
+/**
+ * Moves a wedged room to a fresh session and lets go of the old one, bounded,
+ * because on eve 0.58 the old session may not answer a cancel either. The
+ * thread is kept; only the address changes. Records what happened in the feed.
+ */
+async function restartWedgedRoom(
+  workspaceId: string,
+  room: string,
+  attachSession: (sessionId: string) => { cancel(options: { tasks: boolean }): Promise<unknown> },
+): Promise<number> {
+  const old = (await getRoomState(workspaceId, room))?.sessionId ?? null;
+  const generation = await restartRoom(workspaceId, room);
+  if (old !== null) {
+    await Promise.race([attachSession(old).cancel({ tasks: false }), new Promise((resolve) => setTimeout(resolve, 5_000))]).catch(() => undefined);
+  }
+  const botId = botIdForRoom(room);
+  const bot = botId === null ? null : await getBot(workspaceId, botId);
+  await record({
+    workspaceId,
+    kind: "bot.updated",
+    botId: bot?.id ?? null,
+    text: `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} stopped answering and was restarted; the last message was sent again.`,
+    data: { room, generation, restarted: true },
+  }).catch(() => undefined);
+  return generation;
+}
+
 function principal(access: Access, room: string): SessionAuthContext {
   return {
-    attributes: roomAttributes(access.workspaceId, room),
+    attributes: { ...roomAttributes(access.workspaceId, room), ...(access.profile.source === "none" ? {} : { name: access.profile.name }) },
     authenticator: "bot-console",
     principalId: access.user,
     principalType: "user",
@@ -185,10 +206,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const board = await buildBoard(gate.access.workspaceId, {
         ...(after !== null && !Number.isNaN(Date.parse(after)) ? { after } : {}),
       });
-      return json({ ...board, user: gate.access.user });
+      return json({ ...board, user: gate.access.user, profile: gate.access.profile });
     }),
 
-    POST("/bot/v1/rooms/:room/messages", async (request, { from, params }) => {
+    POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const room = await resolveRoom(gate.access, params.room);
@@ -201,10 +222,44 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       }
       if (message.length > MAX_MESSAGE_CHARS) return json({ error: "message is too long" }, 413);
 
-      const session = await from(await addressOf(gate.access.workspaceId, room)).send(message, {
+      // The watchdog, for whoever sends next: a thread whose last message never
+      // started a turn is restarted before this one goes in, so an API caller
+      // who never sees the console is not stuck behind a dead session.
+      const { workspaceId } = gate.access;
+      const recovered = isWedged(await getRoomState(workspaceId, room)) ? await restartWedgedRoom(workspaceId, room, attachSession) : false;
+
+      const session = await from(await addressOf(workspaceId, room)).send(message, {
         auth: principal(gate.access, room),
       });
-      return json({ room, sessionId: session.id });
+      await noteSent(workspaceId, room).catch(() => undefined);
+      return json({ room, sessionId: session.id, ...(recovered ? { recovered: true } : {}) });
+    }),
+
+    /**
+     * The watchdog, pulled by the console: the thread accepted a message and
+     * never started a turn. Moves the room to a fresh session, keeps what the
+     * person saw, and sends the message again. Refused while the thread is
+     * answering, so a slow reply is never cut off.
+     */
+    POST("/bot/v1/rooms/:room/recover", async (request, { attachSession, from, params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const room = await resolveRoom(gate.access, params.room);
+      if (room instanceof Response) return room;
+      const { workspaceId } = gate.access;
+      const body = await readJson(request);
+      const message = typeof body?.message === "string" && body.message.trim() !== "" && body.message.length <= MAX_MESSAGE_CHARS ? body.message : null;
+
+      const state = await getRoomState(workspaceId, room);
+      if (!isWedged(state)) return json({ error: "The thread is answering; nothing to recover." }, 409);
+      const generation = await restartWedgedRoom(workspaceId, room, attachSession);
+      let sessionId: string | null = null;
+      if (message !== null) {
+        const session = await from(await addressOf(workspaceId, room)).send(message, { auth: principal(gate.access, room) });
+        await noteSent(workspaceId, room).catch(() => undefined);
+        sessionId = session.id;
+      }
+      return json({ room, recovered: true, generation, sessionId, redelivered: message !== null });
     }),
 
     /**
@@ -570,39 +625,104 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     // desktop people can watch and take over; Files move things on and off the computer.
 
     /** The still frame of a Bot's screen. Never wakes the computer. */
+    /** What the console calls the person in this workspace, when nothing signs them in by name. */
+    PATCH("/bot/v1/profile", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (gate.access.profile.source === "vercel" || gate.access.profile.source === "header") {
+        return json({ error: "Your name comes from your sign-in here." }, 409);
+      }
+      const body = await readJson(request);
+      const name = await setStoredName(gate.access.workspaceId, typeof body?.name === "string" ? body.name : "");
+      return json({ profile: name === null ? { name: "operator", avatarUrl: null, source: "none" } : { name, avatarUrl: null, source: "workspace" } });
+    }),
+
     /**
-     * What HQ and the Bots remember for the caller: their own memories and the
-     * workspace's. Whose memory it is comes from the session, never the path.
+     * Everything the team remembers: the workspace's three slots, with where
+     * each memory came from, and each Bot's playbook. Whose memory it is comes
+     * from the session, never the path.
      */
     GET("/bot/v1/memory", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      return json({ slots: await readMemory(gate.access.workspaceId, gate.access.user) });
+      const [slots, bots] = await Promise.all([
+        Promise.all(
+          MEMORY_SLOTS.map(async (slot) => ({
+            slot,
+            label: MEMORY_SLOT_COPY[slot].label,
+            detail: MEMORY_SLOT_COPY[slot].detail,
+            maxEntries: MEMORY_SLOT_COPY[slot].maxEntries,
+            entries: await readEntries(gate.access.workspaceId, slot),
+          })),
+        ),
+        listBots(gate.access.workspaceId),
+      ]);
+      return json({
+        slots,
+        playbooks: bots.map((bot) => ({ botId: bot.id, name: bot.name, emoji: bot.emoji, playbook: bot.playbook })),
+      });
     }),
 
-    /** Adds one memory by hand, as if HQ or a Bot had saved it. */
+    /** Remembers one thing by hand, as the person. */
     POST("/bot/v1/memory/:slot", async (request, { params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const slot = params.slot ?? "";
       if (!isMemorySlot(slot)) return json({ error: "no such memory" }, 404);
       const body = await readJson(request);
-      const outcome = await addMemory(gate.access.workspaceId, gate.access.user, slot, typeof body?.text === "string" ? body.text : "");
-      return outcome.ok ? json({ saved: true }, 201) : json({ error: outcome.error }, outcome.status);
+      const kind = isMemoryKind(body?.kind) ? body.kind : slot === "craft" ? "lesson" : "fact";
+      const outcome = await remember(
+        gate.access.workspaceId,
+        slot,
+        [{ text: typeof body?.text === "string" ? body.text : "", kind }],
+        { who: "you", name: gate.access.profile.name },
+        { pinned: body?.pinned === true },
+      );
+      const entry = outcome.added[0];
+      if (entry !== undefined) return json({ saved: true, entry }, 201);
+      if (outcome.duplicates > 0) return json({ error: "Already remembered." }, 409);
+      if (outcome.refused > 0) return json({ error: "This memory is full. Forget something first." }, 409);
+      return json({ error: "That cannot be remembered: it is empty, too long, or looks like a secret." }, 400);
     }),
 
-    /** Forgets one memory by the index it was saved under. */
-    DELETE("/bot/v1/memory/:slot/:index", async (request, { params }) => {
+    /** Pins, unpins, or rewrites one memory. */
+    PATCH("/bot/v1/memory/:slot/:id", async (request, { params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const slot = params.slot ?? "";
-      const index = Number(params.index);
-      if (!isMemorySlot(slot) || !Number.isSafeInteger(index) || index < 0) return json({ error: "no such memory" }, 404);
-      const outcome = await forgetMemory(gate.access.workspaceId, gate.access.user, slot, index);
+      const id = params.id ?? "";
+      if (!isMemorySlot(slot) || id === "") return json({ error: "no such memory" }, 404);
+      const body = await readJson(request);
+      if (typeof body?.text === "string") {
+        const outcome = await rewriteMemory(gate.access.workspaceId, slot, id, body.text);
+        if (!outcome.ok) return json({ error: outcome.error }, outcome.status);
+      }
+      if (typeof body?.pinned === "boolean") {
+        const outcome = await pinMemory(gate.access.workspaceId, slot, id, body.pinned);
+        if (!outcome.ok) return json({ error: outcome.error }, outcome.status);
+      }
+      return json({ changed: true });
+    }),
+
+    /** Forgets one memory. */
+    DELETE("/bot/v1/memory/:slot/:id", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const slot = params.slot ?? "";
+      const id = params.id ?? "";
+      if (!isMemorySlot(slot) || id === "") return json({ error: "no such memory" }, 404);
+      const outcome = await forgetMemory(gate.access.workspaceId, slot, id);
       return outcome.ok ? json({ forgotten: true }) : json({ error: outcome.error }, outcome.status);
     }),
 
     /** The recipes this team saved: briefs that worked, for HQ to reuse. */
+    /** What the workspace has spent on models: totals, by Bot, by model, by day, and by job. */
+    GET("/bot/v1/usage", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return json(await usageReport(gate.access.workspaceId));
+    }),
+
     GET("/bot/v1/recipes", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
@@ -698,8 +818,22 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         ...(body?.gate === "none" || body?.gate === "writes" || body?.gate === "all" ? { gate: body.gate } : {}),
         ...(typeof body?.description === "string" ? { description: body.description } : {}),
         ...(policyPatch(body?.policy) === null ? {} : { policy: policyPatch(body?.policy) as Record<string, "read" | "write"> }),
+        ...(toolsPatch(body?.tools) === null ? {} : { tools: toolsPatch(body?.tools) as Record<string, boolean> }),
       });
       return updated === null ? json({ error: "no such connector" }, 404) : json({ connector: publicConnector(updated) });
+    }),
+
+    /** Swaps the connector's key, once the server has accepted the new one. */
+    POST("/bot/v1/connectors/:connectorId/key", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const replaced = await replaceKey(gate.access.workspaceId, params.connectorId ?? "", {
+        ...(body?.kind === "bearer" || body?.kind === "header" || body?.kind === "none" ? { kind: body.kind } : {}),
+        ...(typeof body?.header === "string" ? { header: body.header } : {}),
+        secret: typeof body?.secret === "string" ? body.secret : "",
+      });
+      return replaced.ok ? json({ connector: publicConnector(replaced.connector) }) : json({ error: replaced.error }, replaced.error === "no such connector" ? 404 : 422);
     }),
 
     DELETE("/bot/v1/connectors/:connectorId", async (request, { params }) => {

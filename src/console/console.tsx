@@ -8,11 +8,12 @@ import { ComputerView } from "./computer/computer-view";
 import { PRESENCE_LABEL } from "./format";
 import { HireDialog } from "./hire-dialog";
 import { Icon } from "./icons";
-import { MemoryDialog } from "./memory-dialog";
+import { MemoryPage } from "./memory-page";
 import { DetailsPanel, type PanelView } from "./panel";
 import { PANEL_SLIDE_MS, PanelResizer, usePanelWidth } from "./panel-frame";
-import { ConnectorsDialog } from "./connectors-dialog";
+import { ConnectorsPage } from "./connectors-page";
 import { Sidebar } from "./sidebar";
+import { UsagePage } from "./usage-page";
 import type { Hover, Member } from "./types";
 import { useBoard } from "./use-board";
 
@@ -54,6 +55,17 @@ function computerFor(member: Member, members: readonly Member[]): Member {
  * Bots on the left, the selected thread in the middle, and the team's computer
  * with that Bot's routines and files on the right.
  */
+type Page = "usage" | "memory" | "connectors";
+
+/** Which full-page screen the address bar names, if any, and the item within it. */
+function pageInHash(): { readonly page: Page; readonly item: string | null } | null {
+  const [page, ...rest] = window.location.hash.replace(/^#/, "").split("/");
+  if (page !== "usage" && page !== "memory" && page !== "connectors") return null;
+  return { page, item: rest.length === 0 ? null : decodeURIComponent(rest.join("/")) };
+}
+
+const hashFor = (page: Page, item: string | null) => (item === null ? `#${page}` : `#${page}/${encodeURIComponent(item)}`);
+
 export function Console() {
   const { board, online, refresh } = useBoard();
   const [selectedId, setSelectedId] = useState(() => read("bot.selected") ?? HQ_ID);
@@ -64,8 +76,8 @@ export function Console() {
   const [view, setView] = useState<"roster" | "chat">(() => (window.innerWidth > 760 ? "chat" : "roster"));
   const [computer, setComputer] = useState<{ botId: string; requestId: string | null } | null>(null);
   const [hiring, setHiring] = useState(false);
-  const [connectorsOpen, setConnectorsOpen] = useState(false);
-  const [memoryOpen, setMemoryOpen] = useState(false);
+  // Usage, Memory and Connectors are their own screens; the address bar's hash reopens one.
+  const [page, setPage] = useState<{ readonly page: Page; readonly item: string | null } | null>(() => pageInHash());
   const [hover, setHover] = useState<Hover | null>(null);
   const [panelWidth, setPanelWidth] = usePanelWidth();
   const [resizing, setResizing] = useState(false);
@@ -117,6 +129,20 @@ export function Console() {
 
   const closeComputer = useCallback(() => setComputer(null), []);
 
+  const openPage = useCallback((next: Page, item: string | null = null) => {
+    setPage({ page: next, item });
+    if (window.location.hash !== hashFor(next, item)) window.history.pushState(null, "", hashFor(next, item));
+  }, []);
+  const closePage = useCallback(() => {
+    setPage(null);
+    if (pageInHash() !== null) window.history.pushState(null, "", window.location.pathname);
+  }, []);
+  useEffect(() => {
+    const onHash = () => setPage(pageInHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   const pending = members.reduce((count, entry) => count + entry.pending, 0);
   const needed = members.filter((entry) => entry.kind === "bot" && entry.computer.handover !== null);
   // Banners a person closed, by the request they were for: a later handover shows again.
@@ -159,11 +185,13 @@ export function Console() {
           members={members}
           selectedId={member.id}
           user={board.user}
+          profile={board.profile}
           workspaceId={board.workspaceId}
           onSelect={select}
           onHire={() => setHiring(true)}
-          onConnectors={() => setConnectorsOpen(true)}
-          onMemory={() => setMemoryOpen(true)}
+          onConnectors={() => openPage("connectors")}
+          onMemory={() => openPage("memory")}
+          onUsage={() => openPage("usage")}
           onHover={setHover}
           unread={unread}
           onUnread={markUnread}
@@ -255,8 +283,10 @@ export function Console() {
         />
       ) : null}
 
-      <ConnectorsDialog open={connectorsOpen} onClose={() => setConnectorsOpen(false)} />
-      <MemoryDialog open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+      {page?.page === "usage" ? <UsagePage onClose={closePage} /> : null}
+      {page?.page === "memory" ? <MemoryPage onClose={closePage} /> : null}
+      {page?.page === "connectors" ? <ConnectorsPage selectedId={page.item} onSelect={(id) => openPage("connectors", id)} onClose={closePage} /> : null}
+
 
       <HireDialog
         open={hiring}
