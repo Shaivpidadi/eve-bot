@@ -230,6 +230,7 @@ export function Sidebar({
           <Icon name="chart" size={15} />
           Usage
         </button>
+        <UpdateNote />
         <div className="me">
           {profile?.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -540,5 +541,46 @@ function RowMenu({
       {bot ? item("eyeoff", member.hidden ? "Show in sidebar" : "Hide from sidebar", () => onHide(member)) : null}
       {bot ? item("trash", "Delete", () => onDelete(member), { danger: true }) : null}
     </div>
+  );
+}
+
+/**
+ * A line in the footer when the original EVE Bot is newer than this one. A
+ * deployment made with the Vercel button is a copy of the repository and
+ * learns about releases only by asking; the answer is cached on the server.
+ */
+function UpdateNote() {
+  const [update, setUpdate] = useState<{ latest: string; version: string; howToUpdate: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await api("/bot/v1/version");
+        const body: unknown = await response.json().catch(() => null);
+        if (
+          !cancelled &&
+          response.ok &&
+          typeof body === "object" &&
+          body !== null &&
+          (body as { updateAvailable?: unknown }).updateAvailable === true &&
+          typeof (body as { latest?: unknown }).latest === "string"
+        ) {
+          const report = body as { latest: string; version: string; howToUpdate: string };
+          setUpdate({ latest: report.latest, version: report.version, howToUpdate: report.howToUpdate });
+        }
+      } catch {
+        // No note is the right answer when the check cannot run.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (update === null) return null;
+  return (
+    <a className="side-item side-update" href={update.howToUpdate} target="_blank" rel="noopener noreferrer" title={`You run ${update.version}; ${update.latest} is out. How to update.`}>
+      <Icon name="up" size={15} />
+      Update to {update.latest}
+    </a>
   );
 }

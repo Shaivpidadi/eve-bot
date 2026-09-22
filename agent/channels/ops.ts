@@ -21,6 +21,7 @@ import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } fro
 import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
 import { store } from "../lib/store";
 import { usageReport } from "../lib/usage-report";
+import { versionReport } from "../lib/version";
 
 /**
  * The ops channel: how people and machines reach the team.
@@ -625,6 +626,13 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     // desktop people can watch and take over; Files move things on and off the computer.
 
     /** The still frame of a Bot's screen. Never wakes the computer. */
+    /** Which EVE Bot this is, and whether the original has a newer one. */
+    GET("/bot/v1/version", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return json(await versionReport());
+    }),
+
     /** What the console calls the person in this workspace, when nothing signs them in by name. */
     PATCH("/bot/v1/profile", async (request) => {
       const gate = await authenticate(request);

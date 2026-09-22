@@ -1,0 +1,68 @@
+# Keeps a copy of EVE Bot up to date with the original.
+#
+# Deploying with the Vercel button copies this repository into your GitHub
+# account, and Vercel deploys from that copy. A copy is not a fork: GitHub's
+# "Sync fork" button is not there, and nothing pulls new releases in. This
+# workflow does. Once a week, and whenever you run it from the Actions tab, it
+# merges the original's main branch into yours and pushes, which makes Vercel
+# deploy the new version.
+#
+# If you changed code in your copy and the merge conflicts, it leaves the
+# merge on a branch called upstream-sync and fails loudly, so you can finish
+# it by hand. To turn it off, set a repository variable BOT_SYNC_UPSTREAM to
+# "off". It never runs in the original repository.
+name: Sync with upstream
+
+on:
+  schedule:
+    - cron: "23 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM: https://github.com/Shaivpidadi/eve-bot.git
+
+jobs:
+  sync:
+    if: github.repository != 'Shaivpidadi/eve-bot' && vars.BOT_SYNC_UPSTREAM != 'off'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Merge the original's main
+        id: merge
+        run: |
+          git config user.name "eve-bot sync"
+          git config user.email "sync@eve-bot.dev"
+          git remote add upstream "$UPSTREAM"
+          git fetch upstream main
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already up to date with upstream." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "result=current" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git merge --no-edit upstream/main -m "chore: sync with upstream eve-bot"; then
+            git push origin HEAD
+            echo "Merged upstream/main and pushed. Vercel will deploy it." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "result=merged" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort
+            git checkout -B upstream-sync
+            git merge upstream/main || true
+            git add -A
+            git -c core.editor=true commit -m "chore: sync with upstream eve-bot (conflicts to resolve)" || true
+            git push -f origin upstream-sync
+            {
+              echo "## Upstream changes conflict with edits in this copy"
+              echo
+              echo "The merge is on the \`upstream-sync\` branch with conflict markers left in place."
+              echo "Resolve them, then merge that branch into \`${{ github.event.repository.default_branch }}\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "result=conflict" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi

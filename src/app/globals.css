@@ -164,6 +164,8 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
   border-radius: 8px; color: var(--text); font-size: 12.5px; text-align: left;
 }
 .side-item:hover { background: var(--hover); }
+.side-update { color: var(--purple); text-decoration: none; }
+.side-update .i { color: var(--purple); }
 .side-item .i { color: var(--muted); }
 .me { display: flex; align-items: center; gap: 9px; padding: 6px 8px; font-size: 12.5px; }
 .me-avatar {
