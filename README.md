@@ -86,6 +86,31 @@ Ollama is `http://ollama:11434/v1`.
 Pick a model that handles tool calls well; the Bots do everything through
 tools.
 
+## Keeping it up to date
+
+A deployment made with the Deploy button is a copy of this repository in your
+GitHub account, not a fork, so nothing pulls new releases in by itself. The
+copy carries a workflow, **Sync with upstream**, that does: once a week, and
+whenever you run it from your repository's Actions tab, it merges this
+repository's `main` into yours and pushes, and Vercel deploys the result. If
+you changed code in your copy and the two conflict, it leaves the merge on an
+`upstream-sync` branch with the conflicts marked and fails, so you can finish
+it by hand. Set a repository variable `BOT_SYNC_UPSTREAM=off` to stop it.
+
+The console says when a newer version is out: a line in the sidebar's footer
+links here. It asks GitHub for this repository's version at most every six
+hours; `BOT_UPDATE_CHECK=off` stops it asking.
+
+Standalone, update the way you installed:
+
+```bash
+git pull && npm install && npm run build && npm start     # or: docker compose up -d --build
+```
+
+Stored data is carried forward. A release that changes what is stored reads
+the old shape and writes the new one the first time it is needed, so a
+deployment can skip versions.
+
 ## What you get
 
 - **HQ.** The teammate you message. It writes a brief with success criteria,
@@ -190,6 +215,8 @@ of it; these are the ones that matter.
 | `BOT_MODEL_PRICES` | `model=in/out` USD per million tokens, so spend caps hold off Gateway; OpenRouter is read automatically |
 | `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`) |
 | `BOT_MEMORY_FLOOR` | how sure Jev must be before something is remembered (`0`–`1`; defaults to `BOT_JEV_CONFIDENCE`) |
+| `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
+| `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console passwords, each bound to a workspace |
 | `BOT_PUBLIC_URL` | the front door's public origin for canonical URLs and the sitemap; Vercel supplies its own |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
