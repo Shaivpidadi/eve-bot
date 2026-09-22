@@ -18,7 +18,7 @@ import { CATALOG } from "../lib/catalog";
 import { addConnector, getConnector, listConnectors, publicConnector, recheckConnector, removeConnector, replaceKey, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
-import { getRoomState, noteAnswered, resetRoom, roomGeneration } from "../lib/roomstate";
+import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
 import { store } from "../lib/store";
 import { usageReport } from "../lib/usage-report";
 
@@ -81,6 +81,33 @@ function policyPatch(value: unknown): Record<string, "read" | "write"> | null {
 /** The console is the Next.js app; sign-in outcomes send the browser back to its pages. */
 const seeOther = (location: string, headers: Record<string, string> = {}) =>
   new Response(null, { status: 303, headers: { location, ...headers } });
+
+/**
+ * Moves a wedged room to a fresh session and lets go of the old one, bounded,
+ * because on eve 0.58 the old session may not answer a cancel either. The
+ * thread is kept; only the address changes. Records what happened in the feed.
+ */
+async function restartWedgedRoom(
+  workspaceId: string,
+  room: string,
+  attachSession: (sessionId: string) => { cancel(options: { tasks: boolean }): Promise<unknown> },
+): Promise<number> {
+  const old = (await getRoomState(workspaceId, room))?.sessionId ?? null;
+  const generation = await restartRoom(workspaceId, room);
+  if (old !== null) {
+    await Promise.race([attachSession(old).cancel({ tasks: false }), new Promise((resolve) => setTimeout(resolve, 5_000))]).catch(() => undefined);
+  }
+  const botId = botIdForRoom(room);
+  const bot = botId === null ? null : await getBot(workspaceId, botId);
+  await record({
+    workspaceId,
+    kind: "bot.updated",
+    botId: bot?.id ?? null,
+    text: `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} stopped answering and was restarted; the last message was sent again.`,
+    data: { room, generation, restarted: true },
+  }).catch(() => undefined);
+  return generation;
+}
 
 function principal(access: Access, room: string): SessionAuthContext {
   return {
@@ -182,7 +209,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return json({ ...board, user: gate.access.user, profile: gate.access.profile });
     }),
 
-    POST("/bot/v1/rooms/:room/messages", async (request, { from, params }) => {
+    POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const room = await resolveRoom(gate.access, params.room);
@@ -195,10 +222,44 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       }
       if (message.length > MAX_MESSAGE_CHARS) return json({ error: "message is too long" }, 413);
 
-      const session = await from(await addressOf(gate.access.workspaceId, room)).send(message, {
+      // The watchdog, for whoever sends next: a thread whose last message never
+      // started a turn is restarted before this one goes in, so an API caller
+      // who never sees the console is not stuck behind a dead session.
+      const { workspaceId } = gate.access;
+      const recovered = isWedged(await getRoomState(workspaceId, room)) ? await restartWedgedRoom(workspaceId, room, attachSession) : false;
+
+      const session = await from(await addressOf(workspaceId, room)).send(message, {
         auth: principal(gate.access, room),
       });
-      return json({ room, sessionId: session.id });
+      await noteSent(workspaceId, room).catch(() => undefined);
+      return json({ room, sessionId: session.id, ...(recovered ? { recovered: true } : {}) });
+    }),
+
+    /**
+     * The watchdog, pulled by the console: the thread accepted a message and
+     * never started a turn. Moves the room to a fresh session, keeps what the
+     * person saw, and sends the message again. Refused while the thread is
+     * answering, so a slow reply is never cut off.
+     */
+    POST("/bot/v1/rooms/:room/recover", async (request, { attachSession, from, params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const room = await resolveRoom(gate.access, params.room);
+      if (room instanceof Response) return room;
+      const { workspaceId } = gate.access;
+      const body = await readJson(request);
+      const message = typeof body?.message === "string" && body.message.trim() !== "" && body.message.length <= MAX_MESSAGE_CHARS ? body.message : null;
+
+      const state = await getRoomState(workspaceId, room);
+      if (!isWedged(state)) return json({ error: "The thread is answering; nothing to recover." }, 409);
+      const generation = await restartWedgedRoom(workspaceId, room, attachSession);
+      let sessionId: string | null = null;
+      if (message !== null) {
+        const session = await from(await addressOf(workspaceId, room)).send(message, { auth: principal(gate.access, room) });
+        await noteSent(workspaceId, room).catch(() => undefined);
+        sessionId = session.id;
+      }
+      return json({ room, recovered: true, generation, sessionId, redelivered: message !== null });
     }),
 
     /**

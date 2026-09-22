@@ -138,6 +138,13 @@ Vercel name and picture. Elsewhere it shows the name in `X-Bot-User`, or the
 name you set by clicking the footer of the sidebar; HQ and the Bots use that
 name too.
 
+A thread that accepts a message and never answers is restarted on its own:
+after about a minute without a turn, the console moves it to a fresh session,
+sends the message again, and says so in the thread. The conversation shown
+stays, but the new session only knows what is in Memory. The same happens
+when the next message arrives over the API. eve 0.58 can leave a session in
+that state after the dev server reloads or after certain task interactions.
+
 Opening the console from another device over plain http puts the browser in
 an insecure context, and the live screen will not connect. Use
 `npm run dev:https`, or on a standalone server set `BOT_COMPUTER_LOCAL_BIND=0.0.0.0`
@@ -153,6 +160,7 @@ curl -X POST localhost:3000/bot/v1/rooms/desk/messages -H 'content-type: applica
 curl -N 'localhost:3000/bot/v1/rooms/desk/stream?startIndex=0'          # NDJSON, live
 curl -X POST localhost:3000/bot/v1/rooms/desk/respond -H 'content-type: application/json' -d '{"responses":[{"requestId":"<id>","optionId":"approve"}]}'
 curl -X POST localhost:3000/bot/v1/rooms/desk/reset                       # start the thread over
+curl -X POST localhost:3000/bot/v1/rooms/desk/recover -H 'content-type: application/json' -d '{"message":"…"}'  # a thread that stopped answering: fresh session, message sent again
 curl localhost:3000/bot/v1/state                                          # roster, presence, feed
 curl -X POST localhost:3000/bot/v1/bots -H 'content-type: application/json' -d '{"name":"Ava","role":"Inbound sales follow-up","persona":"Warm and brief."}'
 curl -X PATCH localhost:3000/bot/v1/bots/<id> -H 'content-type: application/json' -d '{"status":"paused","pinned":true,"section":"Sales"}'

@@ -3,7 +3,7 @@ import type { HookContext } from "eve/hooks";
 
 import { record } from "../lib/activity";
 import { isSystemMessage } from "../lib/rooms";
-import { noteActive, notePending, notePreview, noteResolved, noteSession } from "../lib/roomstate";
+import { noteActive, notePending, notePreview, noteResolved, noteSession, noteTurnStarted } from "../lib/roomstate";
 import { operator } from "../lib/session";
 
 /**
@@ -58,7 +58,7 @@ export default defineHook({
       if (!isRoot(ctx)) return;
       const who = operator(ctx);
       await quietly(() => noteSession(who.workspaceId, who.room, ctx.session.id));
-      await quietly(() => noteActive(who.workspaceId, who.room, true));
+      await quietly(() => noteTurnStarted(who.workspaceId, who.room));
     },
 
     // Every way a turn can end clears the room's busy state: a session whose

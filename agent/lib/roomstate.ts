@@ -41,7 +41,37 @@ export interface RoomState {
   generation?: number;
   /** When the room was last started over: the thread shows nothing recorded before this. */
   clearedAt?: string | null;
+  /** When a message was last handed to the room's session by the console or the API. */
+  sentAt?: string | null;
+  /** When the room's session last started a turn. Older than `sentAt` for too long means the session is wedged. */
+  turnAt?: string | null;
+  /** How many times the room's session was restarted because it stopped answering. */
+  restarts?: number;
   updatedAt: string;
+}
+
+/**
+ * How long a delivered message may wait before the thread counts as wedged.
+ * A turn normally starts within a second or two; a minute leaves room for a
+ * cold Vercel function and a slow store, and is still short enough that a
+ * person has not given up on the reply.
+ */
+export const WEDGED_AFTER_MS = 45_000;
+
+/**
+ * eve 0.58 has a failure where a session accepts a message and never starts a
+ * turn: after the dev runtime reloads, or after certain task interactions. It
+ * emits nothing, so the only sign is a delivery with no turn behind it. That
+ * is what this reads: the last message went in, no turn has started since,
+ * and long enough has passed that one would have.
+ */
+export function isWedged(state: Pick<RoomState, "sentAt" | "turnAt"> | null, now: number = Date.now(), graceMs: number = WEDGED_AFTER_MS): boolean {
+  const sentAt = state?.sentAt ?? null;
+  if (sentAt === null) return false;
+  const sent = Date.parse(sentAt);
+  if (!Number.isFinite(sent) || now - sent < graceMs) return false;
+  const turnAt = state?.turnAt ?? null;
+  return turnAt === null || Date.parse(turnAt) < sent;
 }
 
 const PREVIEW_CHARS = 280;
@@ -114,6 +144,41 @@ export function notePreview(
 
 export function noteActive(workspaceId: string, room: string, active: boolean): Promise<void> {
   return updateRoom(workspaceId, room, (state) => ({ ...state, active }));
+}
+
+/** A message went to the room's session; the watchdog now expects a turn. */
+export function noteSent(workspaceId: string, room: string, at: string = new Date().toISOString()): Promise<void> {
+  return updateRoom(workspaceId, room, (state) => ({ ...state, sentAt: at }));
+}
+
+/** A turn started: the room is busy, and whatever was sent has been picked up. */
+export function noteTurnStarted(workspaceId: string, room: string, at: string = new Date().toISOString()): Promise<void> {
+  return updateRoom(workspaceId, room, (state) => ({ ...state, active: true, turnAt: at }));
+}
+
+/**
+ * Moves the room to a fresh session without clearing the thread: the next
+ * message opens a new session under a new generation, while what the person
+ * saw stays in the console. For a session that stopped answering.
+ */
+export async function restartRoom(workspaceId: string, room: string): Promise<number> {
+  let generation = 1;
+  await updateDoc<RoomState>(key(workspaceId, room), (current) => {
+    const state = current ?? { workspaceId, room, preview: null, pending: [], active: false, updatedAt: "" };
+    generation = (state.generation ?? 0) + 1;
+    return {
+      ...state,
+      pending: [],
+      active: false,
+      sessionId: null,
+      generation,
+      sentAt: null,
+      turnAt: null,
+      restarts: (state.restarts ?? 0) + 1,
+      updatedAt: new Date().toISOString(),
+    };
+  });
+  return generation;
 }
 
 export function noteSession(workspaceId: string, room: string, sessionId: string): Promise<void> {
