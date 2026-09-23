@@ -144,6 +144,11 @@ export function Transcript({
                   Start over
                 </button>
               ) : null}
+              {item.action === "open-connectors" ? (
+                <button type="button" className="btn primary" onClick={() => window.location.assign("/bot#connectors")}>
+                  Open connectors
+                </button>
+              ) : null}
             </div>,
           );
           break;

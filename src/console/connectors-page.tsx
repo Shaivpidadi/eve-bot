@@ -16,7 +16,7 @@ interface ConnectorRow {
   readonly description: string;
   readonly enabled: boolean;
   readonly gate: ConnectorGate;
-  readonly auth: { readonly kind: ConnectorKeyKind; readonly header?: string };
+  readonly auth: { readonly kind: ConnectorKeyKind; readonly header?: string; readonly connected?: boolean; readonly connectedAt?: string | null; readonly issuer?: string };
   readonly check: { readonly ok: boolean; readonly at: string; readonly tools: readonly string[]; readonly error: string | null };
   readonly policy?: Readonly<Record<string, "read" | "write">>;
   readonly disabledTools?: readonly string[];
@@ -43,6 +43,7 @@ const KEY_LABEL: Readonly<Record<ConnectorKeyKind, string>> = {
   none: "No key needed",
   bearer: "Bearer key",
   header: "Key in a header",
+  oauth: "Signed in",
 };
 
 const host = (url: string) => {
@@ -80,10 +81,22 @@ function Switch({ checked, disabled, onChange, label }: { checked: boolean; disa
   );
 }
 
+const needsConnect = (connector: ConnectorRow) => connector.auth.kind === "oauth" && connector.auth.connected !== true;
+
 function statusOf(connector: ConnectorRow): { readonly text: string; readonly tone: "ok" | "bad" | "off" } {
   if (!connector.enabled) return { text: "Off", tone: "off" };
+  if (needsConnect(connector)) return { text: "Needs sign-in", tone: "bad" };
   if (!connector.check.ok) return { text: "Not reachable", tone: "bad" };
   return { text: "Connected", tone: "ok" };
+}
+
+/** Starts the server's own sign-in and sends the browser there; the server sends it back to the connector's page. */
+async function signIn(connectorId: string): Promise<string | null> {
+  const response = await api(`/bot/v1/connectors/${encodeURIComponent(connectorId)}/oauth/start`, { method: "POST" });
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok || !isRecord(body) || typeof body.url !== "string") return await errorMessage(response, "Could not start the sign-in.");
+  window.location.assign(body.url);
+  return null;
 }
 
 /** What is being added: a catalog entry that needs a key, or a custom MCP server. */
@@ -180,6 +193,15 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
           onPatch={(body) => patch(selected, body)}
           onCheck={() => act(selected.id, () => api(`/bot/v1/connectors/${encodeURIComponent(selected.id)}/check`, { method: "POST" }), "Could not reach it.")}
           onKey={(body) => act(selected.id, () => api(`/bot/v1/connectors/${encodeURIComponent(selected.id)}/key`, { method: "POST", body: JSON.stringify(body) }), "The server did not accept that key.")}
+          onSignIn={async () => {
+            setBusy(selected.id);
+            const failed = await signIn(selected.id).catch(() => "Could not start the sign-in.");
+            if (failed !== null) {
+              setError(failed);
+              setBusy(null);
+            }
+          }}
+          onDisconnect={() => act(selected.id, () => api(`/bot/v1/connectors/${encodeURIComponent(selected.id)}/oauth/disconnect`, { method: "POST" }), "Could not disconnect it.")}
           onRemove={async () => {
             const removed = await act(selected.id, () => api(`/bot/v1/connectors/${encodeURIComponent(selected.id)}`, { method: "DELETE" }), "Could not remove it.");
             if (removed) onSelect(null);
@@ -208,7 +230,7 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
                         <b>{connector.label}</b>
                         <span>{connector.catalog === null ? host(connector.url) : catalog.find((entry) => entry.id === connector.catalog)?.detail ?? "Built in"}</span>
                         <small>
-                          {connector.check.ok ? `${on} of ${connector.check.tools.length} tools on` : connector.check.error ?? "Not reachable"}
+                          {needsConnect(connector) ? "Sign in to finish setting it up" : connector.check.ok ? `${on} of ${connector.check.tools.length} tools on` : connector.check.error ?? "Not reachable"}
                           {" · asks "}
                           {GATE_LABEL[connector.gate].toLowerCase()}
                         </small>
@@ -231,19 +253,40 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
                     <span className="cpage-card-main">
                       <b>{entry.label}</b>
                       <span>{entry.detail}</span>
-                      <small>{entry.key.kind === "none" ? "No key needed" : "Needs a key"}</small>
+                      <small>{entry.key.kind === "none" ? "No key needed" : entry.key.kind === "oauth" ? "Sign in with your account" : "Needs a key"}</small>
                     </span>
                     <button
                       type="button"
                       className="btn primary"
                       disabled={busy === entry.id}
-                      onClick={() => {
+                      onClick={async () => {
                         if (entry.key.kind === "none") {
                           void act(entry.id, () => api("/bot/v1/connectors", { method: "POST", body: JSON.stringify({ catalog: entry.id }) }), `Could not connect ${entry.label}.`);
+                        } else if (entry.key.kind === "oauth") {
+                          setBusy(entry.id);
+                          setError(null);
+                          try {
+                            const response = await api("/bot/v1/connectors", { method: "POST", body: JSON.stringify({ catalog: entry.id }) });
+                            const body: unknown = await response.json().catch(() => null);
+                            const id = response.ok && isRecord(body) && isRecord(body.connector) && typeof body.connector.id === "string" ? body.connector.id : null;
+                            if (id === null) {
+                              setError(await errorMessage(response, `Could not add ${entry.label}.`));
+                              return;
+                            }
+                            const failed = await signIn(id);
+                            if (failed !== null) {
+                              setError(failed);
+                              await load();
+                            }
+                          } catch (caught) {
+                            if (!(caught instanceof SignedOutError)) setError(`Could not connect ${entry.label}.`);
+                          } finally {
+                            setBusy(null);
+                          }
                         } else setAdding({ kind: "catalog", entry });
                       }}
                     >
-                      {busy === entry.id ? "Connecting…" : "Add"}
+                      {busy === entry.id ? "Connecting…" : entry.key.kind === "oauth" ? "Connect" : "Add"}
                     </button>
                   </div>
                 ))}
@@ -304,6 +347,8 @@ function ConnectorDetail({
   onPatch,
   onCheck,
   onKey,
+  onSignIn,
+  onDisconnect,
   onRemove,
 }: {
   connector: ConnectorRow;
@@ -312,6 +357,8 @@ function ConnectorDetail({
   onPatch: (body: Record<string, unknown>) => Promise<boolean>;
   onCheck: () => Promise<boolean>;
   onKey: (body: Record<string, unknown>) => Promise<boolean>;
+  onSignIn: () => Promise<void>;
+  onDisconnect: () => Promise<boolean>;
   onRemove: () => Promise<void>;
 }) {
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -361,12 +408,39 @@ function ConnectorDetail({
         <div className="cpage-list">
           <div className="cpage-row">
             <span className="cpage-row-main">
-              <b>{connector.auth.kind === "none" ? "No key needed" : `${KEY_LABEL[connector.auth.kind]}${connector.auth.header ? ` · ${connector.auth.header}` : ""}`}</b>
-              <span>{connector.check.ok ? `Reached ${when(connector.check.at)}` : connector.check.error ?? "Could not be reached"}</span>
+              <b>
+                {connector.auth.kind === "oauth"
+                  ? connector.auth.connected
+                    ? `Signed in${connector.auth.connectedAt ? ` ${when(connector.auth.connectedAt)}` : ""}`
+                    : "Not signed in yet"
+                  : connector.auth.kind === "none"
+                    ? "No key needed"
+                    : `${KEY_LABEL[connector.auth.kind]}${connector.auth.header ? ` · ${connector.auth.header}` : ""}`}
+              </b>
+              <span>
+                {connector.auth.kind === "oauth" && !connector.auth.connected
+                  ? `Signing in happens on ${connector.auth.issuer ? host(connector.auth.issuer) : "the server"}; no key to paste.`
+                  : connector.check.ok
+                    ? `Reached ${when(connector.check.at)}`
+                    : connector.check.error ?? "Could not be reached"}
+              </span>
             </span>
+            {connector.auth.kind === "oauth" ? (
+              <button type="button" className="btn primary" disabled={busy} onClick={() => void onSignIn()}>
+                {connector.auth.connected ? "Sign in again" : "Connect"}
+              </button>
+            ) : null}
             <span className={`cpage-status ${status.tone}`}>{status.text}</span>
           </div>
-          {connector.auth.kind === "none" ? null : replacing ? (
+          {connector.auth.kind === "oauth" && connector.auth.connected ? (
+            <button type="button" className="cpage-row cpage-row-btn" disabled={busy} onClick={() => void onDisconnect()}>
+              <Icon name="signout" size={14} />
+              <span className="cpage-row-main">
+                <span>Disconnect this account. The connector stays; sign in again any time.</span>
+              </span>
+            </button>
+          ) : null}
+          {connector.auth.kind === "none" || connector.auth.kind === "oauth" ? null : replacing ? (
             <form
               className="cpage-row cpage-form"
               onSubmit={async (event) => {
@@ -554,11 +628,12 @@ function AddForm({ adding, busy, onCancel, onSubmit }: { adding: NonNullable<Add
           <label>
             Key
             <select value={kind} onChange={(event) => setKind(event.target.value as ConnectorKeyKind)}>
-              <option value="none">No key</option>
+              <option value="none">No key, or let the server sign me in</option>
               <option value="bearer">Bearer key (Authorization header)</option>
               <option value="header">Key in a custom header</option>
             </select>
           </label>
+          {kind === "none" ? <p className="faint">A server that runs its own sign-in is detected when it is added; you then connect from its page.</p> : null}
           {kind === "header" ? (
             <label>
               Header name
