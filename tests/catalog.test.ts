@@ -8,7 +8,7 @@ describe("the connector catalog", () => {
     for (const entry of CATALOG) {
       expect(entry.url.startsWith("https://")).toBe(true);
       expect(entry.id).toMatch(/^[a-z][a-z0-9-]*$/);
-      if (entry.key.kind !== "none") expect(entry.keyHelp).toBeTruthy();
+      if (entry.key.kind !== "none" && entry.key.kind !== "oauth") expect(entry.keyHelp).toBeTruthy();
     }
     expect(catalogEntry("github")?.gate).toBe("writes");
     expect(catalogEntry("nope")).toBeUndefined();

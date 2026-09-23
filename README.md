@@ -153,11 +153,18 @@ deployment can skip versions.
   **Memory** in the console to search it, pin what should always be recalled,
   correct it, bring a retired memory back, or forget it. Each Bot also keeps a
   playbook.
-- **Connectors.** Add GitHub or a documentation source by name, or any MCP
-  server by address, once, and every Bot can use it. Each connector has its
-  own page: its account and key, every tool with a switch and a read-or-change
-  tag, when a person is asked first, and the facts about it. Tools that change
-  something ask first.
+- **Connectors.** Connect Linear, Notion, Atlassian or Sentry with one click
+  and no setup: the server signs you in through its own OAuth, this app
+  registers itself as a client, and the token is kept sealed per workspace so
+  every Bot and every routine can use it. GitHub and a documentation source
+  are added by name (GitHub takes a token, since GitHub does not register
+  clients on its own), and any MCP server by address; a custom server that
+  needs OAuth is detected when it is added. Each connector has its own page:
+  its account, every tool with a switch and a read-or-change tag, when a
+  person is asked first, and the facts about it. Tools that change something
+  ask first. When a Bot needs an account nobody has connected yet, the thread
+  says so with a button to the Connectors page, and the work carries on once
+  it is connected.
 
 ## The console
 
@@ -203,6 +210,8 @@ curl -N 'localhost:3000/bot/v1/rooms/desk/stream?startIndex=0'          # NDJSON
 curl -X POST localhost:3000/bot/v1/rooms/desk/respond -H 'content-type: application/json' -d '{"responses":[{"requestId":"<id>","optionId":"approve"}]}'
 curl -X POST localhost:3000/bot/v1/rooms/desk/reset                       # start the thread over
 curl -X POST localhost:3000/bot/v1/rooms/desk/recover -H 'content-type: application/json' -d '{"message":"…"}'  # a thread that stopped answering: fresh session, message sent again
+curl -X POST localhost:3000/bot/v1/connectors -H 'content-type: application/json' -d '{"catalog":"linear"}'      # add a connector; OAuth ones then need a sign-in
+curl -X POST localhost:3000/bot/v1/connectors/<id>/oauth/start                                                 # the consent URL to open; the server sends the browser back to /bot/v1/oauth/callback
 curl localhost:3000/bot/v1/state                                          # roster, presence, feed
 curl -X POST localhost:3000/bot/v1/bots -H 'content-type: application/json' -d '{"name":"Ava","role":"Inbound sales follow-up","persona":"Warm and brief."}'
 curl -X PATCH localhost:3000/bot/v1/bots/<id> -H 'content-type: application/json' -d '{"status":"paused","pinned":true,"section":"Sales"}'
@@ -234,6 +243,7 @@ of it; these are the ones that matter.
 | `BOT_MEMORY_FLOOR` | how sure Jev must be before something is remembered (`0`–`1`; defaults to `BOT_JEV_CONFIDENCE`) |
 | `BOT_MEMORY_MODEL` | the model that reads exchanges for memories (`anthropic/claude-haiku-4-5` on Gateway; the quick model on a custom endpoint) |
 | `BOT_MEMORY_EMBEDDINGS` / `BOT_MEMORY_EMBEDDING_MODEL` | `off` ranks lessons by words only; the model that embeds them otherwise (`openai/text-embedding-3-small`, on Gateway only) |
+| `BOT_PUBLIC_URL` | the address the world reaches this deployment at, for OAuth redirect URIs and the sitemap; Vercel supplies its own |
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console passwords, each bound to a workspace |
