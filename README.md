@@ -174,7 +174,9 @@ on hover, for its menu: pin, move to a section, mark unread, clear chat,
 rename, edit profile, duplicate, copy conversation id, hide, delete. Pins,
 sections, and hiding are saved on the Bot; unread is yours alone.
 
-**Usage**, in the sidebar's footer, is a page of what the workspace has spent
+**Usage**, in the sidebar's footer, opens a sheet over the console (as do
+Memory and Connectors, so the conversation stays in view; click outside or
+press Escape to close) with what the workspace has spent
 on models: the total, the last seven days, a bar per day for the last thirty,
 and tables by model, by who ran it (HQ and each Bot), and job by job, with
 tokens in and out, cache reads, and the price the provider reported. The

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { type ReactNode, useCallback, useEffect, useState, type CSSProperties } from "react";
 
 import { Avatar } from "./avatar";
 import { ChatPane } from "./chat";
@@ -56,6 +56,21 @@ function computerFor(member: Member, members: readonly Member[]): Member {
  * with that Bot's routines and files on the right.
  */
 type Page = "usage" | "memory" | "connectors";
+
+/**
+ * Usage, Memory and Connectors open in a sheet over the console rather than
+ * as pages of their own, so the conversation stays in view and a click on
+ * the dimmed console, or Escape, is the way back.
+ */
+function Sheet({ label, onClose, children }: { label: string; onClose: () => void; children: ReactNode }) {
+  return (
+    <div className="sheet-backdrop" onMouseDown={(event) => (event.target === event.currentTarget ? onClose() : undefined)}>
+      <aside className="sheet" role="dialog" aria-modal="true" aria-label={label}>
+        {children}
+      </aside>
+    </div>
+  );
+}
 
 /** Which full-page screen the address bar names, if any, and the item within it. */
 function pageInHash(): { readonly page: Page; readonly item: string | null } | null {
@@ -283,9 +298,13 @@ export function Console() {
         />
       ) : null}
 
-      {page?.page === "usage" ? <UsagePage onClose={closePage} /> : null}
-      {page?.page === "memory" ? <MemoryPage onClose={closePage} /> : null}
-      {page?.page === "connectors" ? <ConnectorsPage selectedId={page.item} onSelect={(id) => openPage("connectors", id)} onClose={closePage} /> : null}
+      {page === null ? null : (
+        <Sheet onClose={closePage} label={page.page === "usage" ? "Usage" : page.page === "memory" ? "Memory" : "Connectors"}>
+          {page.page === "usage" ? <UsagePage onClose={closePage} /> : null}
+          {page.page === "memory" ? <MemoryPage onClose={closePage} /> : null}
+          {page.page === "connectors" ? <ConnectorsPage selectedId={page.item} onSelect={(id) => openPage("connectors", id)} onClose={closePage} /> : null}
+        </Sheet>
+      )}
 
 
       <HireDialog

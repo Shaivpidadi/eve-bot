@@ -764,8 +764,21 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 
 /* ------------------------------------------------------------- usage page */
 
+/* The sheet the three screens open in: over the console, from the right, the console dimmed behind it. */
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: 48; background: rgba(0, 0, 0, 0.38); display: flex; justify-content: flex-end;
+  animation: sheet-dim 0.16s ease-out;
+}
+.sheet {
+  width: min(900px, 100%); height: 100%; background: var(--bg); color: var(--text); display: flex; flex-direction: column; min-width: 0;
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.35); border-left: 1px solid var(--line);
+  animation: sheet-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes sheet-in { from { transform: translateX(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+@keyframes sheet-dim { from { background: rgba(0, 0, 0, 0); } to { background: rgba(0, 0, 0, 0.38); } }
+@media (prefers-reduced-motion: reduce) { .sheet, .sheet-backdrop { animation: none; } }
 .usage-page {
-  position: fixed; inset: 0; z-index: 48; overflow-y: auto; background: var(--bg); color: var(--text);
+  flex: 1; min-height: 0; overflow-y: auto; background: var(--bg); color: var(--text);
 }
 .usage-head {
   position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px;
@@ -774,7 +787,7 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .usage-head h1 { margin: 0; font-size: 15px; font-weight: 600; }
 .usage-head .faint { margin-left: auto; }
 .usage-loading, .usage-error { padding: 24px 16px; }
-.usage-body { max-width: 1040px; margin: 0 auto; padding: 22px 16px 40px; display: flex; flex-direction: column; gap: 26px; }
+.usage-body { max-width: 1040px; margin: 0 auto; padding: 22px 20px 40px; display: flex; flex-direction: column; gap: 26px; }
 .usage-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .usage-account { grid-column: 1 / -1; border-color: var(--purple); }
 .usage-card {
