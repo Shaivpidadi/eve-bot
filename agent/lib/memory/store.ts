@@ -27,6 +27,13 @@ export interface MemorySource {
   readonly jobId?: string | null;
 }
 
+/** An earlier wording this entry replaced, kept so memory correcting itself stays visible. */
+export interface MemoryRevision {
+  readonly text: string;
+  readonly at: string;
+  readonly source: MemorySource;
+}
+
 export interface MemoryEntry {
   readonly id: string;
   readonly text: string;
@@ -37,12 +44,111 @@ export interface MemoryEntry {
   readonly pinned: boolean;
   readonly recalls: number;
   readonly lastRecalledAt: string | null;
+  /**
+   * How sure the team is of this entry, 0 to 1. A person's own words score
+   * highest; a capture scores what Jev thought of it. Rises when the person
+   * says the same thing again. Absent on older entries, read as 0.7.
+   */
+  readonly confidence?: number;
+  /** When the person last said something that confirmed this entry. */
+  readonly lastConfirmedAt?: string | null;
+  /** What this entry used to say, newest first. Absent when it was never changed. */
+  readonly history?: readonly MemoryRevision[];
+  /** Set when the entry was found to be no longer true. Retired entries are kept, shown, and not recalled. */
+  readonly retired?: { readonly at: string; readonly source: MemorySource; readonly reason: string } | null;
+}
+
+/** One change to a slot, as the extractor proposes it and the store applies it. */
+export type MemoryOperation =
+  | { readonly op: "add"; readonly text: string; readonly kind: MemoryKind; readonly confidence?: number }
+  | { readonly op: "update"; readonly id: string; readonly text: string; readonly kind?: MemoryKind; readonly confidence?: number }
+  | { readonly op: "retire"; readonly id: string; readonly reason: string }
+  /** Sets a field of the typed core; an empty value clears it. */
+  | { readonly op: "set"; readonly field: string; readonly value: string }
+  /** The person said an existing memory again; it grows surer. */
+  | { readonly op: "confirm"; readonly id: string };
+
+export interface FieldChange {
+  readonly field: string;
+  readonly value: string;
+  readonly previous: string | null;
+}
+
+export interface ApplyOutcome {
+  readonly added: readonly MemoryEntry[];
+  readonly updated: readonly MemoryEntry[];
+  readonly retired: readonly MemoryEntry[];
+  readonly fields: readonly FieldChange[];
+  /** Ids the person restated, now surer. */
+  readonly confirmed: readonly string[];
+  readonly duplicates: number;
+  readonly refused: number;
+  readonly replayed: boolean;
+}
+
+/**
+ * The typed core: facts that are fields, not prose. A field has one current
+ * value, so a changed preference is an overwrite rather than a second
+ * sentence, and recall renders the lot as one compact block that always fits.
+ */
+export interface MemoryField {
+  readonly key: string;
+  readonly label: string;
+  /** What belongs here, for the extractor and the page. */
+  readonly hint: string;
+}
+
+export const FIELDS: Readonly<Record<MemorySlot, readonly MemoryField[]>> = {
+  profile: [
+    { key: "name", label: "Name", hint: "What to call them" },
+    { key: "company", label: "Company", hint: "Who they work for" },
+    { key: "role", label: "Role", hint: "Their job or title" },
+    { key: "location", label: "Location", hint: "City or region they work from" },
+    { key: "timezone", label: "Timezone", hint: "IANA name, such as America/New_York" },
+    { key: "language", label: "Language", hint: "The language to write in" },
+    { key: "spelling", label: "Spelling", hint: "British, American, or another convention" },
+    { key: "dateFormat", label: "Dates", hint: "How dates are written, by example: 21 Sep 2026" },
+    { key: "timeFormat", label: "Times", hint: "12-hour or 24-hour" },
+    { key: "tone", label: "Tone", hint: "How drafts should sound: formal, warm, terse" },
+    { key: "length", label: "Length", hint: "How long answers and results should run" },
+    { key: "writing", label: "Writing rules", hint: "Things to always or never do in prose: no em dashes, no exclamation marks, short sentences" },
+  ],
+  team: [
+    { key: "approvals", label: "Approvals", hint: "Who signs off on what" },
+    { key: "cc", label: "Always cc", hint: "Who is copied on which mail" },
+    { key: "systems", label: "Systems of record", hint: "Where tickets, docs, customers and code live" },
+    { key: "schedule", label: "Schedule", hint: "Recurring reports and meetings and when they go out" },
+    { key: "style", label: "House style", hint: "How anything the team publishes should read" },
+    { key: "escalation", label: "Escalation", hint: "Who to bring in when something goes wrong" },
+  ],
+  craft: [],
+};
+
+export const fieldFor = (slot: MemorySlot, key: string): MemoryField | undefined => FIELDS[slot].find((field) => field.key === key);
+
+/** A field named loosely, as a model tends to: "Time format", "time_format", "Times" and "timeFormat" all resolve. */
+export function resolveField(slot: MemorySlot, name: string): MemoryField | undefined {
+  const loose = name.toLowerCase().replace(/[^a-z]/g, "");
+  if (loose === "") return undefined;
+  return FIELDS[slot].find((field) => field.key.toLowerCase() === loose || field.label.toLowerCase().replace(/[^a-z]/g, "") === loose);
+}
+
+export interface MemoryFieldValue {
+  readonly value: string;
+  readonly at: string;
+  readonly source: MemorySource;
+  /** Earlier values, newest first. */
+  readonly history?: readonly { readonly value: string; readonly at: string; readonly source: MemorySource }[];
 }
 
 export interface MemoryDoc {
   readonly entries: readonly MemoryEntry[];
+  /** The typed core, by field key. Absent on documents from before fields existed. */
+  readonly fields?: Readonly<Record<string, MemoryFieldValue>>;
   /** Operation ids already captured, so a replayed capture writes nothing twice. */
   readonly seen: readonly string[];
+  /** What a person forgot by hand, so capture does not put it straight back. */
+  readonly forgotten?: readonly { readonly text: string; readonly at: string }[];
   readonly updatedAt: string;
 }
 
@@ -75,7 +181,17 @@ export const isMemoryKind = (value: unknown): value is MemoryKind =>
   value === "preference" || value === "fact" || value === "rule" || value === "lesson";
 
 const MAX_TEXT_CHARS = 500;
+
+/** How sure to be of an entry by who put it there, when nothing better is known. */
+const DEFAULT_CONFIDENCE: Readonly<Record<MemorySource["who"], number>> = { you: 1, hq: 0.85, bot: 0.8, auto: 0.7, import: 0.75 };
+export const confidenceOf = (entry: Pick<MemoryEntry, "confidence" | "source">): number => entry.confidence ?? DEFAULT_CONFIDENCE[entry.source.who];
+const clamp = (value: number) => Math.min(1, Math.max(0.05, Math.round(value * 100) / 100));
+
+/** Entries not recalled for this long fade: kept, shown, and left out of recall until a person brings them back. */
+export const FADE_AFTER_MS = 90 * 24 * 60 * 60 * 1000;
+const MAX_FIELD_CHARS = 200;
 const SEEN_KEPT = 64;
+const FORGOTTEN_KEPT = 100;
 
 const key = (workspaceId: string, slot: MemorySlot) => `memory/v2/${workspaceId}/${slot}.json`;
 const EMPTY: MemoryDoc = { entries: [], seen: [], updatedAt: "" };
@@ -161,46 +277,141 @@ export async function remember(
   source: MemorySource,
   options: { readonly operationId?: string; readonly pinned?: boolean; readonly now?: Date } = {},
 ): Promise<RememberOutcome> {
+  const outcome = await applyOperations(
+    workspaceId,
+    slot,
+    candidates.map((candidate) => ({ op: "add" as const, text: candidate.text, kind: candidate.kind })),
+    source,
+    options,
+  );
+  const added = options.pinned === true && outcome.added.length > 0 ? await pinAll(workspaceId, slot, outcome.added) : outcome.added;
+  return { added, duplicates: outcome.duplicates, refused: outcome.refused, replayed: outcome.replayed };
+}
+
+async function pinAll(workspaceId: string, slot: MemorySlot, entries: readonly MemoryEntry[]): Promise<readonly MemoryEntry[]> {
+  const ids = new Set(entries.map((entry) => entry.id));
+  await updateDoc<MemoryDoc>(key(workspaceId, slot), (current) =>
+    current === null ? null : { ...current, entries: current.entries.map((entry) => (ids.has(entry.id) ? { ...entry, pinned: true } : entry)) },
+  );
+  return entries.map((entry) => ({ ...entry, pinned: true }));
+}
+
+/**
+ * Applies a set of operations in one write: new entries, entries reworded
+ * (the old wording goes into the entry's history), and entries retired as no
+ * longer true. Word-for-word duplicates of a live entry are skipped; an
+ * operation on an id that is gone is skipped; a repeated `operationId`
+ * writes nothing.
+ */
+export async function applyOperations(
+  workspaceId: string,
+  slot: MemorySlot,
+  operations: readonly MemoryOperation[],
+  source: MemorySource,
+  options: { readonly operationId?: string; readonly now?: Date } = {},
+): Promise<ApplyOutcome> {
   const at = (options.now ?? new Date()).toISOString();
-  let outcome: RememberOutcome = { added: [], duplicates: 0, refused: 0, replayed: false };
+  let outcome: ApplyOutcome = { added: [], updated: [], retired: [], fields: [], confirmed: [], duplicates: 0, refused: 0, replayed: false };
   await updateDoc<MemoryDoc>(key(workspaceId, slot), (current) => {
     const doc = current ?? EMPTY;
     if (options.operationId !== undefined && doc.seen.includes(options.operationId)) {
-      outcome = { added: [], duplicates: 0, refused: 0, replayed: true };
+      outcome = { ...outcome, replayed: true };
       return null;
     }
-    const known = new Set(doc.entries.map((entry) => comparable(entry.text)));
+    const entries = [...doc.entries];
+    const forgottenTexts = new Set((doc.forgotten ?? []).map((item) => comparable(item.text)));
+    const live = () => entries.filter((entry) => !entry.retired);
+    const known = () => new Set(live().map((entry) => comparable(entry.text)));
     const added: MemoryEntry[] = [];
+    const updated: MemoryEntry[] = [];
+    const retired: MemoryEntry[] = [];
+    const fields: Record<string, MemoryFieldValue> = { ...doc.fields };
+    const changed: FieldChange[] = [];
+    const confirmedIds: string[] = [];
     let duplicates = 0;
     let refused = 0;
-    for (const candidate of candidates) {
-      const checked = acceptable(candidate);
-      if (!checked.ok) continue;
-      const seenAs = comparable(checked.text);
-      if (known.has(seenAs)) {
-        duplicates += 1;
+
+    for (const operation of operations) {
+      if (operation.op === "confirm") {
+        const index = entries.findIndex((entry) => entry.id === operation.id && !entry.retired);
+        const before = entries[index];
+        if (before === undefined) continue;
+        entries[index] = { ...before, confidence: clamp(confidenceOf(before) + 0.1), lastConfirmedAt: at, lastRecalledAt: at };
+        confirmedIds.push(before.id);
         continue;
       }
-      if (doc.entries.length + added.length >= SLOTS[slot].maxEntries) {
-        refused += 1;
+      if (operation.op === "set") {
+        const field = resolveField(slot, operation.field);
+        if (field === undefined) continue;
+        const value = normalize(operation.value).slice(0, MAX_FIELD_CHARS);
+        const before = fields[field.key];
+        if ((before?.value ?? "") === value) continue;
+        if (value !== "" && looksSecret(value)) continue;
+        if (value === "") delete fields[field.key];
+        else {
+          fields[field.key] = {
+            value,
+            at,
+            source,
+            history: before === undefined ? [] : [{ value: before.value, at: before.at, source: before.source }, ...(before.history ?? [])].slice(0, 10),
+          };
+        }
+        changed.push({ field: field.key, value, previous: before?.value ?? null });
         continue;
       }
-      known.add(seenAs);
-      added.push({
-        id: newId("mem"),
-        text: checked.text,
-        kind: candidate.kind,
-        source,
-        at,
-        pinned: options.pinned ?? false,
-        recalls: 0,
-        lastRecalledAt: null,
-      });
+      if (operation.op === "add") {
+        const checked = acceptable(operation);
+        if (!checked.ok) continue;
+        if (known().has(comparable(checked.text)) || forgottenTexts.has(comparable(checked.text))) {
+          duplicates += 1;
+          continue;
+        }
+        if (live().length >= SLOTS[slot].maxEntries) {
+          refused += 1;
+          continue;
+        }
+        const entry: MemoryEntry = {
+          id: newId("mem"),
+          text: checked.text,
+          kind: operation.kind,
+          source,
+          at,
+          pinned: false,
+          recalls: 0,
+          lastRecalledAt: null,
+          confidence: clamp(operation.confidence ?? DEFAULT_CONFIDENCE[source.who]),
+        };
+        entries.push(entry);
+        added.push(entry);
+        continue;
+      }
+      const index = entries.findIndex((entry) => entry.id === operation.id && !entry.retired);
+      const before = entries[index];
+      if (before === undefined) continue;
+      if (operation.op === "update") {
+        const checked = acceptable({ text: operation.text, kind: operation.kind ?? before.kind });
+        if (!checked.ok || comparable(checked.text) === comparable(before.text)) continue;
+        const next: MemoryEntry = {
+          ...before,
+          text: checked.text,
+          kind: operation.kind ?? before.kind,
+          source,
+          at,
+          confidence: clamp(operation.confidence ?? DEFAULT_CONFIDENCE[source.who]),
+          history: [{ text: before.text, at: before.at, source: before.source }, ...(before.history ?? [])].slice(0, 10),
+        };
+        entries[index] = next;
+        updated.push(next);
+      } else {
+        const next: MemoryEntry = { ...before, retired: { at, source, reason: normalize(operation.reason).slice(0, 300) } };
+        entries[index] = next;
+        retired.push(next);
+      }
     }
-    outcome = { added, duplicates, refused, replayed: false };
+    outcome = { added, updated, retired, fields: changed, confirmed: confirmedIds, duplicates, refused, replayed: false };
     const seen = options.operationId === undefined ? doc.seen : [...doc.seen, options.operationId].slice(-SEEN_KEPT);
-    if (added.length === 0 && seen === doc.seen) return null;
-    return { entries: [...doc.entries, ...added], seen, updatedAt: at };
+    if (added.length + updated.length + retired.length + changed.length + confirmedIds.length === 0 && seen === doc.seen) return null;
+    return { ...doc, entries, fields, seen, updatedAt: at };
   });
   return outcome;
 }
@@ -236,8 +447,80 @@ async function editEntry(
   return outcome;
 }
 
-export function forget(workspaceId: string, slot: MemorySlot, id: string): Promise<EditOutcome> {
-  return editEntry(workspaceId, slot, id, () => null);
+/** The typed core of a slot, as stored. */
+export async function readFields(workspaceId: string, slot: MemorySlot): Promise<Readonly<Record<string, MemoryFieldValue>>> {
+  return (await readMemoryDoc(workspaceId, slot)).fields ?? {};
+}
+
+/** Sets one field by hand; an empty value clears it. */
+export async function setField(workspaceId: string, slot: MemorySlot, field: string, value: string, source: MemorySource): Promise<EditOutcome> {
+  if (resolveField(slot, field) === undefined) return { ok: false, status: 404, error: "No such field." };
+  if (normalize(value) !== "" && looksSecret(value)) return { ok: false, status: 400, error: "That looks like a secret; passwords, codes and keys are never remembered." };
+  await applyOperations(workspaceId, slot, [{ op: "set", field, value }], source);
+  return { ok: true };
+}
+
+/** Brings a retired entry back, when the person says it is still true. */
+export function restore(workspaceId: string, slot: MemorySlot, id: string): Promise<EditOutcome> {
+  return editEntry(workspaceId, slot, id, (entry) => ({ ...entry, retired: null, at: new Date().toISOString() }));
+}
+
+/** The entries a turn may recall: not retired. */
+export const liveEntries = (entries: readonly MemoryEntry[]): readonly MemoryEntry[] => entries.filter((entry) => !entry.retired);
+
+/** An entry nobody has needed for `FADE_AFTER_MS`: live, but left out of recall until brought back. Pinned entries never fade. */
+export const isFaded = (entry: MemoryEntry, now: number = Date.now()): boolean => {
+  if (entry.pinned || entry.retired) return false;
+  const last = Date.parse(entry.lastRecalledAt ?? entry.lastConfirmedAt ?? entry.at);
+  return Number.isFinite(last) && now - last > FADE_AFTER_MS;
+};
+
+/** What a turn is offered: live and not faded. */
+export const recallable = (entries: readonly MemoryEntry[], now: number = Date.now()): readonly MemoryEntry[] => liveEntries(entries).filter((entry) => !isFaded(entry, now));
+
+/** The person said it again: the entry is surer, and it counts as used today. */
+export async function confirm(workspaceId: string, slot: MemorySlot, ids: readonly string[], now: Date = new Date()): Promise<void> {
+  if (ids.length === 0) return;
+  const wanted = new Set(ids);
+  const at = now.toISOString();
+  await updateDoc<MemoryDoc>(key(workspaceId, slot), (current) => {
+    if (current === null) return null;
+    return {
+      ...current,
+      entries: current.entries.map((entry) =>
+        wanted.has(entry.id) ? { ...entry, confidence: clamp(confidenceOf(entry) + 0.1), lastConfirmedAt: at, lastRecalledAt: at } : entry,
+      ),
+      updatedAt: at,
+    };
+  });
+}
+
+/** A faded entry a person wants back in recall: it counts as used today. */
+export function revive(workspaceId: string, slot: MemorySlot, id: string): Promise<EditOutcome> {
+  return editEntry(workspaceId, slot, id, (entry) => ({ ...entry, lastRecalledAt: new Date().toISOString(), retired: null }));
+}
+
+/** Forgets an entry for good, and remembers that it was forgotten so capture does not put it straight back. */
+export async function forget(workspaceId: string, slot: MemorySlot, id: string): Promise<EditOutcome> {
+  let outcome: EditOutcome = { ok: false, status: 404, error: "No such memory." };
+  await updateDoc<MemoryDoc>(key(workspaceId, slot), (current) => {
+    const doc = current ?? EMPTY;
+    const entry = doc.entries.find((candidate) => candidate.id === id);
+    if (entry === undefined) return null;
+    outcome = { ok: true };
+    return {
+      ...doc,
+      entries: doc.entries.filter((candidate) => candidate.id !== id),
+      forgotten: [{ text: entry.text, at: new Date().toISOString() }, ...(doc.forgotten ?? [])].slice(0, FORGOTTEN_KEPT),
+      updatedAt: new Date().toISOString(),
+    };
+  });
+  return outcome;
+}
+
+/** What a person forgot by hand in this slot, newest first. */
+export async function readForgotten(workspaceId: string, slot: MemorySlot): Promise<readonly { readonly text: string; readonly at: string }[]> {
+  return (await readMemoryDoc(workspaceId, slot)).forgotten ?? [];
 }
 
 export function pin(workspaceId: string, slot: MemorySlot, id: string, pinned: boolean): Promise<EditOutcome> {

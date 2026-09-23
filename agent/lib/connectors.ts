@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
 import { catalogEntry, effectOf, mergePolicy, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind, type ToolEffect, type ToolPolicy } from "./catalog";
+import { authorizeUrl, beginPkce, discover, exchangeCode, needsRefresh, type OAuthClient, type OAuthMetadata, refreshTokens, registerClient, type TokenSet } from "./connector-oauth";
 import { computerKey } from "./computer/keys";
 import { newId } from "./ids";
 import { watchToolPolicy } from "./jev-watch";
@@ -22,7 +23,16 @@ export type { ConnectorGate, ConnectorKeyKind };
 type SealedAuth =
   | { readonly kind: "none" }
   | { readonly kind: "bearer"; readonly sealed: string }
-  | { readonly kind: "header"; readonly header: string; readonly sealed: string };
+  | { readonly kind: "header"; readonly header: string; readonly sealed: string }
+  | {
+      readonly kind: "oauth";
+      readonly metadata: OAuthMetadata;
+      /** This app, registered with the server for one redirect URI; null until the first connect. */
+      readonly client: OAuthClient | null;
+      /** The token set, sealed; null until the person has signed in, or after they disconnect. */
+      readonly sealed: string | null;
+      readonly connectedAt: string | null;
+    };
 
 export interface ConnectorCheck {
   readonly ok: boolean;
@@ -58,9 +68,9 @@ export interface Connector {
   readonly createdBy: string;
 }
 
-/** What the console sees: which kind of key, never the key. */
+/** What the console sees: which kind of key, never the key; for OAuth, whether someone has signed in. */
 export type PublicConnector = Omit<Connector, "auth"> & {
-  readonly auth: { readonly kind: ConnectorKeyKind; readonly header?: string };
+  readonly auth: { readonly kind: ConnectorKeyKind; readonly header?: string; readonly connected?: boolean; readonly connectedAt?: string | null; readonly issuer?: string };
 };
 
 export interface ConnectorInput {
@@ -92,9 +102,16 @@ export async function getConnector(workspaceId: string, id: string): Promise<Con
 
 export function publicConnector(connector: Connector): PublicConnector {
   const auth =
-    connector.auth.kind === "header" ? { kind: "header" as const, header: connector.auth.header } : { kind: connector.auth.kind };
+    connector.auth.kind === "header"
+      ? { kind: "header" as const, header: connector.auth.header }
+      : connector.auth.kind === "oauth"
+        ? { kind: "oauth" as const, connected: connector.auth.sealed !== null, connectedAt: connector.auth.connectedAt, issuer: connector.auth.metadata.issuer }
+        : { kind: connector.auth.kind };
   return { ...connector, auth };
 }
+
+/** A connector that signs in through the server's own OAuth and has not yet. */
+export const needsConnect = (connector: Connector): boolean => connector.auth.kind === "oauth" && connector.auth.sealed === null;
 
 const GATES: readonly ConnectorGate[] = ["none", "writes", "all"];
 
@@ -115,10 +132,10 @@ export async function addConnector(
   if (label === "") return { ok: false, error: "Give the connector a name." };
   const url = checkUrl(entry?.url ?? input.url ?? "");
   if (typeof url !== "string") return { ok: false, error: url.error };
-  const kind: ConnectorKeyKind = entry?.key.kind ?? input.key?.kind ?? "none";
+  let kind: ConnectorKeyKind = entry?.key.kind ?? input.key?.kind ?? "none";
   const header = entry?.key.header ?? input.key?.header ?? "";
   const secret = input.key?.secret?.trim() ?? "";
-  if (kind !== "none" && (secret === "" || secret.length > SECRET_MAX)) {
+  if (kind !== "none" && kind !== "oauth" && (secret === "" || secret.length > SECRET_MAX)) {
     return { ok: false, error: entry === undefined ? "Paste the key the server expects." : `Paste a ${entry.label} key.` };
   }
   if (kind === "header" && !HEADER_NAME.test(header)) {
@@ -126,9 +143,21 @@ export async function addConnector(
   }
   const gate: ConnectorGate = input.gate !== undefined && GATES.includes(input.gate) ? input.gate : (entry?.gate ?? "none");
 
-  const headers = headersFor(kind, header, secret);
-  const probe = await probeMcp(url, headers);
-  if (!probe.ok) return { ok: false, error: probe.error ?? "The server did not answer like an MCP server." };
+  // A server that runs its own OAuth is connected in two steps: saved now, signed in from the page.
+  // A custom server added with no key is asked what it wants, so one that needs OAuth gets it without anyone knowing the word.
+  let oauth: OAuthMetadata | null = null;
+  if (kind === "oauth" || (kind === "none" && entry === undefined)) {
+    const found = await discover(url);
+    if (found.kind === "oauth") {
+      oauth = found.metadata;
+      kind = "oauth";
+    } else if (kind === "oauth") {
+      return { ok: false, error: found.kind === "unreachable" ? found.error : "This server does not sign people in on its own; it needs a key." };
+    }
+  }
+
+  const probe: ConnectorCheck = oauth !== null ? { ok: false, at: new Date().toISOString(), tools: [], error: "Connect to finish setting it up." } : await probeMcp(url, headersFor(kind, header, secret));
+  if (oauth === null && !probe.ok) return { ok: false, error: probe.error ?? "The server did not answer like an MCP server." };
 
   const existing = await listConnectors(workspaceId);
   if (entry !== undefined && existing.some((current) => current.catalog === entry.id)) {
@@ -146,7 +175,7 @@ export async function addConnector(
       input.description?.trim().slice(0, DESCRIPTION_MAX) ||
       entry?.description ||
       `${label}: tools from ${new URL(url).host}. ${probe.tools.slice(0, 8).join(", ")}`.slice(0, DESCRIPTION_MAX),
-    auth: await seal(kind, header, secret),
+    auth: oauth !== null ? { kind: "oauth", metadata: oauth, client: null, sealed: null, connectedAt: null } : await seal(kind, header, secret),
     enabled: true,
     gate,
     policy: mergePolicy(undefined, probe.tools),
@@ -210,6 +239,7 @@ export async function replaceKey(
 ): Promise<{ ok: true; connector: Connector } | { ok: false; error: string }> {
   const current = await getConnector(workspaceId, id);
   if (current === null) return { ok: false, error: "no such connector" };
+  if (current.auth.kind === "oauth") return { ok: false, error: "This connector signs in through the server; reconnect it instead of pasting a key." };
   const kind: ConnectorKeyKind = input.kind ?? current.auth.kind;
   const header = input.header ?? (current.auth.kind === "header" ? current.auth.header : "");
   const secret = input.secret.trim();
@@ -242,6 +272,10 @@ export async function recheckConnector(connector: Connector): Promise<Connector 
 /** The connector's request headers with its key unsealed. Only for server-side calls. */
 export async function connectorHeaders(connector: Connector): Promise<Record<string, string>> {
   if (connector.auth.kind === "none") return {};
+  if (connector.auth.kind === "oauth") {
+    const token = await connectorToken(connector);
+    return token === null ? {} : { authorization: `Bearer ${token.token}` };
+  }
   const secret = await unseal(connector.auth.sealed);
   return headersFor(connector.auth.kind, connector.auth.kind === "header" ? connector.auth.header : "", secret);
 }
@@ -250,6 +284,113 @@ function headersFor(kind: ConnectorKeyKind, header: string, secret: string): Rec
   if (kind === "bearer") return { authorization: `Bearer ${secret}` };
   if (kind === "header") return { [header]: secret };
   return {};
+}
+
+// ─── OAuth the server runs itself ────────────────────────────────────────────
+
+const pendingKey = (state: string) => `oauth-pending/${state}.json`;
+const PENDING_MAX_AGE_MS = 15 * 60 * 1000;
+
+interface Pending {
+  readonly workspaceId: string;
+  readonly connectorId: string;
+  readonly verifier: string;
+  readonly at: string;
+}
+
+/** Where a signing-in browser is sent back to. The same path everywhere, so the registered client stays valid. */
+export const OAUTH_CALLBACK_PATH = "/bot/v1/oauth/callback";
+
+/**
+ * Starts signing in: registers this app with the server when it has not
+ * been, or when the app's address changed, remembers the PKCE verifier under
+ * a random state, and returns the consent URL to send the person to.
+ */
+export async function startOAuth(workspaceId: string, id: string, origin: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const connector = await getConnector(workspaceId, id);
+  if (connector === null) return { ok: false, error: "no such connector" };
+  if (connector.auth.kind !== "oauth") return { ok: false, error: "This connector uses a key, not a sign-in." };
+  const redirectUri = `${origin.replace(/\/$/, "")}${OAUTH_CALLBACK_PATH}`;
+  let client = connector.auth.client;
+  if (client === null || client.redirectUri !== redirectUri) {
+    try {
+      client = await registerClient(connector.auth.metadata, redirectUri);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    const registered = client;
+    await updateDoc<Connector>(key(workspaceId, id), (current) => (current === null || current.auth.kind !== "oauth" ? null : { ...current, auth: { ...current.auth, client: registered } }));
+  }
+  const pkce = beginPkce(connector.auth.metadata.pkce);
+  await writeDoc<Pending>(pendingKey(pkce.state), { workspaceId, connectorId: id, verifier: pkce.verifier, at: new Date().toISOString() });
+  return { ok: true, url: authorizeUrl(connector.auth.metadata, client, pkce) };
+}
+
+/**
+ * Finishes signing in when the server sends the browser back: exchanges the
+ * code, seals the tokens on the connector, and reaches the server for its
+ * tools. Returns where to send the browser next.
+ */
+export async function completeOAuth(state: string, code: string | null, failure: string | null): Promise<{ workspaceId: string; connectorId: string; error: string | null } | null> {
+  const pending = (await readDoc<Pending>(pendingKey(state)))?.value;
+  if (pending === undefined) return null;
+  await deleteDoc(pendingKey(state)).catch(() => undefined);
+  const { workspaceId, connectorId } = pending;
+  const fail = async (error: string) => {
+    await updateConnector(workspaceId, connectorId, { check: { ok: false, at: new Date().toISOString(), tools: [], error } });
+    return { workspaceId, connectorId, error };
+  };
+  if (Date.now() - Date.parse(pending.at) > PENDING_MAX_AGE_MS) return fail("The sign-in took too long; try again.");
+  if (failure !== null) return fail(`The server said no: ${failure}.`);
+  if (code === null) return fail("The server sent no code back.");
+  const connector = await getConnector(workspaceId, connectorId);
+  if (connector === null || connector.auth.kind !== "oauth" || connector.auth.client === null) return fail("The connector changed while you were signing in.");
+  let tokens: TokenSet;
+  try {
+    tokens = await exchangeCode(connector.auth.metadata, connector.auth.client, code, pending.verifier);
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
+  }
+  const auth = { ...connector.auth, sealed: await sealText(JSON.stringify(tokens)), connectedAt: new Date().toISOString() };
+  const connected = await updateDoc<Connector>(key(workspaceId, connectorId), (current) => (current === null ? null : { ...current, auth }));
+  if (connected !== null) await recheckConnector(connected);
+  return { workspaceId, connectorId, error: null };
+}
+
+/** Forgets the sign-in but keeps the connector, so it can be connected again. */
+export async function disconnectOAuth(workspaceId: string, id: string): Promise<boolean> {
+  const updated = await updateDoc<Connector>(key(workspaceId, id), (current) =>
+    current === null || current.auth.kind !== "oauth"
+      ? null
+      : { ...current, auth: { ...current.auth, sealed: null, connectedAt: null }, check: { ok: false, at: new Date().toISOString(), tools: current.check.tools, error: "Connect to finish setting it up." } },
+  );
+  return updated !== null;
+}
+
+/**
+ * A live access token for an OAuth connector, refreshed when within five
+ * minutes of expiry and the refresh saved. Null when nobody has signed in or
+ * the refresh failed, which is when a Bot should ask the person to connect.
+ */
+export async function connectorToken(connector: Connector): Promise<{ readonly token: string; readonly expiresAt?: number } | null> {
+  if (connector.auth.kind !== "oauth" || connector.auth.sealed === null || connector.auth.client === null) return null;
+  let tokens: TokenSet;
+  try {
+    tokens = JSON.parse(await unseal(connector.auth.sealed)) as TokenSet;
+  } catch {
+    return null;
+  }
+  if (needsRefresh(tokens)) {
+    try {
+      tokens = await refreshTokens(connector.auth.metadata, connector.auth.client, tokens);
+      const sealed = await sealText(JSON.stringify(tokens));
+      await updateDoc<Connector>(key(connector.workspaceId, connector.id), (current) => (current === null || current.auth.kind !== "oauth" ? null : { ...current, auth: { ...current.auth, sealed } }));
+    } catch {
+      // The old token may still work for a few minutes; the next call finds out.
+      if (tokens.expiresAt !== null && tokens.expiresAt <= Date.now()) return null;
+    }
+  }
+  return { token: tokens.accessToken, ...(tokens.expiresAt === null ? {} : { expiresAt: tokens.expiresAt }) };
 }
 
 function checkUrl(raw: string): string | { error: string } {
@@ -287,8 +428,17 @@ async function sealingKey(): Promise<Buffer> {
   return createHash("sha256").update(`bot-connectors:${await computerKey()}`).digest();
 }
 
+/** Seals any text with the workspace's key; the OAuth token set goes through here. */
+async function sealText(text: string): Promise<string> {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", await sealingKey(), iv);
+  const body = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+  return [iv, cipher.getAuthTag(), body].map((part) => part.toString("base64url")).join(".");
+}
+
 async function seal(kind: ConnectorKeyKind, header: string, secret: string): Promise<SealedAuth> {
   if (kind === "none") return { kind };
+  if (kind === "oauth") throw new Error("OAuth connectors are sealed from their token set, not a pasted key.");
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", await sealingKey(), iv);
   const body = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);

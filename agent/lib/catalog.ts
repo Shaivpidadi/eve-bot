@@ -6,7 +6,8 @@
  * Node built-ins.
  */
 
-export type ConnectorKeyKind = "none" | "bearer" | "header";
+/** How a connector proves who is calling: nothing, a pasted key, or OAuth the server runs itself (one click, no setup). */
+export type ConnectorKeyKind = "none" | "bearer" | "header" | "oauth";
 
 /** When a person is asked before a Bot uses a connector's tools. */
 export type ConnectorGate = "none" | "writes" | "all";
@@ -37,6 +38,42 @@ export const CATALOG: readonly CatalogEntry[] = [
     key: { kind: "bearer" },
     keyHelp: "A personal access token. Fine-grained tokens work; give it only the repositories and permissions the team needs.",
     keyUrl: "https://github.com/settings/personal-access-tokens/new",
+    gate: "writes",
+  },
+  {
+    id: "linear",
+    label: "Linear",
+    description: "Linear: issues, projects, cycles, comments, and teams in the workspace you sign in to.",
+    detail: "Issues, projects, and cycles",
+    url: "https://mcp.linear.app/mcp",
+    key: { kind: "oauth" },
+    gate: "writes",
+  },
+  {
+    id: "notion",
+    label: "Notion",
+    description: "Notion: pages, databases, and comments in the workspace you sign in to; search and read, create and update.",
+    detail: "Pages and databases",
+    url: "https://mcp.notion.com/mcp",
+    key: { kind: "oauth" },
+    gate: "writes",
+  },
+  {
+    id: "atlassian",
+    label: "Atlassian",
+    description: "Jira and Confluence: issues, boards, sprints, pages, and spaces in the site you sign in to.",
+    detail: "Jira issues and Confluence pages",
+    url: "https://mcp.atlassian.com/v1/mcp",
+    key: { kind: "oauth" },
+    gate: "writes",
+  },
+  {
+    id: "sentry",
+    label: "Sentry",
+    description: "Sentry: issues, events, releases, and projects in the organization you sign in to.",
+    detail: "Errors, issues, and releases",
+    url: "https://mcp.sentry.dev/mcp",
+    key: { kind: "oauth" },
     gate: "writes",
   },
   {

@@ -1,4 +1,4 @@
-import type { MemoryEntry } from "./store";
+import { confidenceOf, type MemoryEntry } from "./store";
 
 /**
  * Which memories to bring into a turn.
@@ -16,12 +16,16 @@ const STOP = new Set(
   ),
 );
 
+/** Plain plurals fold into their singular, so "invoices" finds "invoice"; addresses are left whole. */
+const singular = (word: string) => (word.length > 4 && /[^suiy@]s$/.test(word) && !word.includes("@") ? word.slice(0, -1) : word);
+
 export function tokens(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[^\p{L}\p{N}@.]+/u)
     .map((word) => word.replace(/^[.]+|[.]+$/g, ""))
-    .filter((word) => word.length > 2 && !STOP.has(word));
+    .filter((word) => word.length > 2 && !STOP.has(word))
+    .map(singular);
 }
 
 /** How rare each word is across the slot, so "invoice" counts for more than "always". */
@@ -34,12 +38,13 @@ function rarity(entries: readonly MemoryEntry[]): Map<string, number> {
   return weights;
 }
 
+/** Shared rare words, scaled by how sure the team is of the entry: a doubtful match ranks below a sure one. */
 export function score(entry: MemoryEntry, query: ReadonlySet<string>, weights: ReadonlyMap<string, number>): number {
   const own = new Set(tokens(entry.text));
   if (own.size === 0) return 0;
   let sum = 0;
   for (const word of own) if (query.has(word)) sum += weights.get(word) ?? 1;
-  return sum / Math.sqrt(own.size);
+  return (sum / Math.sqrt(own.size)) * (0.5 + confidenceOf(entry) / 2);
 }
 
 export interface Selection {
@@ -60,7 +65,13 @@ export interface Selection {
 export function select(
   entries: readonly MemoryEntry[],
   query: string,
-  options: { readonly maxChars?: number; readonly coreKinds?: readonly MemoryEntry["kind"][]; readonly relevantMax?: number } = {},
+  options: {
+    readonly maxChars?: number;
+    readonly coreKinds?: readonly MemoryEntry["kind"][];
+    readonly relevantMax?: number;
+    /** The non-core entries already ranked by meaning (best first); word overlap ranks whatever it leaves out. */
+    readonly ranked?: readonly MemoryEntry[];
+  } = {},
 ): Selection {
   const maxChars = options.maxChars ?? 3_500;
   const coreKinds = options.coreKinds ?? ["preference", "rule", "fact"];
@@ -70,9 +81,11 @@ export function select(
 
   const core: MemoryEntry[] = [];
   let spent = 0;
+  // Pinned first, then the surer, then the newer: when the budget bites, doubt goes before age.
+  const bySureness = (left: MemoryEntry, right: MemoryEntry) => Math.round(confidenceOf(right) * 5) - Math.round(confidenceOf(left) * 5);
   for (const entry of [...entries]
     .filter((entry) => entry.pinned || coreKinds.includes(entry.kind))
-    .sort((left, right) => Number(right.pinned) - Number(left.pinned) || byRecency(left, right))) {
+    .sort((left, right) => Number(right.pinned) - Number(left.pinned) || bySureness(left, right) || byRecency(left, right))) {
     if (spent + cost(entry) > maxChars * 0.8) continue;
     core.push(entry);
     spent += cost(entry);
@@ -82,7 +95,7 @@ export function select(
 
   const words = new Set(tokens(query));
   const weights = rarity(entries);
-  const ranked =
+  const byWords =
     words.size === 0
       ? [...rest].sort(byRecency)
       : rest
@@ -90,6 +103,9 @@ export function select(
           .filter((row) => row.score > 0)
           .sort((left, right) => right.score - left.score || byRecency(left.entry, right.entry))
           .map((row) => row.entry);
+  // Meaning first when it is known; words fill in behind it for entries meaning did not reach.
+  const known = new Set((options.ranked ?? []).map((entry) => entry.id));
+  const ranked = [...(options.ranked ?? []).filter((entry) => !inCore.has(entry.id)), ...byWords.filter((entry) => !known.has(entry.id))];
 
   const relevant: MemoryEntry[] = [];
   for (const entry of ranked) {

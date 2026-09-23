@@ -3,9 +3,23 @@ import type { HookContext, HookDefinition } from "eve/hooks";
 import { record } from "../activity";
 import { operator } from "../session";
 import { sessionState } from "../session-state";
-import { capture, type CaptureMode, defaultDeps } from "./capture";
+import { sessionBinding } from "../computer/screens";
+import { capture, type CaptureDeps, type CaptureMode, defaultDeps } from "./capture";
+import { learnFromDenial } from "./outcomes";
 import { jobOf, trace } from "./provider";
-import type { MemorySlot } from "./store";
+import { fieldFor, type MemorySlot } from "./store";
+
+/** What the hook reaches for, replaceable in tests so the event handling can be driven without a Gateway or a store of jobs. */
+export interface HookDeps {
+  readonly deps: (workspaceId: string) => CaptureDeps;
+  readonly trace: typeof trace;
+  readonly record: typeof record;
+  readonly jobOf: typeof jobOf;
+  readonly binding: typeof sessionBinding;
+  readonly denial: typeof learnFromDenial;
+}
+
+const REAL: HookDeps = { deps: defaultDeps, trace, record, jobOf, binding: sessionBinding, denial: learnFromDenial };
 
 /**
  * Remembering, driven from the event stream.
@@ -45,9 +59,18 @@ function describeResult(result: unknown): string | null {
   return `[${name}] ${text.slice(0, MAX_TOOL_NOTE)}`;
 }
 
-export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
+interface Asked {
+  readonly toolName: string;
+  readonly prompt: string;
+  readonly input: unknown;
+}
+
+export function memoryCaptureHook(mode: CaptureMode, overrides: Partial<HookDeps> = {}): HookDefinition {
+  const io: HookDeps = { ...REAL, ...overrides };
   const slot: MemorySlot = mode === "conversation" ? "profile" : "craft";
   const exchanges = sessionState<Exchange>();
+  /** Approvals a job asked for, by request id, so a decline can be read back. */
+  const asked = sessionState<Map<string, Asked>>();
   const current = (ctx: HookContext): Exchange => {
     const existing = exchanges.get(ctx.session.id);
     if (existing !== undefined) return existing;
@@ -78,6 +101,29 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
         const note = describeResult(event.data.result);
         if (note !== null) current(ctx).tools.push(note);
       },
+      "input.requested"(event, ctx) {
+        if (mode !== "job") return;
+        const pending = asked.get(ctx.session.id) ?? new Map<string, Asked>();
+        for (const request of event.data.requests) {
+          if (request.kind !== "tool-approval") continue;
+          pending.set(request.requestId, { toolName: request.action?.toolName ?? "a tool", prompt: request.prompt, input: request.action?.input });
+        }
+        asked.set(ctx.session.id, pending);
+      },
+      async "approval.settled"(event, ctx) {
+        if (mode !== "job" || event.data.outcome !== "cancelled") return;
+        const request = asked.get(ctx.session.id)?.get(event.data.requestId);
+        if (request === undefined) return;
+        asked.get(ctx.session.id)?.delete(event.data.requestId);
+        const workspaceId = operator(ctx).workspaceId;
+        try {
+          const binding = await io.binding(workspaceId, ctx.session.id);
+          if (binding === null) return;
+          await io.denial(workspaceId, { jobId: binding.jobId, botId: binding.botId, requestId: event.data.requestId, ...request });
+        } catch (error) {
+          await io.trace(workspaceId, "craft", "failed", `denial: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      },
       async "turn.completed"(event, ctx) {
         const exchange = exchanges.get(ctx.session.id);
         exchanges.delete(ctx.session.id);
@@ -86,17 +132,17 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
         const workspaceId = who.workspaceId;
         try {
           if (who.automated) {
-            await trace(workspaceId, slot, "skipped", "automated turn");
+            await io.trace(workspaceId, slot, "skipped", "automated turn");
             return;
           }
           const person = exchange.person.join("\n").trim();
           if (person === "") {
-            await trace(workspaceId, slot, "skipped", "no message from a person this turn");
+            await io.trace(workspaceId, slot, "skipped", "no message from a person this turn");
             return;
           }
-          const job = mode === "job" ? await jobOf(workspaceId, [{ role: "user", content: person }]) : null;
+          const job = mode === "job" ? await io.jobOf(workspaceId, [{ role: "user", content: person }]) : null;
           if (mode === "job" && job === null) {
-            await trace(workspaceId, slot, "skipped", "no job id in the brief");
+            await io.trace(workspaceId, slot, "skipped", "no job id in the brief");
             return;
           }
           const reply = mode === "conversation" ? exchange.reply.join("\n") : [...exchange.reply, ...exchange.tools].join("\n").slice(-MAX_TRANSCRIPT);
@@ -104,23 +150,35 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
             mode === "conversation"
               ? { who: "auto" as const, room: who.room }
               : { who: "auto" as const, name: job?.botName, room: who.room, jobId: job?.jobId ?? null };
-          await trace(workspaceId, slot, "capturing", `${person.length} chars from the person, ${reply.length} back`);
+          await io.trace(workspaceId, slot, "capturing", `${person.length} chars from the person, ${reply.length} back`);
           const result = await capture(
             { workspaceId, mode, person, reply, source, operationId: `${ctx.session.id}:${event.data.turnId}` },
-            defaultDeps(workspaceId),
+            io.deps(workspaceId),
           );
-          await trace(workspaceId, slot, "done", `gate=${result.gate} proposed=${result.proposed} saved=${result.saved.length}`);
-          if (result.saved.length === 0) return;
-          await record({
+          await io.trace(
+            workspaceId,
+            slot,
+            "done",
+            `gate=${result.gate} proposed=${result.proposed} saved=${result.saved.length} updated=${result.updated.length} retired=${result.retired.length} fields=${result.fields.length} confirmed=${result.confirmed.length}${result.raw === undefined ? "" : ` raw=${result.raw}`}${result.error === undefined ? "" : ` extractor failed: ${result.error}`}`,
+          );
+          const changed = [...result.saved, ...result.updated, ...result.retired];
+          if (changed.length + result.fields.length === 0) return;
+          const parts = [
+            result.fields.length === 0 ? null : `Noted: ${result.fields.map((change) => `${fieldFor(change.slot, change.field)?.label ?? change.field} is ${change.value}`).join(" · ")}`,
+            result.saved.length === 0 ? null : `Remembered: ${result.saved.map((entry) => entry.text).join(" · ")}`,
+            result.updated.length === 0 ? null : `Updated: ${result.updated.map((entry) => entry.text).join(" · ")}`,
+            result.retired.length === 0 ? null : `No longer true: ${result.retired.map((entry) => entry.text).join(" · ")}`,
+          ].filter((part): part is string => part !== null);
+          await io.record({
             workspaceId,
             kind: "memory.saved",
             botId: job?.botId ?? null,
             jobId: job?.jobId ?? null,
-            text: `Remembered: ${result.saved.map((entry) => entry.text).join(" · ")}`,
-            data: { slots: [...new Set(result.saved.map((entry) => entry.slot))], ids: result.saved.map((entry) => entry.id), gate: result.gate },
+            text: parts.join(" — "),
+            data: { slots: [...new Set([...changed, ...result.fields].map((item) => item.slot))], ids: changed.map((entry) => entry.id), fields: result.fields.map((change) => change.field), gate: result.gate },
           });
         } catch (error) {
-          await trace(workspaceId, slot, "failed", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+          await io.trace(workspaceId, slot, "failed", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
         }
       },
     },

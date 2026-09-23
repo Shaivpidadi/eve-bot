@@ -24,6 +24,7 @@ import {
   sendBack,
   type Hold,
 } from "../lib/jobs";
+import { learnFromFeedback } from "../lib/memory/outcomes";
 import { sameFindings } from "../lib/findings";
 import { jevEnabled, judge } from "../lib/jev";
 import { completionQuestions, noteShadow, readVerdict, unmetCriteria } from "../lib/jev-watch";
@@ -639,4 +640,6 @@ async function markSentBack(
   "use step";
   await sendBack(workspaceId, jobId, note, { token, result });
   await forgetJob(workspaceId, jobId).catch(() => undefined);
+  // A person saying what to change is the clearest statement of how they want work done.
+  await learnFromFeedback(workspaceId, jobId, note, result);
 }

@@ -17,6 +17,37 @@ interface Entry {
   readonly pinned: boolean;
   readonly recalls: number;
   readonly lastRecalledAt: string | null;
+  readonly history?: readonly { readonly text: string; readonly at: string; readonly source: Entry["source"] }[];
+  readonly retired?: { readonly at: string; readonly source: Entry["source"]; readonly reason: string } | null;
+  readonly confidence?: number;
+  readonly lastConfirmedAt?: string | null;
+}
+
+const FADE_AFTER_MS = 90 * 24 * 60 * 60 * 1000;
+const DEFAULT_CONFIDENCE: Readonly<Record<Entry["source"]["who"], number>> = { you: 1, hq: 0.85, bot: 0.8, auto: 0.7, import: 0.75 };
+const confidenceOf = (entry: Entry) => entry.confidence ?? DEFAULT_CONFIDENCE[entry.source.who];
+/** Not needed for ninety days: kept, but not recalled until brought back. */
+const isFaded = (entry: Entry) => {
+  if (entry.pinned || entry.retired) return false;
+  const last = Date.parse(entry.lastRecalledAt ?? entry.lastConfirmedAt ?? entry.at);
+  return Number.isFinite(last) && Date.now() - last > FADE_AFTER_MS;
+};
+const sureness = (entry: Entry) => {
+  const value = confidenceOf(entry);
+  return value >= 0.9 ? "sure" : value >= 0.7 ? "fairly sure" : "unsure";
+};
+
+interface FieldDefinition {
+  readonly key: string;
+  readonly label: string;
+  readonly hint: string;
+}
+
+interface FieldValue {
+  readonly value: string;
+  readonly at: string;
+  readonly source: Entry["source"];
+  readonly history?: readonly { readonly value: string; readonly at: string; readonly source: Entry["source"] }[];
 }
 
 interface SlotView {
@@ -25,6 +56,8 @@ interface SlotView {
   readonly detail: string;
   readonly maxEntries: number;
   readonly entries: readonly Entry[];
+  readonly fieldDefinitions?: readonly FieldDefinition[];
+  readonly fields?: Readonly<Record<string, FieldValue>>;
 }
 
 interface Playbook {
@@ -87,6 +120,7 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [editingField, setEditingField] = useState<{ slot: Slot; key: string; value: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -112,11 +146,11 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && editing === null) onClose();
+      if (event.key === "Escape" && editing === null && editingField === null) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, editing]);
+  }, [onClose, editing, editingField]);
 
   /** Runs one change, shows its error if any, and reloads. */
   const act = async (id: string, request: () => Promise<Response>, fallback: string): Promise<boolean> => {
@@ -140,7 +174,7 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
 
   const needle = query.trim().toLowerCase();
   const matches = (text: string) => needle === "" || text.toLowerCase().includes(needle);
-  const total = useMemo(() => view?.slots.reduce((sum, slot) => sum + slot.entries.length, 0) ?? 0, [view]);
+  const total = useMemo(() => view?.slots.reduce((sum, slot) => sum + slot.entries.filter((entry) => !entry.retired).length + Object.keys(slot.fields ?? {}).length, 0) ?? 0, [view]);
 
   return (
     <div className="usage-page memory-page" role="region" aria-label="Memory">
@@ -164,12 +198,16 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
         <div className="usage-body">
           <p className="usage-note memory-intro">
             Memory forms on its own. When you tell HQ how you like things, or a Bot learns how one of your systems behaves, Jev judges whether it is worth
-            keeping and it lands here with a note of where it came from. HQ and every Bot recall what is relevant on each turn. Pinned memories are recalled
-            every time. Nothing here is a secret: passwords, codes and keys are refused.
+            keeping and it lands here with a note of where it came from. When a preference moves on, the memory is reworded and keeps its old wording; when
+            something stops being true, it is retired, not lost. Each memory carries how sure the team is of it, which rises when you say it again. HQ and every Bot
+            recall what is relevant on each turn; what nobody has needed for ninety days fades out of recall but stays here. Pinned memories are recalled every time.
+            Nothing here is a secret: passwords, codes and keys are refused.
           </p>
 
           {view.slots.map((slot) => {
-            const shown = slot.entries.filter((entry) => matches(entry.text));
+            const shown = slot.entries.filter((entry) => !entry.retired && !isFaded(entry) && matches(entry.text));
+            const faded = slot.entries.filter((entry) => !entry.retired && isFaded(entry) && matches(entry.text));
+            const gone = slot.entries.filter((entry) => entry.retired && matches(entry.text));
             const draft = drafts[slot.slot] ?? "";
             return (
               <section key={slot.slot} className="usage-section memory-slot">
@@ -177,12 +215,73 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
                   {slot.label}
                   <small className="faint">
                     {" · "}
-                    {slot.entries.length} of {slot.maxEntries}
+                    {slot.entries.filter((entry) => !entry.retired).length} of {slot.maxEntries}
                   </small>
                 </h2>
                 <p className="faint">{slot.detail}</p>
+                {(slot.fieldDefinitions ?? []).length === 0 ? null : (
+                  <dl className="memory-fields">
+                    {(slot.fieldDefinitions ?? [])
+                      .filter((field) => needle === "" || matches(field.label) || matches(slot.fields?.[field.key]?.value ?? ""))
+                      .map((field) => {
+                        const current = slot.fields?.[field.key];
+                        const isEditing = editingField?.slot === slot.slot && editingField.key === field.key;
+                        return (
+                          <div key={field.key} className={`memory-field${current === undefined ? " unset" : ""}`}>
+                            <dt title={field.hint}>{field.label}</dt>
+                            {isEditing ? (
+                              <form
+                                className="memory-edit"
+                                onSubmit={async (event) => {
+                                  event.preventDefault();
+                                  const saved = await act(
+                                    `${slot.slot}:${field.key}`,
+                                    () => api(`/bot/v1/memory/${slot.slot}/fields`, { method: "POST", body: JSON.stringify({ field: field.key, value: editingField.value }) }),
+                                    "Could not change that.",
+                                  );
+                                  if (saved) setEditingField(null);
+                                }}
+                              >
+                                <input
+                                  value={editingField.value}
+                                  onChange={(event) => setEditingField({ slot: slot.slot, key: field.key, value: event.target.value })}
+                                  placeholder={field.hint}
+                                  maxLength={200}
+                                  aria-label={field.label}
+                                  autoFocus
+                                />
+                                <button type="submit" className="btn primary" disabled={busy !== null}>
+                                  Save
+                                </button>
+                                <button type="button" className="btn" onClick={() => setEditingField(null)}>
+                                  Cancel
+                                </button>
+                              </form>
+                            ) : (
+                              <dd>
+                                <button
+                                  type="button"
+                                  className="memory-field-value"
+                                  title={
+                                    current === undefined
+                                      ? `Not known yet. ${field.hint}.`
+                                      : `${provenance({ ...current, text: current.value, kind: "fact", id: field.key, pinned: false, recalls: 0, lastRecalledAt: null } as Entry)}${
+                                          current.history && current.history.length > 0 ? `\nWas: ${current.history.map((rev) => rev.value).join(", ")}` : ""
+                                        }`
+                                  }
+                                  onClick={() => setEditingField({ slot: slot.slot, key: field.key, value: current?.value ?? "" })}
+                                >
+                                  {current?.value ?? "—"}
+                                </button>
+                              </dd>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </dl>
+                )}
                 {shown.length === 0 ? (
-                  <p className="faint">{slot.entries.length === 0 ? "Nothing remembered yet." : "Nothing matches your search."}</p>
+                  <p className="faint">{slot.entries.filter((entry) => !entry.retired).length === 0 ? ((slot.fieldDefinitions ?? []).length > 0 ? "No notes yet beyond the fields above." : "Nothing remembered yet.") : "Nothing matches your search."}</p>
                 ) : (
                   <ul className="memory-entries">
                     {[...shown]
@@ -223,10 +322,16 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
                                   {entry.pinned ? <Icon name="pin" size={11} className="memory-pin" /> : null}
                                   {entry.text}
                                 </span>
-                                <small className="faint">
+                                <small className="faint" title={`Confidence ${Math.round(confidenceOf(entry) * 100)}%${entry.lastConfirmedAt ? `, last confirmed ${when(entry.lastConfirmedAt)}` : ""}`}>
                                   {entry.kind} · {provenance(entry)}
                                   {entry.recalls > 0 ? ` · recalled ${entry.recalls}×` : ""}
+                                  {` · ${sureness(entry)}`}
                                 </small>
+                                {entry.history && entry.history.length > 0 ? (
+                                  <small className="faint memory-history" title={entry.history.map((rev) => `${when(rev.at)}: ${rev.text}`).join("\n")}>
+                                    Replaced “{entry.history[0]!.text}”{entry.history.length > 1 ? ` and ${entry.history.length - 1} earlier` : ""}
+                                  </small>
+                                ) : null}
                               </div>
                               <div className="memory-actions">
                                 <button
@@ -290,6 +395,88 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
                     Remember
                   </button>
                 </form>
+                {faded.length === 0 ? null : (
+                  <details className="memory-retired">
+                    <summary className="faint">
+                      {faded.length} not needed for 90 days
+                    </summary>
+                    <ul className="memory-entries">
+                      {faded.map((entry) => (
+                        <li key={entry.id} className="faded">
+                          <div className="memory-text">
+                            <span>{entry.text}</span>
+                            <small className="faint">
+                              {entry.kind} · {provenance(entry)} · left out of recall until brought back
+                            </small>
+                          </div>
+                          <div className="memory-actions">
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={busy !== null}
+                              onClick={() =>
+                                void act(entry.id, () => api(`/bot/v1/memory/${slot.slot}/${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ revive: true }) }), "Could not bring that back.")
+                              }
+                            >
+                              Bring back
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              aria-label="Forget"
+                              title="Forget"
+                              disabled={busy !== null}
+                              onClick={() => void act(entry.id, () => api(`/bot/v1/memory/${slot.slot}/${encodeURIComponent(entry.id)}`, { method: "DELETE" }), "Could not forget that.")}
+                            >
+                              <Icon name="x" size={14} />
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                {gone.length === 0 ? null : (
+                  <details className="memory-retired">
+                    <summary className="faint">
+                      {gone.length} no longer true
+                    </summary>
+                    <ul className="memory-entries">
+                      {gone.map((entry) => (
+                        <li key={entry.id} className="retired">
+                          <div className="memory-text">
+                            <span>{entry.text}</span>
+                            <small className="faint">
+                              Retired {when(entry.retired!.at)} · {entry.retired!.reason}
+                            </small>
+                          </div>
+                          <div className="memory-actions">
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={busy !== null}
+                              onClick={() =>
+                                void act(entry.id, () => api(`/bot/v1/memory/${slot.slot}/${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ restore: true }) }), "Could not bring that back.")
+                              }
+                            >
+                              Still true
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              aria-label="Forget for good"
+                              title="Forget for good"
+                              disabled={busy !== null}
+                              onClick={() => void act(entry.id, () => api(`/bot/v1/memory/${slot.slot}/${encodeURIComponent(entry.id)}`, { method: "DELETE" }), "Could not forget that.")}
+                            >
+                              <Icon name="x" size={14} />
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </section>
             );
           })}

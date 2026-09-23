@@ -764,8 +764,21 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 
 /* ------------------------------------------------------------- usage page */
 
+/* The sheet the three screens open in: over the console, from the right, the console dimmed behind it. */
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: 48; background: rgba(0, 0, 0, 0.38); display: flex; justify-content: flex-end;
+  animation: sheet-dim 0.16s ease-out;
+}
+.sheet {
+  width: min(900px, 100%); height: 100%; background: var(--bg); color: var(--text); display: flex; flex-direction: column; min-width: 0;
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.35); border-left: 1px solid var(--line);
+  animation: sheet-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes sheet-in { from { transform: translateX(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+@keyframes sheet-dim { from { background: rgba(0, 0, 0, 0); } to { background: rgba(0, 0, 0, 0.38); } }
+@media (prefers-reduced-motion: reduce) { .sheet, .sheet-backdrop { animation: none; } }
 .usage-page {
-  position: fixed; inset: 0; z-index: 48; overflow-y: auto; background: var(--bg); color: var(--text);
+  flex: 1; min-height: 0; overflow-y: auto; background: var(--bg); color: var(--text);
 }
 .usage-head {
   position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 16px;
@@ -774,7 +787,7 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .usage-head h1 { margin: 0; font-size: 15px; font-weight: 600; }
 .usage-head .faint { margin-left: auto; }
 .usage-loading, .usage-error { padding: 24px 16px; }
-.usage-body { max-width: 1040px; margin: 0 auto; padding: 22px 16px 40px; display: flex; flex-direction: column; gap: 26px; }
+.usage-body { max-width: 1040px; margin: 0 auto; padding: 22px 20px 40px; display: flex; flex-direction: column; gap: 26px; }
 .usage-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .usage-account { grid-column: 1 / -1; border-color: var(--purple); }
 .usage-card {
@@ -832,6 +845,22 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .memory-entries li.pinned { background: color-mix(in srgb, var(--purple) 6%, var(--card)); }
 .memory-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
 .memory-text small { font-size: 11.5px; }
+.memory-history { font-style: italic; }
+.memory-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0; margin: 0; background: var(--card); border: 1px solid var(--line-2); border-radius: 12px; overflow: hidden; }
+.memory-field { display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; min-width: 0; box-shadow: inset -1px -1px 0 var(--line); }
+.memory-field dt { font-size: 11px; color: var(--faint); }
+.memory-field dd { margin: 0; min-width: 0; }
+.memory-field-value { font: inherit; font-size: 13px; color: var(--text); background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: 6px; text-align: left; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory-field-value:hover { background: var(--hover); }
+.memory-field.unset .memory-field-value { color: var(--faint); }
+.memory-field .memory-edit input { font-size: 12.5px; padding: 5px 8px; }
+.memory-field .memory-edit .btn { font-size: 11.5px; padding: 3px 9px; }
+.memory-retired { margin-top: 4px; }
+.memory-retired > summary { cursor: pointer; font-size: 11.5px; padding: 4px 0; }
+.memory-retired .memory-entries { margin-top: 6px; }
+.memory-entries li.retired .memory-text > span { text-decoration: line-through; color: var(--muted); }
+.memory-entries li.retired .btn, .memory-entries li.faded .btn { font-size: 11.5px; padding: 3px 9px; }
+.memory-entries li.faded .memory-text > span { color: var(--muted); }
 .memory-pin { color: var(--purple); margin-right: 5px; vertical-align: -1px; }
 .memory-actions { display: flex; gap: 2px; flex: none; opacity: 0.55; }
 .memory-entries li:hover .memory-actions, .memory-entries li:focus-within .memory-actions { opacity: 1; }

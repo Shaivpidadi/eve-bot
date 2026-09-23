@@ -1,8 +1,8 @@
-import { defineDynamic, defineMcpClientConnection } from "eve/connections";
+import { ConnectionAuthorizationRequiredError, defineDynamic, defineMcpClientConnection } from "eve/connections";
 import { once } from "eve/tools/approval";
 
 import { effectOf } from "../../../lib/catalog";
-import { allowedTools, connectorHeaders, listConnectors } from "../../../lib/connectors";
+import { allowedTools, connectorHeaders, connectorToken, getConnector, listConnectors } from "../../../lib/connectors";
 import { operator } from "../../../lib/session";
 
 /**
@@ -28,13 +28,29 @@ export default defineDynamic({
         connectors.map(async (connector) => {
           const allow = allowedTools(connector);
           if (allow.length === 0) return null;
-          const headers = await connectorHeaders(connector);
+          const headers = connector.auth.kind === "oauth" ? {} : await connectorHeaders(connector);
+          // An OAuth connector's token is fetched per call and refreshed as needed; without a sign-in, eve is told to ask for one.
+          const auth =
+            connector.auth.kind !== "oauth"
+              ? {}
+              : {
+                  auth: {
+                    displayName: connector.label,
+                    getToken: async () => {
+                      const live = (await getConnector(connector.workspaceId, connector.id)) ?? connector;
+                      const token = await connectorToken(live);
+                      if (token === null) throw new ConnectionAuthorizationRequiredError(connector.name);
+                      return token;
+                    },
+                  },
+                };
           return [
             connector.name,
             defineMcpClientConnection({
               url: connector.url,
               description: connector.description,
               instanceKey: connector.id,
+              ...auth,
               // Only the tools the operator left on; a server that grew new tools offers them after the next check.
               ...((connector.disabledTools ?? []).length === 0 ? {} : { tools: { allow } }),
               ...(Object.keys(headers).length === 0

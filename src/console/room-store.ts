@@ -15,7 +15,7 @@ export interface Notice {
   readonly detail?: string;
   readonly tone?: "error";
   /** Something the person can do about it, offered as a button. */
-  readonly action?: "start-over";
+  readonly action?: "start-over" | "open-connectors";
 }
 
 /**
@@ -461,6 +461,34 @@ export class RoomStore {
         if (notice !== null) this.items.push({ kind: "notice", key, at, ...notice });
         break;
       }
+      case "authorization.required": {
+        const name = (event.data as { name?: string; authorization?: { displayName?: string } }).authorization?.displayName ?? (event.data as { name?: string }).name ?? "a connector";
+        this.items.push({
+          kind: "notice",
+          key: `authorization:${(event.data as { sequence?: number }).sequence ?? this.items.length}`,
+          at: new Date().toISOString(),
+          icon: "plug",
+          label: `Sign in to ${name} to continue`,
+          detail: "The Bot needs an account it can use. Connect it and the work carries on.",
+          action: "open-connectors",
+        });
+        this.emit();
+        break;
+      }
+      case "authorization.completed": {
+        const outcome = (event.data as { outcome?: string }).outcome;
+        const name = (event.data as { name?: string }).name ?? "the connector";
+        this.items.push({
+          kind: "notice",
+          key: `authorized:${(event.data as { sequence?: number }).sequence ?? this.items.length}`,
+          at: new Date().toISOString(),
+          icon: outcome === "authorized" || outcome === "approved" ? "check" : "alert",
+          label: outcome === "authorized" || outcome === "approved" ? `Signed in to ${name}` : `Could not sign in to ${name}`,
+          ...(outcome === "authorized" || outcome === "approved" ? {} : { tone: "error" as const }),
+        });
+        this.emit();
+        break;
+      }
       case "input.requested":
         for (const request of event.data.requests) {
           if (this.asks.has(request.requestId)) continue;
@@ -680,7 +708,7 @@ export function buildTimeline(
       const remembered = event.kind === "memory.saved";
       const cut = event.text.indexOf(": ");
       if (remembered) {
-        out.push({ kind: "notice", key: event.id, at: event.at, icon: "brain", label: "Remembered", detail: event.text.slice(cut + 2) });
+        out.push({ kind: "notice", key: event.id, at: event.at, icon: "brain", label: "Memory", detail: event.text });
         continue;
       }
       out.push({

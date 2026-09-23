@@ -13,9 +13,9 @@ import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScree
 import { cancelJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
-import { forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, remember, rewrite as rewriteMemory, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
+import { FIELDS as MEMORY_FIELDS, forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, readFields, remember, restore as restoreMemory, revive as reviveMemory, rewrite as rewriteMemory, setField, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
 import { CATALOG } from "../lib/catalog";
-import { addConnector, getConnector, listConnectors, publicConnector, recheckConnector, removeConnector, replaceKey, updateConnector } from "../lib/connectors";
+import { addConnector, completeOAuth, disconnectOAuth, getConnector, listConnectors, needsConnect, OAUTH_CALLBACK_PATH, publicConnector, recheckConnector, removeConnector, replaceKey, startOAuth, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
 import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
@@ -108,6 +108,16 @@ async function restartWedgedRoom(
     data: { room, generation, restarted: true },
   }).catch(() => undefined);
   return generation;
+}
+
+/** This deployment's public address, for redirect URIs: the configured one, else what the request came in on. */
+function publicOrigin(request: Request): string {
+  const configured = process.env.BOT_PUBLIC_URL?.trim();
+  if (configured) return configured.replace(/\/$/, "");
+  const url = new URL(request.url);
+  const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.replace(":", "");
+  const host = requestHost(request) ?? url.host;
+  return `${proto}://${host}`;
 }
 
 function principal(access: Access, room: string): SessionAuthContext {
@@ -661,6 +671,8 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
             detail: MEMORY_SLOT_COPY[slot].detail,
             maxEntries: MEMORY_SLOT_COPY[slot].maxEntries,
             entries: await readEntries(gate.access.workspaceId, slot),
+            fieldDefinitions: MEMORY_FIELDS[slot],
+            fields: await readFields(gate.access.workspaceId, slot),
           })),
         ),
         listBots(gate.access.workspaceId),
@@ -693,6 +705,18 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return json({ error: "That cannot be remembered: it is empty, too long, or looks like a secret." }, 400);
     }),
 
+    /** Sets one field of the typed core by hand; an empty value clears it. (A POST: eve treats `:slot/fields` and `:slot/:id` as one PATCH route.) */
+    POST("/bot/v1/memory/:slot/fields", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const slot = params.slot ?? "";
+      if (!isMemorySlot(slot)) return json({ error: "no such memory" }, 404);
+      const body = await readJson(request);
+      if (typeof body?.field !== "string" || typeof body?.value !== "string") return json({ error: "field and value are required" }, 400);
+      const outcome = await setField(gate.access.workspaceId, slot, body.field, body.value, { who: "you", name: gate.access.profile.name });
+      return outcome.ok ? json({ changed: true }) : json({ error: outcome.error }, outcome.status);
+    }),
+
     /** Pins, unpins, or rewrites one memory. */
     PATCH("/bot/v1/memory/:slot/:id", async (request, { params }) => {
       const gate = await authenticate(request);
@@ -707,6 +731,14 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       }
       if (typeof body?.pinned === "boolean") {
         const outcome = await pinMemory(gate.access.workspaceId, slot, id, body.pinned);
+        if (!outcome.ok) return json({ error: outcome.error }, outcome.status);
+      }
+      if (body?.restore === true) {
+        const outcome = await restoreMemory(gate.access.workspaceId, slot, id);
+        if (!outcome.ok) return json({ error: outcome.error }, outcome.status);
+      }
+      if (body?.revive === true) {
+        const outcome = await reviveMemory(gate.access.workspaceId, slot, id);
         if (!outcome.ok) return json({ error: outcome.error }, outcome.status);
       }
       return json({ changed: true });
@@ -807,14 +839,45 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         ...(typeof body?.url === "string" ? { url: body.url } : {}),
         ...(typeof body?.description === "string" ? { description: body.description } : {}),
         key: {
-          ...(keyInput.kind === "bearer" || keyInput.kind === "header" || keyInput.kind === "none" ? { kind: keyInput.kind } : {}),
+          ...(keyInput.kind === "bearer" || keyInput.kind === "header" || keyInput.kind === "none" || keyInput.kind === "oauth" ? { kind: keyInput.kind } : {}),
           ...(typeof keyInput.header === "string" ? { header: keyInput.header } : {}),
           ...(typeof keyInput.secret === "string" ? { secret: keyInput.secret } : {}),
         },
         ...(body?.gate === "none" || body?.gate === "writes" || body?.gate === "all" ? { gate: body.gate } : {}),
       });
       if (!added.ok) return json({ error: added.error }, 422);
-      return json({ connector: publicConnector(added.connector) }, 201);
+      return json({ connector: publicConnector(added.connector), needsConnect: needsConnect(added.connector) }, 201);
+    }),
+
+    /** Starts signing in to a connector through the server's own OAuth; answers with the consent URL to open. */
+    POST("/bot/v1/connectors/:connectorId/oauth/start", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const started = await startOAuth(gate.access.workspaceId, params.connectorId ?? "", publicOrigin(request));
+      return started.ok ? json({ url: started.url }) : json({ error: started.error }, started.error === "no such connector" ? 404 : 422);
+    }),
+
+    /** Forgets a connector's sign-in, keeping the connector. */
+    POST("/bot/v1/connectors/:connectorId/oauth/disconnect", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const done = await disconnectOAuth(gate.access.workspaceId, params.connectorId ?? "");
+      return done ? json({ disconnected: true }) : json({ error: "no such connector" }, 404);
+    }),
+
+    /**
+     * Where the server sends the browser back after consent. The state names
+     * the pending sign-in, and with it the workspace and connector; the
+     * browser then lands on that connector's page, connected or with the
+     * reason it is not.
+     */
+    GET(OAUTH_CALLBACK_PATH, async (request) => {
+      const url = new URL(request.url);
+      const state = url.searchParams.get("state");
+      if (state === null) return json({ error: "state is required" }, 400);
+      const completed = await completeOAuth(state, url.searchParams.get("code"), url.searchParams.get("error_description") ?? url.searchParams.get("error"));
+      if (completed === null) return json({ error: "This sign-in is not pending; start it again from the console." }, 404);
+      return new Response(null, { status: 303, headers: { location: `/bot#connectors/${encodeURIComponent(completed.connectorId)}`, "cache-control": "no-store" } });
     }),
 
     PATCH("/bot/v1/connectors/:connectorId", async (request, { params }) => {

@@ -29,4 +29,16 @@ export default [
       expect(typeof added.body?.error, "string", "it says why", { body: added.body });
     },
   },
+  {
+    name: "connectors: a sign-in can only be started for a connector that signs in",
+    run: async ({ call }) => {
+      const listed = await call("/bot/v1/connectors");
+      const keyed = listed.body?.connectors?.find((connector) => connector.auth?.kind !== "oauth");
+      if (keyed === undefined) return { skipped: "no key-based connector on this deployment" };
+      const started = await call(`/bot/v1/connectors/${encodeURIComponent(keyed.id)}/oauth/start`, { method: "POST" });
+      expect(started.status, 422, "a key-based connector refuses an OAuth start", { body: started.body });
+      const callback = await call("/bot/v1/oauth/callback?state=not-a-pending-sign-in&code=x");
+      expect(callback.status, 404, "an unknown sign-in state is refused", { body: callback.body });
+    },
+  },
 ];

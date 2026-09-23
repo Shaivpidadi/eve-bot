@@ -187,7 +187,7 @@ export async function watchToolPolicy(
   });
 }
 
-const probabilityOf = (answer: unknown): number | undefined => {
+export const probabilityOf = (answer: unknown): number | undefined => {
   const value = (answer as { probability?: unknown } | undefined)?.probability;
   return typeof value === "number" ? value : undefined;
 };
