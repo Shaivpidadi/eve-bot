@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { forgetVersion, newer, ownVersion, versionReport } from "../agent/lib/version";
+import { forgetVersion, newer, ownVersion, updateLink, versionReport } from "../agent/lib/version";
 
 describe("version", () => {
   afterEach(() => {
@@ -25,7 +25,7 @@ describe("version", () => {
     vi.stubEnv("VERCEL_GIT_COMMIT_SHA", "abcdef1234567");
     const github = (async () => new Response(JSON.stringify({ name: "eve-bot", version: "0.3.1" }), { status: 200 })) as unknown as typeof fetch;
     const report = await versionReport(github);
-    expect(report).toEqual({ version: "0.2.0", commit: "abcdef1", latest: "0.3.1", updateAvailable: true, howToUpdate: expect.stringContaining("#keeping-it-up-to-date") });
+    expect(report).toEqual({ version: "0.2.0", commit: "abcdef1", latest: "0.3.1", updateAvailable: true, howToUpdate: expect.stringContaining("#keeping-it-up-to-date"), runsItself: false });
     // The answer is kept, so the console asking every few seconds costs GitHub nothing.
     let calls = 0;
     const counting = (async () => (calls += 1, new Response("{}", { status: 200 }))) as unknown as typeof fetch;
@@ -44,5 +44,15 @@ describe("version", () => {
     const counting = (async () => (calls += 1, new Response("{}", { status: 200 }))) as unknown as typeof fetch;
     expect(await versionReport(counting)).toMatchObject({ latest: null, updateAvailable: false });
     expect(calls).toBe(0);
+  });
+
+  it("points a copy at its own sync workflow, and everyone else at the notes", () => {
+    expect(updateLink({ VERCEL_GIT_REPO_OWNER: "ann", VERCEL_GIT_REPO_SLUG: "eve-eve-bot" } as unknown as NodeJS.ProcessEnv)).toEqual({
+      url: "https://github.com/ann/eve-eve-bot/actions/workflows/sync-upstream.yml",
+      runsItself: true,
+    });
+    expect(updateLink({ VERCEL_GIT_REPO_OWNER: "Shaivpidadi", VERCEL_GIT_REPO_SLUG: "eve-bot" } as unknown as NodeJS.ProcessEnv).runsItself).toBe(false);
+    expect(updateLink({} as unknown as NodeJS.ProcessEnv).runsItself).toBe(false);
+    expect(updateLink({ VERCEL_GIT_REPO_OWNER: "ann", VERCEL_GIT_REPO_SLUG: "x", VERCEL_GIT_PROVIDER: "gitlab" } as unknown as NodeJS.ProcessEnv).runsItself).toBe(false);
   });
 });

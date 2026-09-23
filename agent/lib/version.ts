@@ -16,7 +16,30 @@ export interface Version {
   /** The original's current version, or null when GitHub could not be asked. */
   readonly latest: string | null;
   readonly updateAvailable: boolean;
+  /** Where "Update now" goes: the copy's own sync workflow when Vercel built this from a copy, else the notes. */
   readonly howToUpdate: string;
+  /** True when that link runs the update itself rather than explaining it. */
+  readonly runsItself: boolean;
+}
+
+const ORIGINAL = "shaivpidadi/eve-bot";
+
+/** The repository Vercel built this deployment from, when it says. */
+export function builtFrom(env: NodeJS.ProcessEnv = process.env): { readonly owner: string; readonly slug: string } | null {
+  const owner = env.VERCEL_GIT_REPO_OWNER?.trim();
+  const slug = env.VERCEL_GIT_REPO_SLUG?.trim();
+  if (!owner || !slug || (env.VERCEL_GIT_PROVIDER ?? "github").toLowerCase() !== "github") return null;
+  return { owner, slug };
+}
+
+/**
+ * A copy has the sync workflow; opening it with "Run workflow" is the update.
+ * The original, and a deployment Vercel did not build from git, get the notes.
+ */
+export function updateLink(env: NodeJS.ProcessEnv = process.env): { readonly url: string; readonly runsItself: boolean } {
+  const repo = builtFrom(env);
+  if (repo === null || `${repo.owner}/${repo.slug}`.toLowerCase() === ORIGINAL) return { url: HOW_TO_UPDATE, runsItself: false };
+  return { url: `https://github.com/${repo.owner}/${repo.slug}/actions/workflows/sync-upstream.yml`, runsItself: true };
 }
 
 const UPSTREAM_PACKAGE = "https://raw.githubusercontent.com/Shaivpidadi/eve-bot/main/package.json";
@@ -71,12 +94,14 @@ async function latestVersion(fetcher: typeof fetch): Promise<string | null> {
 export async function versionReport(fetcher: typeof fetch = fetch): Promise<Version> {
   const version = ownVersion();
   const latest = process.env.BOT_UPDATE_CHECK === "off" ? null : await latestVersion(fetcher);
+  const link = updateLink();
   return {
     version,
     commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
     latest,
     updateAvailable: latest !== null && newer(latest, version),
-    howToUpdate: HOW_TO_UPDATE,
+    howToUpdate: link.url,
+    runsItself: link.runsItself,
   };
 }
 
