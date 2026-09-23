@@ -4,10 +4,22 @@ import { record } from "../activity";
 import { operator } from "../session";
 import { sessionState } from "../session-state";
 import { sessionBinding } from "../computer/screens";
-import { capture, type CaptureMode, defaultDeps } from "./capture";
+import { capture, type CaptureDeps, type CaptureMode, defaultDeps } from "./capture";
 import { learnFromDenial } from "./outcomes";
 import { jobOf, trace } from "./provider";
 import { fieldFor, type MemorySlot } from "./store";
+
+/** What the hook reaches for, replaceable in tests so the event handling can be driven without a Gateway or a store of jobs. */
+export interface HookDeps {
+  readonly deps: (workspaceId: string) => CaptureDeps;
+  readonly trace: typeof trace;
+  readonly record: typeof record;
+  readonly jobOf: typeof jobOf;
+  readonly binding: typeof sessionBinding;
+  readonly denial: typeof learnFromDenial;
+}
+
+const REAL: HookDeps = { deps: defaultDeps, trace, record, jobOf, binding: sessionBinding, denial: learnFromDenial };
 
 /**
  * Remembering, driven from the event stream.
@@ -53,7 +65,8 @@ interface Asked {
   readonly input: unknown;
 }
 
-export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
+export function memoryCaptureHook(mode: CaptureMode, overrides: Partial<HookDeps> = {}): HookDefinition {
+  const io: HookDeps = { ...REAL, ...overrides };
   const slot: MemorySlot = mode === "conversation" ? "profile" : "craft";
   const exchanges = sessionState<Exchange>();
   /** Approvals a job asked for, by request id, so a decline can be read back. */
@@ -104,11 +117,11 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
         asked.get(ctx.session.id)?.delete(event.data.requestId);
         const workspaceId = operator(ctx).workspaceId;
         try {
-          const binding = await sessionBinding(workspaceId, ctx.session.id);
+          const binding = await io.binding(workspaceId, ctx.session.id);
           if (binding === null) return;
-          await learnFromDenial(workspaceId, { jobId: binding.jobId, botId: binding.botId, requestId: event.data.requestId, ...request });
+          await io.denial(workspaceId, { jobId: binding.jobId, botId: binding.botId, requestId: event.data.requestId, ...request });
         } catch (error) {
-          await trace(workspaceId, "craft", "failed", `denial: ${error instanceof Error ? error.message : String(error)}`);
+          await io.trace(workspaceId, "craft", "failed", `denial: ${error instanceof Error ? error.message : String(error)}`);
         }
       },
       async "turn.completed"(event, ctx) {
@@ -119,17 +132,17 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
         const workspaceId = who.workspaceId;
         try {
           if (who.automated) {
-            await trace(workspaceId, slot, "skipped", "automated turn");
+            await io.trace(workspaceId, slot, "skipped", "automated turn");
             return;
           }
           const person = exchange.person.join("\n").trim();
           if (person === "") {
-            await trace(workspaceId, slot, "skipped", "no message from a person this turn");
+            await io.trace(workspaceId, slot, "skipped", "no message from a person this turn");
             return;
           }
-          const job = mode === "job" ? await jobOf(workspaceId, [{ role: "user", content: person }]) : null;
+          const job = mode === "job" ? await io.jobOf(workspaceId, [{ role: "user", content: person }]) : null;
           if (mode === "job" && job === null) {
-            await trace(workspaceId, slot, "skipped", "no job id in the brief");
+            await io.trace(workspaceId, slot, "skipped", "no job id in the brief");
             return;
           }
           const reply = mode === "conversation" ? exchange.reply.join("\n") : [...exchange.reply, ...exchange.tools].join("\n").slice(-MAX_TRANSCRIPT);
@@ -137,12 +150,12 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
             mode === "conversation"
               ? { who: "auto" as const, room: who.room }
               : { who: "auto" as const, name: job?.botName, room: who.room, jobId: job?.jobId ?? null };
-          await trace(workspaceId, slot, "capturing", `${person.length} chars from the person, ${reply.length} back`);
+          await io.trace(workspaceId, slot, "capturing", `${person.length} chars from the person, ${reply.length} back`);
           const result = await capture(
             { workspaceId, mode, person, reply, source, operationId: `${ctx.session.id}:${event.data.turnId}` },
-            defaultDeps(workspaceId),
+            io.deps(workspaceId),
           );
-          await trace(
+          await io.trace(
             workspaceId,
             slot,
             "done",
@@ -156,7 +169,7 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
             result.updated.length === 0 ? null : `Updated: ${result.updated.map((entry) => entry.text).join(" · ")}`,
             result.retired.length === 0 ? null : `No longer true: ${result.retired.map((entry) => entry.text).join(" · ")}`,
           ].filter((part): part is string => part !== null);
-          await record({
+          await io.record({
             workspaceId,
             kind: "memory.saved",
             botId: job?.botId ?? null,
@@ -165,7 +178,7 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
             data: { slots: [...new Set([...changed, ...result.fields].map((item) => item.slot))], ids: changed.map((entry) => entry.id), fields: result.fields.map((change) => change.field), gate: result.gate },
           });
         } catch (error) {
-          await trace(workspaceId, slot, "failed", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+          await io.trace(workspaceId, slot, "failed", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
         }
       },
     },
