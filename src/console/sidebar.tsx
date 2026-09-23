@@ -550,7 +550,7 @@ function RowMenu({
  * learns about releases only by asking; the answer is cached on the server.
  */
 function UpdateNote() {
-  const [update, setUpdate] = useState<{ latest: string; version: string; howToUpdate: string } | null>(null);
+  const [update, setUpdate] = useState<{ latest: string; version: string; howToUpdate: string; runsItself: boolean } | null>(null);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -565,8 +565,8 @@ function UpdateNote() {
           (body as { updateAvailable?: unknown }).updateAvailable === true &&
           typeof (body as { latest?: unknown }).latest === "string"
         ) {
-          const report = body as { latest: string; version: string; howToUpdate: string };
-          setUpdate({ latest: report.latest, version: report.version, howToUpdate: report.howToUpdate });
+          const report = body as { latest: string; version: string; howToUpdate: string; runsItself?: boolean };
+          setUpdate({ latest: report.latest, version: report.version, howToUpdate: report.howToUpdate, runsItself: report.runsItself === true });
         }
       } catch {
         // No note is the right answer when the check cannot run.
@@ -578,9 +578,19 @@ function UpdateNote() {
   }, []);
   if (update === null) return null;
   return (
-    <a className="side-item side-update" href={update.howToUpdate} target="_blank" rel="noopener noreferrer" title={`You run ${update.version}; ${update.latest} is out. How to update.`}>
+    <a
+      className="side-item side-update"
+      href={update.howToUpdate}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={
+        update.runsItself
+          ? `You run ${update.version}; ${update.latest} is out. Opens your repository's sync workflow: press "Run workflow" and Vercel redeploys.`
+          : `You run ${update.version}; ${update.latest} is out. How to update.`
+      }
+    >
       <Icon name="up" size={15} />
-      Update to {update.latest}
+      {update.runsItself ? `Update now to ${update.latest}` : `Update to ${update.latest}`}
     </a>
   );
 }

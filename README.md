@@ -97,9 +97,10 @@ you changed code in your copy and the two conflict, it leaves the merge on an
 `upstream-sync` branch with the conflicts marked and fails, so you can finish
 it by hand. Set a repository variable `BOT_SYNC_UPSTREAM=off` to stop it.
 
-The console says when a newer version is out: a line in the sidebar's footer
-links here. It asks GitHub for this repository's version at most every six
-hours; `BOT_UPDATE_CHECK=off` stops it asking.
+The console says when a newer version is out: "Update now" in the sidebar's
+footer opens your copy's sync workflow, where **Run workflow** does it and
+Vercel redeploys. It asks GitHub for this repository's version at most every
+six hours; `BOT_UPDATE_CHECK=off` stops it asking.
 
 A copy deployed before this workflow existed needs one manual sync to receive
 it. Its first commit has no history in common with this repository, so graft
