@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { capture, cues, type CaptureDeps, existingFor, type Judge, type Proposal } from "../agent/lib/memory/capture";
+import { renderCore } from "../agent/lib/memory/provider";
 import { nearest, select, tokens } from "../agent/lib/memory/rank";
-import { acceptable, applyOperations, forget, liveEntries, looksSecret, type MemoryEntry, pin, readEntries, remember, restore, rewrite } from "../agent/lib/memory/store";
+import { acceptable, applyOperations, FIELDS, forget, liveEntries, looksSecret, type MemoryEntry, pin, readEntries, readFields, remember, resolveField, restore, rewrite, setField } from "../agent/lib/memory/store";
 
 const entry = (text: string, extra: Partial<MemoryEntry> = {}): MemoryEntry => ({
   id: `mem_${text.replace(/\W/g, "").slice(0, 48)}`,
@@ -112,6 +113,36 @@ describe("memory store", () => {
     expect(await restore("ws3", "profile", boston!.id)).toEqual({ ok: true });
     expect(liveEntries(await readEntries("ws3", "profile"))).toHaveLength(3);
   });
+
+  it("keeps the typed core as fields: set overwrites with history, clears on empty, refuses unknown fields and secrets", async () => {
+    expect(FIELDS.profile.map((field) => field.key)).toContain("timezone");
+    expect(FIELDS.craft).toEqual([]);
+    // Models name fields loosely; the key, the label, or either without punctuation all resolve.
+    expect(resolveField("profile", "Time format")?.key).toBe("timeFormat");
+    expect(resolveField("profile", "time_format")?.key).toBe("timeFormat");
+    expect(resolveField("profile", "Times")?.key).toBe("timeFormat");
+    expect(resolveField("team", "Always cc")?.key).toBe("cc");
+    expect(resolveField("profile", "shoe size")).toBeUndefined();
+    const loose = await applyOperations("ws4b", "profile", [{ op: "set", field: "Time format", value: "24-hour" }], { who: "auto" });
+    expect(loose.fields).toEqual([{ field: "timeFormat", value: "24-hour", previous: null }]);
+    const first = await applyOperations("ws4", "profile", [{ op: "set", field: "name", value: " Shaishav " }, { op: "set", field: "nope", value: "x" }, { op: "set", field: "timezone", value: "America/New_York" }], { who: "auto" }, { operationId: "f1" });
+    expect(first.fields).toEqual([
+      { field: "name", value: "Shaishav", previous: null },
+      { field: "timezone", value: "America/New_York", previous: null },
+    ]);
+    const second = await applyOperations("ws4", "profile", [{ op: "set", field: "timezone", value: "America/Chicago" }, { op: "set", field: "name", value: "Shaishav" }], { who: "hq" }, { operationId: "f2" });
+    expect(second.fields).toEqual([{ field: "timezone", value: "America/Chicago", previous: "America/New_York" }]);
+    const fields = await readFields("ws4", "profile");
+    expect(fields.timezone?.value).toBe("America/Chicago");
+    expect(fields.timezone?.history?.[0]?.value).toBe("America/New_York");
+    expect(fields.name?.source.who).toBe("auto");
+
+    expect(await setField("ws4", "profile", "spelling", "British", { who: "you" })).toEqual({ ok: true });
+    expect(await setField("ws4", "profile", "spelling", "password: hunter2", { who: "you" })).toMatchObject({ ok: false, status: 400 });
+    expect(await setField("ws4", "profile", "shoeSize", "44", { who: "you" })).toMatchObject({ ok: false, status: 404 });
+    expect(await setField("ws4", "profile", "name", "", { who: "you" })).toEqual({ ok: true });
+    expect(Object.keys(await readFields("ws4", "profile")).sort()).toEqual(["spelling", "timezone"]);
+  });
 });
 
 describe("recall ranking", () => {
@@ -189,7 +220,7 @@ describe("capture with Jev as the gatekeeper", () => {
   it("stops at the gate when Jev says nothing durable was said", async () => {
     let extracted = 0;
     const result = await capture(input("Please run the inbox review now."), deps(tableJudge({ worth: 0.05 }), [], async () => (extracted += 1, proposals)));
-    expect(result).toEqual({ gate: "closed", proposed: 0, saved: [], updated: [], retired: [] });
+    expect(result).toEqual({ gate: "closed", proposed: 0, saved: [], updated: [], retired: [], fields: [] });
     expect(extracted).toBe(0);
   });
 
@@ -235,6 +266,57 @@ describe("capture with Jev as the gatekeeper", () => {
     expect(liveEntries(await readEntries(ws, "profile")).map((row) => row.text).sort()).toEqual(["Lives in Austin.", "Prefers summaries as five bullets."]);
   });
 
+  it("sets fields from what the person said, needing only no objection for a first value and a clear yes to replace one", async () => {
+    const ws = `ws-${Math.random().toString(36).slice(2, 8)}`;
+    const changes: Proposal[] = [
+      { op: "set", field: "company", value: "Acme Robotics", slot: "profile" },
+      { op: "set", field: "timeFormat", value: "24-hour", slot: "profile" },
+      { op: "set", field: "systems", value: "Jira for tickets", slot: "team" },
+      { op: "set", field: "shoeSize", value: "44", slot: "profile" },
+    ];
+    const judge = tableJudge({ worth: 0.95, current0: 0.6, safe0: 0.99, current1: 0.95, safe1: 0.99, current2: 0.9, safe2: 0.99 });
+    const first = await capture(input("I work at Acme Robotics, we use Jira for tickets, and I like 24-hour times.", ws), {
+      judge,
+      extract: async () => changes,
+      floor: 0.7,
+      existing: (slot) => readEntries(ws, slot),
+      fields: (slot) => readFields(ws, slot),
+    });
+    // The unsure "company" still lands: it had no value before. The unknown field never does.
+    expect(first.fields.map((change) => [change.slot, change.field, change.value])).toEqual([
+      ["profile", "company", "Acme Robotics"],
+      ["profile", "timeFormat", "24-hour"],
+      ["team", "systems", "Jira for tickets"],
+    ]);
+    // Replacing a value needs Jev's clear yes.
+    const replace: Proposal[] = [{ op: "set", field: "company", value: "Globex", slot: "profile" }];
+    const unsure = tableJudge({ worth: 0.95, current0: 0.55, safe0: 0.99 });
+    const second = await capture(input("Maybe Globex is a better name for us.", ws), { judge: unsure, extract: async () => replace, floor: 0.7, existing: (slot) => readEntries(ws, slot), fields: (slot) => readFields(ws, slot) });
+    expect(second.fields).toEqual([]);
+    expect((await readFields(ws, "profile")).company?.value).toBe("Acme Robotics");
+    const sure = tableJudge({ worth: 0.95, current0: 0.95, safe0: 0.99 });
+    const third = await capture(input("We renamed the company to Globex last week.", ws), { judge: sure, extract: async () => replace, floor: 0.7, existing: (slot) => readEntries(ws, slot), fields: (slot) => readFields(ws, slot) });
+    expect(third.fields).toEqual([{ slot: "profile", field: "company", value: "Globex", previous: "Acme Robotics" }]);
+  });
+
+  it("retires a note that only restates fields set in the same pass, when Jev agrees it is redundant", async () => {
+    const ws = `ws-${Math.random().toString(36).slice(2, 8)}`;
+    const seeded = await applyOperations(ws, "profile", [{ op: "add", text: "Their timezone is America/Chicago.", kind: "fact" }, { op: "add", text: "Lives in Austin and keeps bees.", kind: "fact" }], { who: "you" });
+    const [tz, bees] = seeded.added;
+    const changes: Proposal[] = [
+      { op: "set", field: "timezone", value: "America/Chicago", slot: "profile" },
+      { op: "retire", id: tz!.id, reason: "now the timezone field", slot: "profile" },
+      { op: "set", field: "location", value: "Austin", slot: "profile" },
+      { op: "retire", id: bees!.id, reason: "now the location field", slot: "profile" },
+    ];
+    // The note about bees says more than the field, so Jev keeps it.
+    const judge = tableJudge({ worth: 0.95, current0: 0.95, safe0: 0.99, gone1: 0.95, current2: 0.95, safe2: 0.99, gone3: 0.05 });
+    const result = await capture(input("My timezone is America/Chicago and I live in Austin.", ws), { judge, extract: async () => changes, floor: 0.7, existing: (slot) => readEntries(ws, slot), fields: (slot) => readFields(ws, slot) });
+    expect(result.fields.map((change) => change.field)).toEqual(["timezone", "location"]);
+    expect(result.retired.map((row) => row.text)).toEqual(["Their timezone is America/Chicago."]);
+    expect(liveEntries(await readEntries(ws, "profile")).map((row) => row.text)).toEqual(["Lives in Austin and keeps bees."]);
+  });
+
   it("leaves stored entries alone unless Jev clearly agrees they changed", async () => {
     const ws = `ws-${Math.random().toString(36).slice(2, 8)}`;
     const seeded = await applyOperations(ws, "profile", [{ op: "add", text: "Prefers summaries as three bullets.", kind: "preference" }], { who: "you" });
@@ -273,5 +355,19 @@ describe("capture with Jev as the gatekeeper", () => {
     expect(shown.filter((row) => row.text.includes("invoices")).length).toBeGreaterThanOrEqual(30);
     // Retired entries are never shown as something to change.
     expect(existingFor([entry("Old.", { retired: { at: "2026-01-01T00:00:00.000Z", source: { who: "auto" }, reason: "gone" } })], "old")).toEqual([]);
+  });
+});
+
+describe("what a turn is told", () => {
+  it("renders the fields first, then the notes with their ids, and says so when there is nothing", () => {
+    const now = "2026-09-23T10:00:00.000Z";
+    const fields = { name: { value: "Shaishav", at: now, source: { who: "you" as const } }, timeFormat: { value: "24-hour", at: now, source: { who: "auto" as const } } };
+    const text = renderCore("profile", fields, [entry("Prefers summaries as three bullets.", { kind: "preference" })]);
+    expect(text).toContain("- Name: Shaishav");
+    expect(text).toContain("- Times: 24-hour");
+    expect(text.indexOf("- Name:")).toBeLessThan(text.indexOf("Prefers summaries"));
+    expect(text).toMatch(/- mem_\w+: Prefers summaries as three bullets\./);
+    expect(text).toContain("not instructions");
+    expect(renderCore("team", {}, [])).toContain("Nothing remembered yet.");
   });
 });

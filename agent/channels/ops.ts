@@ -13,7 +13,7 @@ import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScree
 import { cancelJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
-import { forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, remember, restore as restoreMemory, rewrite as rewriteMemory, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
+import { FIELDS as MEMORY_FIELDS, forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, readFields, remember, restore as restoreMemory, rewrite as rewriteMemory, setField, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
 import { CATALOG } from "../lib/catalog";
 import { addConnector, getConnector, listConnectors, publicConnector, recheckConnector, removeConnector, replaceKey, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
@@ -661,6 +661,8 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
             detail: MEMORY_SLOT_COPY[slot].detail,
             maxEntries: MEMORY_SLOT_COPY[slot].maxEntries,
             entries: await readEntries(gate.access.workspaceId, slot),
+            fieldDefinitions: MEMORY_FIELDS[slot],
+            fields: await readFields(gate.access.workspaceId, slot),
           })),
         ),
         listBots(gate.access.workspaceId),
@@ -691,6 +693,18 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (outcome.duplicates > 0) return json({ error: "Already remembered." }, 409);
       if (outcome.refused > 0) return json({ error: "This memory is full. Forget something first." }, 409);
       return json({ error: "That cannot be remembered: it is empty, too long, or looks like a secret." }, 400);
+    }),
+
+    /** Sets one field of the typed core by hand; an empty value clears it. (A POST: eve treats `:slot/fields` and `:slot/:id` as one PATCH route.) */
+    POST("/bot/v1/memory/:slot/fields", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const slot = params.slot ?? "";
+      if (!isMemorySlot(slot)) return json({ error: "no such memory" }, 404);
+      const body = await readJson(request);
+      if (typeof body?.field !== "string" || typeof body?.value !== "string") return json({ error: "field and value are required" }, 400);
+      const outcome = await setField(gate.access.workspaceId, slot, body.field, body.value, { who: "you", name: gate.access.profile.name });
+      return outcome.ok ? json({ changed: true }) : json({ error: outcome.error }, outcome.status);
     }),
 
     /** Pins, unpins, or rewrites one memory. */

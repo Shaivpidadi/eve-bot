@@ -9,14 +9,21 @@ import { nearest } from "./rank";
 import {
   acceptable,
   applyOperations,
+  type FieldChange,
+  fieldFor,
+  FIELDS,
   isMemoryKind,
   liveEntries,
+  looksSecret,
   type MemoryEntry,
+  type MemoryFieldValue,
   type MemoryOperation,
   type MemorySlot,
   type MemorySource,
   normalize,
   readEntries,
+  readFields,
+  resolveField,
 } from "./store";
 
 /**
@@ -57,6 +64,8 @@ export interface CaptureInput {
 
 /** What the extractor may change: the live entries of the slots this mode writes to. */
 export type Existing = Readonly<Partial<Record<MemorySlot, readonly MemoryEntry[]>>>;
+/** The typed core as it stands, by slot then field key. */
+export type Fields = Readonly<Partial<Record<MemorySlot, Readonly<Record<string, MemoryFieldValue>>>>>;
 
 export type Judge = (
   state: unknown,
@@ -64,7 +73,7 @@ export type Judge = (
   options: { readonly timeoutMs?: number; readonly workspaceId?: string; readonly abortSignal?: AbortSignal },
 ) => Promise<Judgement<Record<string, EvaluationQuestion>> | null>;
 
-export type Extract = (input: CaptureInput, existing: Existing) => Promise<readonly Proposal[]>;
+export type Extract = (input: CaptureInput, existing: Existing, fields: Fields) => Promise<readonly Proposal[]>;
 
 export interface CaptureDeps {
   /** Null when Jev is unavailable; the cue gate stands in. */
@@ -72,6 +81,8 @@ export interface CaptureDeps {
   readonly extract: Extract;
   readonly floor: number;
   readonly existing: (slot: MemorySlot) => Promise<readonly MemoryEntry[]>;
+  /** The typed core of a slot; absent means empty. */
+  readonly fields?: (slot: MemorySlot) => Promise<Readonly<Record<string, MemoryFieldValue>>>;
 }
 
 type Placed = MemoryEntry & { readonly slot: MemorySlot };
@@ -82,9 +93,14 @@ export interface CaptureResult {
   readonly saved: readonly Placed[];
   readonly updated: readonly Placed[];
   readonly retired: readonly Placed[];
+  readonly fields: readonly (FieldChange & { readonly slot: MemorySlot })[];
+  /** How many changes the extractor returned before any were filtered out. */
+  readonly raw?: number;
+  /** Why the extractor produced nothing, when it failed rather than found nothing. */
+  readonly error?: string;
 }
 
-const NOTHING: CaptureResult = { gate: "closed", proposed: 0, saved: [], updated: [], retired: [] };
+const NOTHING: CaptureResult = { gate: "closed", proposed: 0, saved: [], updated: [], retired: [], fields: [] };
 const MIN_PERSON_CHARS = 12;
 const MAX_PROPOSALS = 6;
 /** How much of a slot the extractor sees: all of a small slot, the nearest of a large one. */
@@ -122,10 +138,28 @@ export function gateQuestions(mode: CaptureMode): Record<string, EvaluationQuest
 }
 
 /** One set of questions for every proposal, each by its index; Jev charges for the input once. */
-export function validationQuestions(proposals: readonly Proposal[], existing: Existing, mode: CaptureMode): Record<string, EvaluationQuestion> {
+export function validationQuestions(proposals: readonly Proposal[], existing: Existing, mode: CaptureMode, fields: Fields = {}): Record<string, EvaluationQuestion> {
   const questions: Record<string, EvaluationQuestion> = {};
-  const textOf = (proposal: Proposal) => (proposal.op === "retire" ? (existing[proposal.slot] ?? []).find((entry) => entry.id === proposal.id)?.text ?? "" : proposal.text);
+  const textOf = (proposal: Proposal) =>
+    proposal.op === "retire" ? (existing[proposal.slot] ?? []).find((entry) => entry.id === proposal.id)?.text ?? "" : proposal.op === "set" ? proposal.value : proposal.text;
   proposals.forEach((proposal, index) => {
+    if (proposal.op === "set") {
+      const label = fieldFor(proposal.slot, proposal.field)?.label ?? proposal.field;
+      const before = fields[proposal.slot]?.[proposal.field]?.value;
+      questions[`current${index}`] = boolean(
+        before === undefined
+          ? `Did the person state, or make clear, that their ${label} is "${proposal.value}"?`
+          : `Did the person state, or make clear, that their ${label} is now "${proposal.value}" rather than "${before}"?`,
+        "Yes, that is what the person conveyed about themselves or their team.",
+        "No: the person did not say that, or it is a guess.",
+      );
+      questions[`safe${index}`] = boolean(
+        `Is this free of anything secret, such as a password, code, key, token, or card number: "${proposal.value}"`,
+        "It contains nothing secret.",
+        "It contains something that looks secret.",
+      );
+      return;
+    }
     if (proposal.op === "add") {
       questions[`durable${index}`] = boolean(
         `Will this still be true and useful next month, rather than being about one task or one moment: "${proposal.text}"`,
@@ -161,6 +195,14 @@ export function validationQuestions(proposals: readonly Proposal[], existing: Ex
         "It contains nothing secret.",
         "It contains something that looks secret.",
       );
+    } else if (isMigration(proposal)) {
+      const set = proposals.filter((other): other is Proposal & { op: "set" } => other.op === "set" && other.slot === proposal.slot);
+      const now = [...set.map((other) => `${fieldFor(other.slot, other.field)?.label ?? other.field}: ${other.value}`), ...Object.entries(fields[proposal.slot] ?? {}).map(([key, value]) => `${fieldFor(proposal.slot, key)?.label ?? key}: ${value.value}`)];
+      questions[`gone${index}`] = boolean(
+        `With these fields on record (${now.join("; ") || "none"}), does this note add nothing beyond them, so it is redundant: "${textOf(proposal)}"`,
+        "Yes: everything the note says is in the fields.",
+        "No: the note says something the fields do not.",
+      );
     } else {
       questions[`gone${index}`] = boolean(
         `Did the person say, or make clear, that this is no longer true: "${textOf(proposal)}" (reason given: ${proposal.reason})`,
@@ -171,6 +213,9 @@ export function validationQuestions(proposals: readonly Proposal[], existing: Ex
   });
   return questions;
 }
+
+/** A retirement that only moves a note's content into the fields, rather than saying it stopped being true. */
+const isMigration = (proposal: Proposal): proposal is Proposal & { op: "retire" } => proposal.op === "retire" && /\bnow (the |a )?\w[\w ,]* fields?\b/i.test(proposal.reason);
 
 export function duplicateQuestions(pairs: readonly { readonly proposal: Proposal & { op: "add" }; readonly existing: MemoryEntry }[]): Record<string, EvaluationQuestion> {
   const questions: Record<string, EvaluationQuestion> = {};
@@ -221,39 +266,58 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
   // 2. What is already remembered, and what would we change?
   const slots = slotsFor(input.mode);
   const existing: Partial<Record<MemorySlot, readonly MemoryEntry[]>> = {};
-  for (const slot of slots) existing[slot] = existingFor(await deps.existing(slot), `${person}\n${input.reply}`);
+  const fields: Partial<Record<MemorySlot, Readonly<Record<string, MemoryFieldValue>>>> = {};
+  for (const slot of slots) {
+    existing[slot] = existingFor(await deps.existing(slot), `${person}\n${input.reply}`);
+    fields[slot] = deps.fields === undefined ? {} : await deps.fields(slot);
+  }
   let proposals: Proposal[];
+  let raw = 0;
   try {
-    proposals = (await deps.extract(input, existing))
+    const returned = await deps.extract(input, existing, fields);
+    raw = returned.length;
+    proposals = returned
       .filter((proposal) => slots.includes(proposal.slot))
-      .map((proposal) => (proposal.op === "retire" ? proposal : { ...proposal, text: normalize(proposal.text) }))
+      .map((proposal) => {
+        if (proposal.op === "retire") return proposal;
+        if (proposal.op === "set") {
+          // Models name fields loosely; settle on the key before anything compares it.
+          const field = resolveField(proposal.slot, proposal.field);
+          return { ...proposal, field: field?.key ?? proposal.field, value: normalize(proposal.value) };
+        }
+        return { ...proposal, text: normalize(proposal.text) };
+      })
       .filter((proposal) => {
+        if (proposal.op === "set") {
+          return fieldFor(proposal.slot, proposal.field) !== undefined && proposal.value !== "" && !looksSecret(proposal.value) && (fields[proposal.slot]?.[proposal.field]?.value ?? "") !== proposal.value;
+        }
         if (proposal.op === "add") return isMemoryKind(proposal.kind) && acceptable(proposal).ok;
         const target = (existing[proposal.slot] ?? []).find((entry) => entry.id === proposal.id);
         if (target === undefined) return false;
         return proposal.op === "retire" ? normalize(proposal.reason) !== "" : acceptable({ text: proposal.text, kind: proposal.kind ?? target.kind }).ok;
       })
       .slice(0, MAX_PROPOSALS);
-  } catch {
-    return { ...NOTHING, gate };
+  } catch (error) {
+    return { ...NOTHING, gate, error: error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : String(error).slice(0, 300) };
   }
-  if (proposals.length === 0) return { ...NOTHING, gate };
+  if (proposals.length === 0) return { ...NOTHING, gate, raw };
   const proposed = proposals.length;
 
   // 3. Is each change right: durable, on topic and safe for a new entry; a real supersession; a real retraction?
   if (ask !== null) {
-    const judgement = await ask({ person: person.slice(0, 4_000), changes: proposals.map(describeProposal) }, validationQuestions(proposals, existing, input.mode));
+    const judgement = await ask({ person: person.slice(0, 4_000), changes: proposals.map(describeProposal) }, validationQuestions(proposals, existing, input.mode, fields));
     proposals = proposals.filter((proposal, index) => {
-      const facets = proposal.op === "add" ? ["durable", "about", "safe"] : proposal.op === "update" ? ["supersedes", "safe"] : ["gone"];
+      const facets = proposal.op === "add" ? ["durable", "about", "safe"] : proposal.op === "update" ? ["supersedes", "safe"] : proposal.op === "set" ? ["current", "safe"] : ["gone"];
+      // Something new (an entry, or a field with no value yet) is kept unless Jev says no; a change to what is stored needs a clear yes.
+      const fresh = proposal.op === "add" || (proposal.op === "set" && fields[proposal.slot]?.[proposal.field] === undefined);
       return facets.every((facet) => {
         const { verdict } = readVerdict(judgement, `${facet}${index}`, deps.floor);
-        // A change to what is stored needs a clear yes; a new entry is kept unless Jev says no.
-        return proposal.op === "add" ? verdict !== "no" : verdict === "yes";
+        return fresh ? verdict !== "no" : verdict === "yes";
       });
     });
   } else {
     // Without Jev, only the extractor vouches for a change to what is stored; keep those to clear cases.
-    proposals = proposals.filter((proposal) => proposal.op === "add" || cues(person));
+    proposals = proposals.filter((proposal) => proposal.op === "add" || (proposal.op === "set" && fields[proposal.slot]?.[proposal.field] === undefined) || cues(person));
   }
 
   // 4. Does the store already say a new entry? A person's facts and their team's rules overlap, so both slots are checked.
@@ -270,6 +334,7 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
   const saved: Placed[] = [];
   const updated: Placed[] = [];
   const retired: Placed[] = [];
+  const set: (FieldChange & { readonly slot: MemorySlot })[] = [];
   for (const slot of new Set(proposals.map((proposal) => proposal.slot))) {
     const outcome = await applyOperations(
       input.workspaceId,
@@ -281,13 +346,15 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
     for (const entry of outcome.added) saved.push({ ...entry, slot });
     for (const entry of outcome.updated) updated.push({ ...entry, slot });
     for (const entry of outcome.retired) retired.push({ ...entry, slot });
+    for (const change of outcome.fields) set.push({ ...change, slot });
   }
-  return { gate, proposed, saved, updated, retired };
+  return { gate, proposed, raw, saved, updated, retired, fields: set };
 }
 
 function describeProposal(proposal: Proposal): string {
   if (proposal.op === "add") return `add: ${proposal.text}`;
   if (proposal.op === "update") return `update ${proposal.id}: ${proposal.text}`;
+  if (proposal.op === "set") return `set ${proposal.field} = ${proposal.value}`;
   return `retire ${proposal.id}: ${proposal.reason}`;
 }
 
@@ -299,8 +366,10 @@ const OPERATIONS_SCHEMA = z.object({
   changes: z
     .array(
       z.object({
-        op: z.enum(["add", "update", "retire"]),
+        op: z.enum(["set", "add", "update", "retire"]),
         slot: z.enum(["profile", "team", "craft"]),
+        field: z.string().optional().describe("For set: the field key, exactly as listed."),
+        value: z.string().optional().describe("For set: the field's new value, short."),
         id: z.string().optional().describe("For update and retire: the id of the existing memory, exactly as listed."),
         text: z.string().optional().describe("For add and update: one short standalone sentence, in the third person."),
         kind: z.enum(["preference", "fact", "rule", "lesson"]).optional(),
@@ -313,10 +382,11 @@ const OPERATIONS_SCHEMA = z.object({
 const SYSTEM: Record<CaptureMode, string> = {
   conversation: [
     "You maintain the durable memory of an AI coordinator about the person it works for and their team, from one exchange.",
-    "You are given what is already remembered, each line with an id. Return the changes the exchange calls for, and nothing else:",
-    "- add: something new the PERSON stated or clearly implied about themselves or their team that will still be true next month (a preference about how work should be done, a fact about them, a standing rule).",
+    "You are given what is already remembered: fields with their current values, and notes each with an id. Return the changes the exchange calls for, and nothing else:",
+    "- set: a field's value, when the person stated or clearly implied it (their name, company, location, timezone, spelling, date or time format, who approves what, where tickets live, and so on). Setting a field that already has a value replaces it. Prefer set over add whenever a field fits, and set a field that is (unset) even when a note already says the same thing: fields are where these facts belong. Use the field keys exactly as listed.",
+    "- add: something new the PERSON stated or clearly implied about themselves or their team that fits no field and will still be true next month (a preference about how work should be done, a fact about them, a standing rule).",
     "- update: an existing memory whose truth moved on ('now five bullets, not three') or that this exchange makes more precise. Give the existing id and the full new sentence.",
-    "- retire: an existing memory the person said is no longer true. Give the id and the reason.",
+    "- retire: an existing memory the person said is no longer true, or a note that only restates a field you are setting in this same answer (reason: 'now the <field> field'). Give the id and the reason. Never retire a note merely because it was confirmed again.",
     "Never add one-off requests, the details of a task, opinions of the assistant, or anything secret: passwords, codes, keys, tokens, card numbers.",
     "Never add what is already remembered in other words; update or leave it.",
     "Write each sentence short, in the third person, e.g. 'Prefers summaries as three bullets.' or 'Their company is Acme Robotics.'",
@@ -350,13 +420,23 @@ function extractionModel() {
   return endpoint === null ? id : endpointModel(endpoint, id);
 }
 
-const renderExisting = (existing: Existing): string =>
+const renderExisting = (existing: Existing, fields: Fields): string =>
   Object.entries(existing)
-    .map(([slot, entries]) => `## ${slot}\n${entries.length === 0 ? "(nothing yet)" : entries.map((entry) => `- ${entry.id} [${entry.kind}]: ${entry.text}`).join("\n")}`)
+    .map(([slot, entries]) => {
+      const defined = FIELDS[slot as MemorySlot];
+      const values = fields[slot as MemorySlot] ?? {};
+      const fieldLines = defined.map((field) => `- ${field.key} (${field.hint}): ${values[field.key]?.value ?? "(unset)"}`);
+      return [
+        `## ${slot}`,
+        ...(defined.length === 0 ? [] : ["fields:", ...fieldLines]),
+        "notes:",
+        entries.length === 0 ? "(none yet)" : entries.map((entry) => `- ${entry.id} [${entry.kind}]: ${entry.text}`).join("\n"),
+      ].join("\n");
+    })
     .join("\n\n");
 
 /** Proposes changes with the quick model, and counts what that cost. */
-export const modelExtract: Extract = async (input, existing) => {
+export const modelExtract: Extract = async (input, existing, fields) => {
   const model = extractionModel();
   const result = await generateText({
     model,
@@ -364,7 +444,7 @@ export const modelExtract: Extract = async (input, existing) => {
     system: SYSTEM[input.mode],
     prompt: [
       "# Already remembered",
-      renderExisting(existing),
+      renderExisting(existing, fields),
       "",
       input.mode === "conversation" ? "# What the person said" : "# The brief",
       input.person.slice(0, 6_000),
@@ -380,6 +460,7 @@ export const modelExtract: Extract = async (input, existing) => {
   );
   const changes = result.output?.changes ?? [];
   return changes.flatMap((change): Proposal[] => {
+    if (change.op === "set" && change.field !== undefined && change.value !== undefined) return [{ op: "set", slot: change.slot, field: change.field, value: change.value }];
     if (change.op === "add" && change.text !== undefined) return [{ op: "add", slot: change.slot, text: change.text, kind: change.kind ?? (change.slot === "craft" ? "lesson" : "fact") }];
     if (change.op === "update" && change.id !== undefined && change.text !== undefined) return [{ op: "update", slot: change.slot, id: change.id, text: change.text, ...(change.kind === undefined ? {} : { kind: change.kind }) }];
     if (change.op === "retire" && change.id !== undefined) return [{ op: "retire", slot: change.slot, id: change.id, reason: change.reason ?? "the person said so" }];
@@ -393,6 +474,7 @@ export function defaultDeps(workspaceId: string): CaptureDeps {
     extract: modelExtract,
     floor: memoryFloor(),
     existing: (slot) => readEntries(workspaceId, slot),
+    fields: (slot) => readFields(workspaceId, slot),
   };
 }
 

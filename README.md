@@ -131,9 +131,13 @@ deployment can skip versions.
 - **Approvals.** Sending email, retiring a Bot, and any connector tool that
   changes something stop for a person first.
 - **Memory.** The team remembers on its own. After each exchange with HQ, and
-  after each job, Jev judges whether anything said is worth keeping, a quick
+  after each job, Jev judges whether anything said is worth keeping, a small
   model phrases it, and it lands in one of three shared slots: about you, your
-  team, how to do your work. HQ and every Bot recall what is relevant on each
+  team, how to do your work. The facts that are really fields (name, company,
+  timezone, date and time formats, spelling, who approves what, where tickets
+  live) are kept as fields with one current value each, so a change is an
+  overwrite with history rather than a second sentence, and they always fit in
+  what HQ and the Bots recall. HQ and every Bot recall what is relevant on each
   turn. When a preference moves on, the memory is reworded and keeps its old
   wording; when something stops being true, it is retired, not lost. Open
   **Memory** in the console to search it, pin what should always be recalled,

@@ -5,7 +5,7 @@ import { operator } from "../session";
 import { sessionState } from "../session-state";
 import { capture, type CaptureMode, defaultDeps } from "./capture";
 import { jobOf, trace } from "./provider";
-import type { MemorySlot } from "./store";
+import { fieldFor, type MemorySlot } from "./store";
 
 /**
  * Remembering, driven from the event stream.
@@ -113,11 +113,12 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
             workspaceId,
             slot,
             "done",
-            `gate=${result.gate} proposed=${result.proposed} saved=${result.saved.length} updated=${result.updated.length} retired=${result.retired.length}`,
+            `gate=${result.gate} proposed=${result.proposed} saved=${result.saved.length} updated=${result.updated.length} retired=${result.retired.length} fields=${result.fields.length}${result.raw === undefined ? "" : ` raw=${result.raw}`}${result.error === undefined ? "" : ` extractor failed: ${result.error}`}`,
           );
           const changed = [...result.saved, ...result.updated, ...result.retired];
-          if (changed.length === 0) return;
+          if (changed.length + result.fields.length === 0) return;
           const parts = [
+            result.fields.length === 0 ? null : `Noted: ${result.fields.map((change) => `${fieldFor(change.slot, change.field)?.label ?? change.field} is ${change.value}`).join(" · ")}`,
             result.saved.length === 0 ? null : `Remembered: ${result.saved.map((entry) => entry.text).join(" · ")}`,
             result.updated.length === 0 ? null : `Updated: ${result.updated.map((entry) => entry.text).join(" · ")}`,
             result.retired.length === 0 ? null : `No longer true: ${result.retired.map((entry) => entry.text).join(" · ")}`,
@@ -128,7 +129,7 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
             botId: job?.botId ?? null,
             jobId: job?.jobId ?? null,
             text: parts.join(" — "),
-            data: { slots: [...new Set(changed.map((entry) => entry.slot))], ids: changed.map((entry) => entry.id), gate: result.gate },
+            data: { slots: [...new Set([...changed, ...result.fields].map((item) => item.slot))], ids: changed.map((entry) => entry.id), fields: result.fields.map((change) => change.field), gate: result.gate },
           });
         } catch (error) {
           await trace(workspaceId, slot, "failed", error instanceof Error ? `${error.name}: ${error.message}` : String(error));

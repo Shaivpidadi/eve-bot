@@ -54,19 +54,84 @@ export interface MemoryEntry {
 export type MemoryOperation =
   | { readonly op: "add"; readonly text: string; readonly kind: MemoryKind }
   | { readonly op: "update"; readonly id: string; readonly text: string; readonly kind?: MemoryKind }
-  | { readonly op: "retire"; readonly id: string; readonly reason: string };
+  | { readonly op: "retire"; readonly id: string; readonly reason: string }
+  /** Sets a field of the typed core; an empty value clears it. */
+  | { readonly op: "set"; readonly field: string; readonly value: string };
+
+export interface FieldChange {
+  readonly field: string;
+  readonly value: string;
+  readonly previous: string | null;
+}
 
 export interface ApplyOutcome {
   readonly added: readonly MemoryEntry[];
   readonly updated: readonly MemoryEntry[];
   readonly retired: readonly MemoryEntry[];
+  readonly fields: readonly FieldChange[];
   readonly duplicates: number;
   readonly refused: number;
   readonly replayed: boolean;
 }
 
+/**
+ * The typed core: facts that are fields, not prose. A field has one current
+ * value, so a changed preference is an overwrite rather than a second
+ * sentence, and recall renders the lot as one compact block that always fits.
+ */
+export interface MemoryField {
+  readonly key: string;
+  readonly label: string;
+  /** What belongs here, for the extractor and the page. */
+  readonly hint: string;
+}
+
+export const FIELDS: Readonly<Record<MemorySlot, readonly MemoryField[]>> = {
+  profile: [
+    { key: "name", label: "Name", hint: "What to call them" },
+    { key: "company", label: "Company", hint: "Who they work for" },
+    { key: "role", label: "Role", hint: "Their job or title" },
+    { key: "location", label: "Location", hint: "City or region they work from" },
+    { key: "timezone", label: "Timezone", hint: "IANA name, such as America/New_York" },
+    { key: "language", label: "Language", hint: "The language to write in" },
+    { key: "spelling", label: "Spelling", hint: "British, American, or another convention" },
+    { key: "dateFormat", label: "Dates", hint: "How dates are written, by example: 21 Sep 2026" },
+    { key: "timeFormat", label: "Times", hint: "12-hour or 24-hour" },
+    { key: "tone", label: "Tone", hint: "How drafts should sound: formal, warm, terse" },
+    { key: "length", label: "Length", hint: "How long answers and results should run" },
+  ],
+  team: [
+    { key: "approvals", label: "Approvals", hint: "Who signs off on what" },
+    { key: "cc", label: "Always cc", hint: "Who is copied on which mail" },
+    { key: "systems", label: "Systems of record", hint: "Where tickets, docs, customers and code live" },
+    { key: "schedule", label: "Schedule", hint: "Recurring reports and meetings and when they go out" },
+    { key: "style", label: "House style", hint: "How anything the team publishes should read" },
+    { key: "escalation", label: "Escalation", hint: "Who to bring in when something goes wrong" },
+  ],
+  craft: [],
+};
+
+export const fieldFor = (slot: MemorySlot, key: string): MemoryField | undefined => FIELDS[slot].find((field) => field.key === key);
+
+/** A field named loosely, as a model tends to: "Time format", "time_format", "Times" and "timeFormat" all resolve. */
+export function resolveField(slot: MemorySlot, name: string): MemoryField | undefined {
+  const loose = name.toLowerCase().replace(/[^a-z]/g, "");
+  if (loose === "") return undefined;
+  return FIELDS[slot].find((field) => field.key.toLowerCase() === loose || field.label.toLowerCase().replace(/[^a-z]/g, "") === loose);
+}
+
+export interface MemoryFieldValue {
+  readonly value: string;
+  readonly at: string;
+  readonly source: MemorySource;
+  /** Earlier values, newest first. */
+  readonly history?: readonly { readonly value: string; readonly at: string; readonly source: MemorySource }[];
+}
+
 export interface MemoryDoc {
   readonly entries: readonly MemoryEntry[];
+  /** The typed core, by field key. Absent on documents from before fields existed. */
+  readonly fields?: Readonly<Record<string, MemoryFieldValue>>;
   /** Operation ids already captured, so a replayed capture writes nothing twice. */
   readonly seen: readonly string[];
   readonly updatedAt: string;
@@ -101,6 +166,7 @@ export const isMemoryKind = (value: unknown): value is MemoryKind =>
   value === "preference" || value === "fact" || value === "rule" || value === "lesson";
 
 const MAX_TEXT_CHARS = 500;
+const MAX_FIELD_CHARS = 200;
 const SEEN_KEPT = 64;
 
 const key = (workspaceId: string, slot: MemorySlot) => `memory/v2/${workspaceId}/${slot}.json`;
@@ -221,7 +287,7 @@ export async function applyOperations(
   options: { readonly operationId?: string; readonly now?: Date } = {},
 ): Promise<ApplyOutcome> {
   const at = (options.now ?? new Date()).toISOString();
-  let outcome: ApplyOutcome = { added: [], updated: [], retired: [], duplicates: 0, refused: 0, replayed: false };
+  let outcome: ApplyOutcome = { added: [], updated: [], retired: [], fields: [], duplicates: 0, refused: 0, replayed: false };
   await updateDoc<MemoryDoc>(key(workspaceId, slot), (current) => {
     const doc = current ?? EMPTY;
     if (options.operationId !== undefined && doc.seen.includes(options.operationId)) {
@@ -234,10 +300,31 @@ export async function applyOperations(
     const added: MemoryEntry[] = [];
     const updated: MemoryEntry[] = [];
     const retired: MemoryEntry[] = [];
+    const fields: Record<string, MemoryFieldValue> = { ...doc.fields };
+    const changed: FieldChange[] = [];
     let duplicates = 0;
     let refused = 0;
 
     for (const operation of operations) {
+      if (operation.op === "set") {
+        const field = resolveField(slot, operation.field);
+        if (field === undefined) continue;
+        const value = normalize(operation.value).slice(0, MAX_FIELD_CHARS);
+        const before = fields[field.key];
+        if ((before?.value ?? "") === value) continue;
+        if (value !== "" && looksSecret(value)) continue;
+        if (value === "") delete fields[field.key];
+        else {
+          fields[field.key] = {
+            value,
+            at,
+            source,
+            history: before === undefined ? [] : [{ value: before.value, at: before.at, source: before.source }, ...(before.history ?? [])].slice(0, 10),
+          };
+        }
+        changed.push({ field: field.key, value, previous: before?.value ?? null });
+        continue;
+      }
       if (operation.op === "add") {
         const checked = acceptable(operation);
         if (!checked.ok) continue;
@@ -276,10 +363,10 @@ export async function applyOperations(
         retired.push(next);
       }
     }
-    outcome = { added, updated, retired, duplicates, refused, replayed: false };
+    outcome = { added, updated, retired, fields: changed, duplicates, refused, replayed: false };
     const seen = options.operationId === undefined ? doc.seen : [...doc.seen, options.operationId].slice(-SEEN_KEPT);
-    if (added.length + updated.length + retired.length === 0 && seen === doc.seen) return null;
-    return { ...doc, entries, seen, updatedAt: at };
+    if (added.length + updated.length + retired.length + changed.length === 0 && seen === doc.seen) return null;
+    return { ...doc, entries, fields, seen, updatedAt: at };
   });
   return outcome;
 }
@@ -313,6 +400,19 @@ async function editEntry(
     };
   });
   return outcome;
+}
+
+/** The typed core of a slot, as stored. */
+export async function readFields(workspaceId: string, slot: MemorySlot): Promise<Readonly<Record<string, MemoryFieldValue>>> {
+  return (await readMemoryDoc(workspaceId, slot)).fields ?? {};
+}
+
+/** Sets one field by hand; an empty value clears it. */
+export async function setField(workspaceId: string, slot: MemorySlot, field: string, value: string, source: MemorySource): Promise<EditOutcome> {
+  if (resolveField(slot, field) === undefined) return { ok: false, status: 404, error: "No such field." };
+  if (normalize(value) !== "" && looksSecret(value)) return { ok: false, status: 400, error: "That looks like a secret; passwords, codes and keys are never remembered." };
+  await applyOperations(workspaceId, slot, [{ op: "set", field, value }], source);
+  return { ok: true };
 }
 
 /** Brings a retired entry back, when the person says it is still true. */

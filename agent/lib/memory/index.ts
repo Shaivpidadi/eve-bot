@@ -7,13 +7,15 @@
  * - `provider.ts`: the eve memory provider that ties them together.
  */
 export { capture, cues, defaultDeps, existingFor, memoryFloor, modelExtract, slotsFor } from "./capture";
-export type { CaptureDeps, CaptureInput, CaptureMode, CaptureResult, Existing, Extract, Judge, Proposal } from "./capture";
+export type { CaptureDeps, CaptureInput, CaptureMode, CaptureResult, Existing, Extract, Fields, Judge, Proposal } from "./capture";
 export { memoryCaptureHook } from "./hook";
 export { byWorkspace, jobOf, namespaceFor, textOf, trace, workspaceMemory } from "./provider";
 export { nearest, select, tokens } from "./rank";
 export {
   acceptable,
   applyOperations,
+  fieldFor,
+  FIELDS,
   forget,
   isMemoryKind,
   isMemorySlot,
@@ -24,10 +26,13 @@ export {
   noteRecalled,
   pin,
   readEntries,
+  readFields,
   readMemoryDoc,
   remember,
+  resolveField,
   restore,
   rewrite,
+  setField,
   SLOTS,
 } from "./store";
-export type { ApplyOutcome, MemoryCandidate, MemoryDoc, MemoryEntry, MemoryKind, MemoryOperation, MemoryRevision, MemorySlot, MemorySource, RememberOutcome } from "./store";
+export type { ApplyOutcome, FieldChange, MemoryCandidate, MemoryDoc, MemoryEntry, MemoryField, MemoryFieldValue, MemoryKind, MemoryOperation, MemoryRevision, MemorySlot, MemorySource, RememberOutcome } from "./store";

@@ -833,6 +833,15 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .memory-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
 .memory-text small { font-size: 11.5px; }
 .memory-history { font-style: italic; }
+.memory-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0; margin: 0; background: var(--card); border: 1px solid var(--line-2); border-radius: 12px; overflow: hidden; }
+.memory-field { display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; min-width: 0; box-shadow: inset -1px -1px 0 var(--line); }
+.memory-field dt { font-size: 11px; color: var(--faint); }
+.memory-field dd { margin: 0; min-width: 0; }
+.memory-field-value { font: inherit; font-size: 13px; color: var(--text); background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: 6px; text-align: left; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory-field-value:hover { background: var(--hover); }
+.memory-field.unset .memory-field-value { color: var(--faint); }
+.memory-field .memory-edit input { font-size: 12.5px; padding: 5px 8px; }
+.memory-field .memory-edit .btn { font-size: 11.5px; padding: 3px 9px; }
 .memory-retired { margin-top: 4px; }
 .memory-retired > summary { cursor: pointer; font-size: 11.5px; padding: 4px 0; }
 .memory-retired .memory-entries { margin-top: 6px; }

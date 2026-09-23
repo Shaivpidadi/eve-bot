@@ -21,12 +21,27 @@ interface Entry {
   readonly retired?: { readonly at: string; readonly source: Entry["source"]; readonly reason: string } | null;
 }
 
+interface FieldDefinition {
+  readonly key: string;
+  readonly label: string;
+  readonly hint: string;
+}
+
+interface FieldValue {
+  readonly value: string;
+  readonly at: string;
+  readonly source: Entry["source"];
+  readonly history?: readonly { readonly value: string; readonly at: string; readonly source: Entry["source"] }[];
+}
+
 interface SlotView {
   readonly slot: Slot;
   readonly label: string;
   readonly detail: string;
   readonly maxEntries: number;
   readonly entries: readonly Entry[];
+  readonly fieldDefinitions?: readonly FieldDefinition[];
+  readonly fields?: Readonly<Record<string, FieldValue>>;
 }
 
 interface Playbook {
@@ -89,6 +104,7 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [editingField, setEditingField] = useState<{ slot: Slot; key: string; value: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -114,11 +130,11 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && editing === null) onClose();
+      if (event.key === "Escape" && editing === null && editingField === null) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, editing]);
+  }, [onClose, editing, editingField]);
 
   /** Runs one change, shows its error if any, and reloads. */
   const act = async (id: string, request: () => Promise<Response>, fallback: string): Promise<boolean> => {
@@ -142,7 +158,7 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
 
   const needle = query.trim().toLowerCase();
   const matches = (text: string) => needle === "" || text.toLowerCase().includes(needle);
-  const total = useMemo(() => view?.slots.reduce((sum, slot) => sum + slot.entries.length, 0) ?? 0, [view]);
+  const total = useMemo(() => view?.slots.reduce((sum, slot) => sum + slot.entries.filter((entry) => !entry.retired).length + Object.keys(slot.fields ?? {}).length, 0) ?? 0, [view]);
 
   return (
     <div className="usage-page memory-page" role="region" aria-label="Memory">
@@ -185,8 +201,69 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
                   </small>
                 </h2>
                 <p className="faint">{slot.detail}</p>
+                {(slot.fieldDefinitions ?? []).length === 0 ? null : (
+                  <dl className="memory-fields">
+                    {(slot.fieldDefinitions ?? [])
+                      .filter((field) => needle === "" || matches(field.label) || matches(slot.fields?.[field.key]?.value ?? ""))
+                      .map((field) => {
+                        const current = slot.fields?.[field.key];
+                        const isEditing = editingField?.slot === slot.slot && editingField.key === field.key;
+                        return (
+                          <div key={field.key} className={`memory-field${current === undefined ? " unset" : ""}`}>
+                            <dt title={field.hint}>{field.label}</dt>
+                            {isEditing ? (
+                              <form
+                                className="memory-edit"
+                                onSubmit={async (event) => {
+                                  event.preventDefault();
+                                  const saved = await act(
+                                    `${slot.slot}:${field.key}`,
+                                    () => api(`/bot/v1/memory/${slot.slot}/fields`, { method: "POST", body: JSON.stringify({ field: field.key, value: editingField.value }) }),
+                                    "Could not change that.",
+                                  );
+                                  if (saved) setEditingField(null);
+                                }}
+                              >
+                                <input
+                                  value={editingField.value}
+                                  onChange={(event) => setEditingField({ slot: slot.slot, key: field.key, value: event.target.value })}
+                                  placeholder={field.hint}
+                                  maxLength={200}
+                                  aria-label={field.label}
+                                  autoFocus
+                                />
+                                <button type="submit" className="btn primary" disabled={busy !== null}>
+                                  Save
+                                </button>
+                                <button type="button" className="btn" onClick={() => setEditingField(null)}>
+                                  Cancel
+                                </button>
+                              </form>
+                            ) : (
+                              <dd>
+                                <button
+                                  type="button"
+                                  className="memory-field-value"
+                                  title={
+                                    current === undefined
+                                      ? `Not known yet. ${field.hint}.`
+                                      : `${provenance({ ...current, text: current.value, kind: "fact", id: field.key, pinned: false, recalls: 0, lastRecalledAt: null } as Entry)}${
+                                          current.history && current.history.length > 0 ? `\nWas: ${current.history.map((rev) => rev.value).join(", ")}` : ""
+                                        }`
+                                  }
+                                  onClick={() => setEditingField({ slot: slot.slot, key: field.key, value: current?.value ?? "" })}
+                                >
+                                  {current?.value ?? "—"}
+                                </button>
+                              </dd>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </dl>
+                )}
                 {shown.length === 0 ? (
-                  <p className="faint">{slot.entries.filter((entry) => !entry.retired).length === 0 ? "Nothing remembered yet." : "Nothing matches your search."}</p>
+                  <p className="faint">{slot.entries.filter((entry) => !entry.retired).length === 0 ? ((slot.fieldDefinitions ?? []).length > 0 ? "No notes yet beyond the fields above." : "Nothing remembered yet.") : "Nothing matches your search."}</p>
                 ) : (
                   <ul className="memory-entries">
                     {[...shown]
