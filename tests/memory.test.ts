@@ -536,3 +536,27 @@ describe("ranking by meaning", () => {
     expect(picked.relevant.map((row) => row.text)).toEqual(["The export drops rows.", "Invoice tool hides Send under More."]);
   });
 });
+
+describe("writing rules as instructions", () => {
+  it("renders fields and confident preferences as rules, and nothing when nothing is known", async () => {
+    const { knownWritingFields, renderStyle } = await import("../agent/lib/memory/style");
+    expect(knownWritingFields()).toBe(true);
+    const now = "2026-09-23T10:00:00.000Z";
+    const field = (value: string) => ({ value, at: now, source: { who: "you" as const } });
+    const text = renderStyle(
+      { spelling: field("American"), dateFormat: field("21 Sep 2026"), writing: field("No em dashes; use commas or full stops.") },
+      { style: field("plain, no marketing adjectives") },
+      [entry("Dislikes em dashes in drafts.", { kind: "preference", confidence: 1 }), entry("Maybe likes haiku.", { kind: "preference", confidence: 0.4 }), entry("Lives in Denver.", { kind: "fact" })],
+    );
+    expect(text).toContain("## How this person wants things written");
+    expect(text).toContain("- Use American spelling throughout.");
+    expect(text).toContain("- Write dates the way this one is written: 21 Sep 2026.");
+    expect(text).toContain("- No em dashes; use commas or full stops.");
+    expect(text).toContain("- House style for anything the team publishes: plain, no marketing adjectives.");
+    expect(text).toContain("- Dislikes em dashes in drafts.");
+    expect(text).not.toContain("haiku");
+    expect(text).not.toContain("Denver");
+    expect(text).toContain("chat replies included");
+    expect(renderStyle({}, {}, [entry("Lives in Denver.", { kind: "fact" })])).toBeNull();
+  });
+});

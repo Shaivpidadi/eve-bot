@@ -144,7 +144,10 @@ deployment can skip versions.
   Jev made of it, rising when you say it again; what nobody has needed for
   ninety days fades out of recall but stays on the page. On the Gateway the
   Bots' lessons are ranked by meaning, with a small embedding per lesson, so
-  "the export drops rows" is found for "CSV loses data"; elsewhere by words. HQ and every Bot recall what is relevant on each
+  "the export drops rows" is found for "CSV loses data"; elsewhere by words.
+  How you want things written (spelling, dates, times, tone, length, rules
+  such as "no em dashes") reaches HQ and the Bots as instructions on every
+  turn, not as recalled data, so it holds in chat replies as well as drafts. HQ and every Bot recall what is relevant on each
   turn. When a preference moves on, the memory is reworded and keeps its old
   wording; when something stops being true, it is retired, not lost. Open
   **Memory** in the console to search it, pin what should always be recalled,

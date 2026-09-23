@@ -111,6 +111,7 @@ export const FIELDS: Readonly<Record<MemorySlot, readonly MemoryField[]>> = {
     { key: "timeFormat", label: "Times", hint: "12-hour or 24-hour" },
     { key: "tone", label: "Tone", hint: "How drafts should sound: formal, warm, terse" },
     { key: "length", label: "Length", hint: "How long answers and results should run" },
+    { key: "writing", label: "Writing rules", hint: "Things to always or never do in prose: no em dashes, no exclamation marks, short sentences" },
   ],
   team: [
     { key: "approvals", label: "Approvals", hint: "Who signs off on what" },

@@ -12,6 +12,7 @@ export { cosine, decode, digest, embeddingsEnabled, encode, rankByMeaning, vecto
 export type { Embedder, VectorDoc } from "./embeddings";
 export { memoryCaptureHook } from "./hook";
 export { learnFromDenial, learnFromFeedback } from "./outcomes";
+export { renderStyle, styleInstructions } from "./style";
 export { byWorkspace, jobOf, namespaceFor, textOf, trace, workspaceMemory } from "./provider";
 export { nearest, select, tokens } from "./rank";
 export {
