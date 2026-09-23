@@ -101,6 +101,20 @@ The console says when a newer version is out: a line in the sidebar's footer
 links here. It asks GitHub for this repository's version at most every six
 hours; `BOT_UPDATE_CHECK=off` stops it asking.
 
+A copy deployed before this workflow existed needs one manual sync to receive
+it. Its first commit has no history in common with this repository, so graft
+it onto the commit whose files it matches, then merge:
+
+```bash
+git clone https://github.com/<you>/<your-copy> && cd <your-copy>
+git remote add upstream https://github.com/Shaivpidadi/eve-bot.git && git fetch upstream main
+root=$(git rev-list --max-parents=0 HEAD | tail -1)
+git replace --graft "$root" "$(git log --format='%H %T' upstream/main | awk -v t="$(git rev-parse "$root^{tree}")" '$2==t{print $1; exit}')"
+git merge upstream/main -m "chore: sync with upstream eve-bot" && git push
+```
+
+Vercel deploys the push. From then on the workflow keeps the copy current.
+
 Standalone, update the way you installed:
 
 ```bash

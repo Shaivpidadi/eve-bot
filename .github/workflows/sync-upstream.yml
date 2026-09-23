@@ -46,14 +46,30 @@ jobs:
             echo "result=current" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git merge --no-edit upstream/main -m "chore: sync with upstream eve-bot"; then
+          # A copy made by the Deploy button starts from one squashed commit with no
+          # shared history. Its files are an exact snapshot of some upstream commit, so
+          # graft its root onto that commit: git then has a real common ancestor, the
+          # merge keeps any edits made in the copy, and files upstream deleted go away.
+          if ! git merge-base upstream/main HEAD >/dev/null 2>&1; then
+            root=$(git rev-list --max-parents=0 HEAD | tail -1)
+            tree=$(git rev-parse "$root^{tree}")
+            twin=$(git log --format='%H %T' upstream/main | awk -v t="$tree" '$2==t{print $1; exit}')
+            if [ -n "$twin" ]; then
+              echo "Grafting the copy's first commit onto upstream $twin, which has the same files." | tee -a "$GITHUB_STEP_SUMMARY"
+              git replace --graft "$root" "$twin"
+            else
+              echo "The copy's first commit matches no upstream snapshot; merging unrelated histories." | tee -a "$GITHUB_STEP_SUMMARY"
+              MERGE_FLAGS="--allow-unrelated-histories"
+            fi
+          fi
+          if git merge --no-edit ${MERGE_FLAGS:-} upstream/main -m "chore: sync with upstream eve-bot"; then
             git push origin HEAD
             echo "Merged upstream/main and pushed. Vercel will deploy it." | tee -a "$GITHUB_STEP_SUMMARY"
             echo "result=merged" >> "$GITHUB_OUTPUT"
           else
             git merge --abort
             git checkout -B upstream-sync
-            git merge upstream/main || true
+            git merge ${MERGE_FLAGS:-} upstream/main || true
             git add -A
             git -c core.editor=true commit -m "chore: sync with upstream eve-bot (conflicts to resolve)" || true
             git push -f origin upstream-sync
