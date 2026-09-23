@@ -134,6 +134,8 @@ export interface MemoryDoc {
   readonly fields?: Readonly<Record<string, MemoryFieldValue>>;
   /** Operation ids already captured, so a replayed capture writes nothing twice. */
   readonly seen: readonly string[];
+  /** What a person forgot by hand, so capture does not put it straight back. */
+  readonly forgotten?: readonly { readonly text: string; readonly at: string }[];
   readonly updatedAt: string;
 }
 
@@ -168,6 +170,7 @@ export const isMemoryKind = (value: unknown): value is MemoryKind =>
 const MAX_TEXT_CHARS = 500;
 const MAX_FIELD_CHARS = 200;
 const SEEN_KEPT = 64;
+const FORGOTTEN_KEPT = 100;
 
 const key = (workspaceId: string, slot: MemorySlot) => `memory/v2/${workspaceId}/${slot}.json`;
 const EMPTY: MemoryDoc = { entries: [], seen: [], updatedAt: "" };
@@ -295,6 +298,7 @@ export async function applyOperations(
       return null;
     }
     const entries = [...doc.entries];
+    const forgottenTexts = new Set((doc.forgotten ?? []).map((item) => comparable(item.text)));
     const live = () => entries.filter((entry) => !entry.retired);
     const known = () => new Set(live().map((entry) => comparable(entry.text)));
     const added: MemoryEntry[] = [];
@@ -328,7 +332,7 @@ export async function applyOperations(
       if (operation.op === "add") {
         const checked = acceptable(operation);
         if (!checked.ok) continue;
-        if (known().has(comparable(checked.text))) {
+        if (known().has(comparable(checked.text)) || forgottenTexts.has(comparable(checked.text))) {
           duplicates += 1;
           continue;
         }
@@ -423,8 +427,27 @@ export function restore(workspaceId: string, slot: MemorySlot, id: string): Prom
 /** The entries a turn may recall: not retired. */
 export const liveEntries = (entries: readonly MemoryEntry[]): readonly MemoryEntry[] => entries.filter((entry) => !entry.retired);
 
-export function forget(workspaceId: string, slot: MemorySlot, id: string): Promise<EditOutcome> {
-  return editEntry(workspaceId, slot, id, () => null);
+/** Forgets an entry for good, and remembers that it was forgotten so capture does not put it straight back. */
+export async function forget(workspaceId: string, slot: MemorySlot, id: string): Promise<EditOutcome> {
+  let outcome: EditOutcome = { ok: false, status: 404, error: "No such memory." };
+  await updateDoc<MemoryDoc>(key(workspaceId, slot), (current) => {
+    const doc = current ?? EMPTY;
+    const entry = doc.entries.find((candidate) => candidate.id === id);
+    if (entry === undefined) return null;
+    outcome = { ok: true };
+    return {
+      ...doc,
+      entries: doc.entries.filter((candidate) => candidate.id !== id),
+      forgotten: [{ text: entry.text, at: new Date().toISOString() }, ...(doc.forgotten ?? [])].slice(0, FORGOTTEN_KEPT),
+      updatedAt: new Date().toISOString(),
+    };
+  });
+  return outcome;
+}
+
+/** What a person forgot by hand in this slot, newest first. */
+export async function readForgotten(workspaceId: string, slot: MemorySlot): Promise<readonly { readonly text: string; readonly at: string }[]> {
+  return (await readMemoryDoc(workspaceId, slot)).forgotten ?? [];
 }
 
 export function pin(workspaceId: string, slot: MemorySlot, id: string, pinned: boolean): Promise<EditOutcome> {

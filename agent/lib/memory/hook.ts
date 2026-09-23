@@ -3,7 +3,9 @@ import type { HookContext, HookDefinition } from "eve/hooks";
 import { record } from "../activity";
 import { operator } from "../session";
 import { sessionState } from "../session-state";
+import { sessionBinding } from "../computer/screens";
 import { capture, type CaptureMode, defaultDeps } from "./capture";
+import { learnFromDenial } from "./outcomes";
 import { jobOf, trace } from "./provider";
 import { fieldFor, type MemorySlot } from "./store";
 
@@ -45,9 +47,17 @@ function describeResult(result: unknown): string | null {
   return `[${name}] ${text.slice(0, MAX_TOOL_NOTE)}`;
 }
 
+interface Asked {
+  readonly toolName: string;
+  readonly prompt: string;
+  readonly input: unknown;
+}
+
 export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
   const slot: MemorySlot = mode === "conversation" ? "profile" : "craft";
   const exchanges = sessionState<Exchange>();
+  /** Approvals a job asked for, by request id, so a decline can be read back. */
+  const asked = sessionState<Map<string, Asked>>();
   const current = (ctx: HookContext): Exchange => {
     const existing = exchanges.get(ctx.session.id);
     if (existing !== undefined) return existing;
@@ -77,6 +87,29 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
         if (mode !== "job") return;
         const note = describeResult(event.data.result);
         if (note !== null) current(ctx).tools.push(note);
+      },
+      "input.requested"(event, ctx) {
+        if (mode !== "job") return;
+        const pending = asked.get(ctx.session.id) ?? new Map<string, Asked>();
+        for (const request of event.data.requests) {
+          if (request.kind !== "tool-approval") continue;
+          pending.set(request.requestId, { toolName: request.action?.toolName ?? "a tool", prompt: request.prompt, input: request.action?.input });
+        }
+        asked.set(ctx.session.id, pending);
+      },
+      async "approval.settled"(event, ctx) {
+        if (mode !== "job" || event.data.outcome !== "cancelled") return;
+        const request = asked.get(ctx.session.id)?.get(event.data.requestId);
+        if (request === undefined) return;
+        asked.get(ctx.session.id)?.delete(event.data.requestId);
+        const workspaceId = operator(ctx).workspaceId;
+        try {
+          const binding = await sessionBinding(workspaceId, ctx.session.id);
+          if (binding === null) return;
+          await learnFromDenial(workspaceId, { jobId: binding.jobId, botId: binding.botId, requestId: event.data.requestId, ...request });
+        } catch (error) {
+          await trace(workspaceId, "craft", "failed", `denial: ${error instanceof Error ? error.message : String(error)}`);
+        }
       },
       async "turn.completed"(event, ctx) {
         const exchange = exchanges.get(ctx.session.id);

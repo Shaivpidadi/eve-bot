@@ -23,6 +23,7 @@ import {
   normalize,
   readEntries,
   readFields,
+  readForgotten,
   resolveField,
 } from "./store";
 
@@ -45,7 +46,13 @@ import {
  * Memory that only worked on Vercel would not be first class.
  */
 
-export type CaptureMode = "conversation" | "job";
+/**
+ * Where an exchange came from: a person talking to HQ, a job's transcript, a
+ * person sending a job back with a note, or a person declining an action a
+ * Bot asked approval for. The last two are the strongest signals a person
+ * gives, and they arrive without anyone saying "remember".
+ */
+export type CaptureMode = "conversation" | "job" | "feedback" | "denial";
 
 /** A change the extractor proposes, with the slot it belongs to. */
 export type Proposal = MemoryOperation & { readonly slot: MemorySlot };
@@ -83,6 +90,8 @@ export interface CaptureDeps {
   readonly existing: (slot: MemorySlot) => Promise<readonly MemoryEntry[]>;
   /** The typed core of a slot; absent means empty. */
   readonly fields?: (slot: MemorySlot) => Promise<Readonly<Record<string, MemoryFieldValue>>>;
+  /** What a person forgot by hand; a new entry that says the same thing is not kept. Absent means nothing. */
+  readonly forgotten?: (slot: MemorySlot) => Promise<readonly { readonly text: string }[]>;
 }
 
 type Placed = MemoryEntry & { readonly slot: MemorySlot };
@@ -106,7 +115,7 @@ const MAX_PROPOSALS = 6;
 /** How much of a slot the extractor sees: all of a small slot, the nearest of a large one. */
 const EXISTING_SHOWN = 60;
 
-export const slotsFor = (mode: CaptureMode): readonly MemorySlot[] => (mode === "conversation" ? ["profile", "team"] : ["craft"]);
+export const slotsFor = (mode: CaptureMode): readonly MemorySlot[] => (mode === "conversation" || mode === "feedback" ? ["profile", "team"] : ["craft"]);
 
 /** Words a person uses when they are telling you how they want things, not what to do now. */
 const CUES =
@@ -121,6 +130,24 @@ const boolean = (instructions: string, yes: string, no: string): EvaluationQuest
 });
 
 export function gateQuestions(mode: CaptureMode): Record<string, EvaluationQuestion> {
+  if (mode === "feedback") {
+    return {
+      worth: boolean(
+        "A person sent a finished job back with this note. Does the note say how they want work done in general (format, length, tone, what to include, who to involve), rather than only what to fix in this one job?",
+        "The note states a preference or rule that applies to future work.",
+        "The note only corrects this job.",
+      ),
+    };
+  }
+  if (mode === "denial") {
+    return {
+      worth: boolean(
+        "A person declined an action a Bot asked approval for. Does the decline imply a standing rule about what Bots must not do, or must ask before doing, in this workspace, rather than a one-off no for this job?",
+        "It implies a standing rule.",
+        "It was a one-off decision about this job.",
+      ),
+    };
+  }
   return {
     worth:
       mode === "conversation"
@@ -167,7 +194,7 @@ export function validationQuestions(proposals: readonly Proposal[], existing: Ex
         "It is a one-off detail.",
       );
       questions[`about${index}`] =
-        mode === "conversation"
+        mode === "conversation" || mode === "feedback"
           ? boolean(
               `Is this about the person or their team (who they are, how they like things, how they work), rather than about the assistant or a task: "${proposal.text}"`,
               "It is about the person or their team.",
@@ -258,7 +285,8 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
     if (verdict === "yes") gate = "jev";
   }
   if (gate === "closed") {
-    const open = input.mode === "conversation" ? cues(person) : input.reply.length > 400;
+    // Feedback and denials are signals in themselves; a conversation needs cue words, a transcript some substance.
+    const open = input.mode === "conversation" ? cues(person) : input.mode === "job" ? input.reply.length > 400 : true;
     if (!open) return NOTHING;
     gate = "cues";
   }
@@ -320,9 +348,18 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
     proposals = proposals.filter((proposal) => proposal.op === "add" || (proposal.op === "set" && fields[proposal.slot]?.[proposal.field] === undefined) || cues(person));
   }
 
-  // 4. Does the store already say a new entry? A person's facts and their team's rules overlap, so both slots are checked.
+  // 4. Does the store already say a new entry, or did a person forget it by hand? A person's facts and
+  //    their team's rules overlap, so both slots are checked; the same for what was forgotten.
   const adds = proposals.filter((proposal): proposal is Proposal & { op: "add" } => proposal.op === "add");
-  const pool = slots.flatMap((slot) => existing[slot] ?? []);
+  const forgotten: MemoryEntry[] = [];
+  if (deps.forgotten !== undefined) {
+    for (const slot of slots) {
+      for (const item of await deps.forgotten(slot)) {
+        forgotten.push({ id: `forgotten:${forgotten.length}`, text: item.text, kind: "fact", source: { who: "you" }, at: "", pinned: false, recalls: 0, lastRecalledAt: null });
+      }
+    }
+  }
+  const pool = [...slots.flatMap((slot) => existing[slot] ?? []), ...forgotten];
   const pairs = adds.flatMap((proposal) => nearest(pool, proposal.text, 3).map((entry) => ({ proposal, existing: entry })));
   if (ask !== null && pairs.length > 0) {
     const judgement = await ask({ pairs: pairs.map((pair) => [pair.proposal.text, pair.existing.text]) }, duplicateQuestions(pairs));
@@ -380,6 +417,23 @@ const OPERATIONS_SCHEMA = z.object({
 });
 
 const SYSTEM: Record<CaptureMode, string> = {
+  feedback: [
+    "You maintain the durable memory of an AI coordinator about the person it works for and their team. A person has sent a finished job back with a note saying what to change.",
+    "You are given what is already remembered: fields with their current values, and notes each with an id. Return the changes the note calls for, and nothing else:",
+    "- set: a field's value the note makes clear (length, tone, spelling, date or time format, who approves what, who to copy). Prefer set whenever a field fits.",
+    "- add: a preference or rule about how work should be done that will apply to future jobs, phrased generally ('Wants reports to open with the number that changed.'), not the fix for this job.",
+    "- update: an existing memory the note shows has moved on. Give the id and the full new sentence.",
+    "- retire: an existing memory the note contradicts. Give the id and the reason.",
+    "Never keep what is specific to this one job, and never anything secret.",
+    "slot 'profile' is about the person; slot 'team' is about how the team works. Return an empty list when the note only fixes this job.",
+  ].join("\n"),
+  denial: [
+    "You maintain the durable lessons an AI teammate keeps about working in the operator's workspace. A person declined an action the teammate asked approval for.",
+    "You are given what is already remembered, each line with an id. Return the changes the decline calls for, and nothing else:",
+    "- add: a standing rule about what Bots must not do, or must ask before doing, that the decline makes clear ('Never send mail to customers without a person reading it first.'). Phrase it as a rule, not as a record of this decline.",
+    "- update or retire an existing lesson only when the decline shows it wrong.",
+    "Most declines are one-off decisions about one job: return an empty list for those. Always use slot 'craft' and kind 'rule'.",
+  ].join("\n"),
   conversation: [
     "You maintain the durable memory of an AI coordinator about the person it works for and their team, from one exchange.",
     "You are given what is already remembered: fields with their current values, and notes each with an id. Return the changes the exchange calls for, and nothing else:",
@@ -446,10 +500,10 @@ export const modelExtract: Extract = async (input, existing, fields) => {
       "# Already remembered",
       renderExisting(existing, fields),
       "",
-      input.mode === "conversation" ? "# What the person said" : "# The brief",
+      input.mode === "conversation" ? "# What the person said" : input.mode === "feedback" ? "# The person's note on the finished job" : input.mode === "denial" ? "# What the person declined" : "# The brief",
       input.person.slice(0, 6_000),
       "",
-      input.mode === "conversation" ? "# What the coordinator replied" : "# What happened",
+      input.mode === "conversation" ? "# What the coordinator replied" : input.mode === "feedback" ? "# The job and the result that was sent back" : input.mode === "denial" ? "# The job the Bot was doing" : "# What happened",
       input.reply.slice(0, 6_000),
     ].join("\n"),
     maxRetries: 0,
@@ -475,6 +529,7 @@ export function defaultDeps(workspaceId: string): CaptureDeps {
     floor: memoryFloor(),
     existing: (slot) => readEntries(workspaceId, slot),
     fields: (slot) => readFields(workspaceId, slot),
+    forgotten: (slot) => readForgotten(workspaceId, slot),
   };
 }
 

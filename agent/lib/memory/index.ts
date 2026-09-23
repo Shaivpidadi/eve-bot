@@ -9,6 +9,7 @@
 export { capture, cues, defaultDeps, existingFor, memoryFloor, modelExtract, slotsFor } from "./capture";
 export type { CaptureDeps, CaptureInput, CaptureMode, CaptureResult, Existing, Extract, Fields, Judge, Proposal } from "./capture";
 export { memoryCaptureHook } from "./hook";
+export { learnFromDenial, learnFromFeedback } from "./outcomes";
 export { byWorkspace, jobOf, namespaceFor, textOf, trace, workspaceMemory } from "./provider";
 export { nearest, select, tokens } from "./rank";
 export {
@@ -27,6 +28,7 @@ export {
   pin,
   readEntries,
   readFields,
+  readForgotten,
   readMemoryDoc,
   remember,
   resolveField,

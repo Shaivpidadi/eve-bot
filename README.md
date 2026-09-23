@@ -137,7 +137,9 @@ deployment can skip versions.
   timezone, date and time formats, spelling, who approves what, where tickets
   live) are kept as fields with one current value each, so a change is an
   overwrite with history rather than a second sentence, and they always fit in
-  what HQ and the Bots recall. HQ and every Bot recall what is relevant on each
+  what HQ and the Bots recall. It learns from what you do as well as what you
+  say: a job sent back with a note, and an action you decline when a Bot asks
+  first, go through the same gate. What you forget by hand stays forgotten. HQ and every Bot recall what is relevant on each
   turn. When a preference moves on, the memory is reworded and keeps its old
   wording; when something stops being true, it is retired, not lost. Open
   **Memory** in the console to search it, pin what should always be recalled,

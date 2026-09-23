@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { capture, cues, type CaptureDeps, existingFor, type Judge, type Proposal } from "../agent/lib/memory/capture";
 import { renderCore } from "../agent/lib/memory/provider";
 import { nearest, select, tokens } from "../agent/lib/memory/rank";
-import { acceptable, applyOperations, FIELDS, forget, liveEntries, looksSecret, type MemoryEntry, pin, readEntries, readFields, remember, resolveField, restore, rewrite, setField } from "../agent/lib/memory/store";
+import { acceptable, applyOperations, FIELDS, forget, liveEntries, looksSecret, type MemoryEntry, pin, readEntries, readFields, readForgotten, remember, resolveField, restore, rewrite, setField } from "../agent/lib/memory/store";
 
 const entry = (text: string, extra: Partial<MemoryEntry> = {}): MemoryEntry => ({
   id: `mem_${text.replace(/\W/g, "").slice(0, 48)}`,
@@ -112,6 +112,15 @@ describe("memory store", () => {
     expect((await applyOperations("ws3", "profile", [{ op: "add", text: "Anything.", kind: "fact" }], { who: "auto" }, { operationId: "t2" })).replayed).toBe(true);
     expect(await restore("ws3", "profile", boston!.id)).toEqual({ ok: true });
     expect(liveEntries(await readEntries("ws3", "profile"))).toHaveLength(3);
+  });
+
+  it("does not put back what a person forgot by hand", async () => {
+    const saved = await remember("ws5", "team", [{ text: "Invoices need approval from Priya.", kind: "rule" }], { who: "auto" });
+    expect(await forget("ws5", "team", saved.added[0]!.id)).toEqual({ ok: true });
+    expect((await readForgotten("ws5", "team")).map((item) => item.text)).toEqual(["Invoices need approval from Priya."]);
+    const again = await remember("ws5", "team", [{ text: "invoices need approval from Priya", kind: "rule" }, { text: "Marco approves invoices now.", kind: "rule" }], { who: "auto" });
+    expect(again.added.map((entry) => entry.text)).toEqual(["Marco approves invoices now."]);
+    expect(again.duplicates).toBe(1);
   });
 
   it("keeps the typed core as fields: set overwrites with history, clears on empty, refuses unknown fields and secrets", async () => {
@@ -315,6 +324,41 @@ describe("capture with Jev as the gatekeeper", () => {
     expect(result.fields.map((change) => change.field)).toEqual(["timezone", "location"]);
     expect(result.retired.map((row) => row.text)).toEqual(["Their timezone is America/Chicago."]);
     expect(liveEntries(await readEntries(ws, "profile")).map((row) => row.text)).toEqual(["Lives in Austin and keeps bees."]);
+  });
+
+  it("drops a new entry that says what a person forgot, when Jev agrees it is the same thing", async () => {
+    const ws = `ws-${Math.random().toString(36).slice(2, 8)}`;
+    const judge = tableJudge({ worth: 0.95, durable: 0.95, about: 0.95, safe: 0.99, same0: 0.95 });
+    const result = await capture(input("Priya has to approve every invoice, always.", ws), {
+      judge,
+      extract: async () => [{ op: "add", text: "Priya approves every invoice.", kind: "rule", slot: "team" }],
+      floor: 0.7,
+      existing: async () => [],
+      forgotten: async (slot) => (slot === "team" ? [{ text: "Invoices need approval from Priya." }] : []),
+    });
+    expect(result.saved).toEqual([]);
+  });
+
+  it("treats feedback and denials as signals in themselves, with their own slots", async () => {
+    const { slotsFor } = await import("../agent/lib/memory/capture");
+    expect(slotsFor("feedback")).toEqual(["profile", "team"]);
+    expect(slotsFor("denial")).toEqual(["craft"]);
+    // Without Jev, a note on a sent-back job opens the gate on its own.
+    const feedback = await capture(
+      { workspaceId: `ws-${Math.random().toString(36).slice(2, 8)}`, mode: "feedback", person: "Too long. Open with the number that changed.", reply: "Job: Weekly report", source: { who: "auto" }, operationId: "fb1" },
+      deps(null, [], async () => [{ op: "add", text: "Wants reports to open with the number that changed.", kind: "preference", slot: "profile" }]),
+    );
+    expect(feedback.gate).toBe("cues");
+    expect(feedback.saved.map((row) => row.text)).toEqual(["Wants reports to open with the number that changed."]);
+    // A denial writes only to craft; a proposal for another slot is ignored.
+    const denial = await capture(
+      { workspaceId: `ws-${Math.random().toString(36).slice(2, 8)}`, mode: "denial", person: "The person declined this action: send_email", reply: "Job: Follow up", source: { who: "auto" }, operationId: "dn1" },
+      deps(null, [], async () => [
+        { op: "add", text: "Never send mail to customers without a person reading it first.", kind: "rule", slot: "craft" },
+        { op: "add", text: "Dislikes email.", kind: "fact", slot: "profile" },
+      ]),
+    );
+    expect(denial.saved.map((row) => [row.slot, row.text])).toEqual([["craft", "Never send mail to customers without a person reading it first."]]);
   });
 
   it("leaves stored entries alone unless Jev clearly agrees they changed", async () => {
