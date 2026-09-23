@@ -1,4 +1,4 @@
-import type { MemoryEntry } from "./store";
+import { confidenceOf, type MemoryEntry } from "./store";
 
 /**
  * Which memories to bring into a turn.
@@ -38,12 +38,13 @@ function rarity(entries: readonly MemoryEntry[]): Map<string, number> {
   return weights;
 }
 
+/** Shared rare words, scaled by how sure the team is of the entry: a doubtful match ranks below a sure one. */
 export function score(entry: MemoryEntry, query: ReadonlySet<string>, weights: ReadonlyMap<string, number>): number {
   const own = new Set(tokens(entry.text));
   if (own.size === 0) return 0;
   let sum = 0;
   for (const word of own) if (query.has(word)) sum += weights.get(word) ?? 1;
-  return sum / Math.sqrt(own.size);
+  return (sum / Math.sqrt(own.size)) * (0.5 + confidenceOf(entry) / 2);
 }
 
 export interface Selection {
@@ -74,9 +75,11 @@ export function select(
 
   const core: MemoryEntry[] = [];
   let spent = 0;
+  // Pinned first, then the surer, then the newer: when the budget bites, doubt goes before age.
+  const bySureness = (left: MemoryEntry, right: MemoryEntry) => Math.round(confidenceOf(right) * 5) - Math.round(confidenceOf(left) * 5);
   for (const entry of [...entries]
     .filter((entry) => entry.pinned || coreKinds.includes(entry.kind))
-    .sort((left, right) => Number(right.pinned) - Number(left.pinned) || byRecency(left, right))) {
+    .sort((left, right) => Number(right.pinned) - Number(left.pinned) || bySureness(left, right) || byRecency(left, right))) {
     if (spent + cost(entry) > maxChars * 0.8) continue;
     core.push(entry);
     spent += cost(entry);

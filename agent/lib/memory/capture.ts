@@ -2,13 +2,14 @@ import { type Experimental_EvaluationQuestion as EvaluationQuestion, generateTex
 import { z } from "zod";
 
 import { confidenceFloor, jevEnabled, judge, type Judgement, spent } from "../jev";
-import { readVerdict } from "../jev-watch";
+import { probabilityOf, readVerdict } from "../jev-watch";
 import { customEndpoint, endpointModel, modelForEffort } from "../models";
 import { recordUsage } from "../usage";
 import { nearest } from "./rank";
 import {
   acceptable,
   applyOperations,
+  confirm,
   type FieldChange,
   fieldFor,
   FIELDS,
@@ -92,6 +93,8 @@ export interface CaptureDeps {
   readonly fields?: (slot: MemorySlot) => Promise<Readonly<Record<string, MemoryFieldValue>>>;
   /** What a person forgot by hand; a new entry that says the same thing is not kept. Absent means nothing. */
   readonly forgotten?: (slot: MemorySlot) => Promise<readonly { readonly text: string }[]>;
+  /** The person said an existing entry again: it grows surer. Defaults to the store's own. */
+  readonly confirm?: (slot: MemorySlot, ids: readonly string[]) => Promise<void>;
 }
 
 type Placed = MemoryEntry & { readonly slot: MemorySlot };
@@ -103,13 +106,15 @@ export interface CaptureResult {
   readonly updated: readonly Placed[];
   readonly retired: readonly Placed[];
   readonly fields: readonly (FieldChange & { readonly slot: MemorySlot })[];
+  /** Existing entries the person said again, now surer. */
+  readonly confirmed: readonly string[];
   /** How many changes the extractor returned before any were filtered out. */
   readonly raw?: number;
   /** Why the extractor produced nothing, when it failed rather than found nothing. */
   readonly error?: string;
 }
 
-const NOTHING: CaptureResult = { gate: "closed", proposed: 0, saved: [], updated: [], retired: [], fields: [] };
+const NOTHING: CaptureResult = { gate: "closed", proposed: 0, saved: [], updated: [], retired: [], fields: [], confirmed: [] };
 const MIN_PERSON_CHARS = 12;
 const MAX_PROPOSALS = 6;
 /** How much of a slot the extractor sees: all of a small slot, the nearest of a large one. */
@@ -168,8 +173,9 @@ export function gateQuestions(mode: CaptureMode): Record<string, EvaluationQuest
 export function validationQuestions(proposals: readonly Proposal[], existing: Existing, mode: CaptureMode, fields: Fields = {}): Record<string, EvaluationQuestion> {
   const questions: Record<string, EvaluationQuestion> = {};
   const textOf = (proposal: Proposal) =>
-    proposal.op === "retire" ? (existing[proposal.slot] ?? []).find((entry) => entry.id === proposal.id)?.text ?? "" : proposal.op === "set" ? proposal.value : proposal.text;
+    proposal.op === "retire" || proposal.op === "confirm" ? (existing[proposal.slot] ?? []).find((entry) => entry.id === proposal.id)?.text ?? "" : proposal.op === "set" ? proposal.value : proposal.text;
   proposals.forEach((proposal, index) => {
+    if (proposal.op === "confirm") return;
     if (proposal.op === "set") {
       const label = fieldFor(proposal.slot, proposal.field)?.label ?? proposal.field;
       const before = fields[proposal.slot]?.[proposal.field]?.value;
@@ -307,7 +313,7 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
     proposals = returned
       .filter((proposal) => slots.includes(proposal.slot))
       .map((proposal) => {
-        if (proposal.op === "retire") return proposal;
+        if (proposal.op === "retire" || proposal.op === "confirm") return proposal;
         if (proposal.op === "set") {
           // Models name fields loosely; settle on the key before anything compares it.
           const field = resolveField(proposal.slot, proposal.field);
@@ -316,6 +322,7 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
         return { ...proposal, text: normalize(proposal.text) };
       })
       .filter((proposal) => {
+        if (proposal.op === "confirm") return (existing[proposal.slot] ?? []).some((entry) => entry.id === proposal.id);
         if (proposal.op === "set") {
           return fieldFor(proposal.slot, proposal.field) !== undefined && proposal.value !== "" && !looksSecret(proposal.value) && (fields[proposal.slot]?.[proposal.field]?.value ?? "") !== proposal.value;
         }
@@ -334,18 +341,29 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
   // 3. Is each change right: durable, on topic and safe for a new entry; a real supersession; a real retraction?
   if (ask !== null) {
     const judgement = await ask({ person: person.slice(0, 4_000), changes: proposals.map(describeProposal) }, validationQuestions(proposals, existing, input.mode, fields));
-    proposals = proposals.filter((proposal, index) => {
-      const facets = proposal.op === "add" ? ["durable", "about", "safe"] : proposal.op === "update" ? ["supersedes", "safe"] : proposal.op === "set" ? ["current", "safe"] : ["gone"];
-      // Something new (an entry, or a field with no value yet) is kept unless Jev says no; a change to what is stored needs a clear yes.
-      const fresh = proposal.op === "add" || (proposal.op === "set" && fields[proposal.slot]?.[proposal.field] === undefined);
-      return facets.every((facet) => {
-        const { verdict } = readVerdict(judgement, `${facet}${index}`, deps.floor);
-        return fresh ? verdict !== "no" : verdict === "yes";
+    const answers = (judgement?.answers ?? {}) as Record<string, unknown>;
+    proposals = proposals
+      .filter((proposal, index) => {
+        if (proposal.op === "confirm") return true;
+        const facets = proposal.op === "add" ? ["durable", "about", "safe"] : proposal.op === "update" ? ["supersedes", "safe"] : proposal.op === "set" ? ["current", "safe"] : ["gone"];
+        // Something new (an entry, or a field with no value yet) is kept unless Jev says no; a change to what is stored needs a clear yes.
+        const fresh = proposal.op === "add" || (proposal.op === "set" && fields[proposal.slot]?.[proposal.field] === undefined);
+        return facets.every((facet) => {
+          const { verdict } = readVerdict(judgement, `${facet}${index}`, deps.floor);
+          return fresh ? verdict !== "no" : verdict === "yes";
+        });
+      })
+      .map((proposal) => {
+        // How sure to be of a new or reworded entry: what Jev thought of its substance, not of its safety.
+        if (proposal.op !== "add" && proposal.op !== "update") return proposal;
+        const index = proposals.indexOf(proposal);
+        const facets = proposal.op === "add" ? ["durable", "about"] : ["supersedes"];
+        const probabilities = facets.map((facet) => probabilityOf(answers[`${facet}${index}`])).filter((value): value is number => value !== undefined);
+        return probabilities.length === 0 ? proposal : { ...proposal, confidence: probabilities.reduce((sum, value) => sum + value, 0) / probabilities.length };
       });
-    });
   } else {
     // Without Jev, only the extractor vouches for a change to what is stored; keep those to clear cases.
-    proposals = proposals.filter((proposal) => proposal.op === "add" || (proposal.op === "set" && fields[proposal.slot]?.[proposal.field] === undefined) || cues(person));
+    proposals = proposals.filter((proposal) => proposal.op === "add" || proposal.op === "confirm" || (proposal.op === "set" && fields[proposal.slot]?.[proposal.field] === undefined) || cues(person));
   }
 
   // 4. Does the store already say a new entry, or did a person forget it by hand? A person's facts and
@@ -361,10 +379,22 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
   }
   const pool = [...slots.flatMap((slot) => existing[slot] ?? []), ...forgotten];
   const pairs = adds.flatMap((proposal) => nearest(pool, proposal.text, 3).map((entry) => ({ proposal, existing: entry })));
+  const confirmed: string[] = [];
   if (ask !== null && pairs.length > 0) {
     const judgement = await ask({ pairs: pairs.map((pair) => [pair.proposal.text, pair.existing.text]) }, duplicateQuestions(pairs));
-    const duplicated = new Set(pairs.filter((_, index) => readVerdict(judgement, `same${index}`, deps.floor).verdict === "yes").map((pair) => pair.proposal));
+    const same = pairs.filter((_, index) => readVerdict(judgement, `same${index}`, deps.floor).verdict === "yes");
+    const duplicated = new Set(same.map((pair) => pair.proposal));
     proposals = proposals.filter((proposal) => !duplicated.has(proposal as Proposal & { op: "add" }));
+    // Saying a stored thing again is a confirmation of it, not noise.
+    const bySlot = new Map<MemorySlot, string[]>();
+    for (const pair of same) {
+      if (pair.existing.id.startsWith("forgotten:")) continue;
+      const slot = pair.proposal.slot;
+      bySlot.set(slot, [...(bySlot.get(slot) ?? []), pair.existing.id]);
+      confirmed.push(pair.existing.id);
+    }
+    const confirmer = deps.confirm ?? ((slot: MemorySlot, ids: readonly string[]) => confirm(input.workspaceId, slot, ids));
+    for (const [slot, ids] of bySlot) await confirmer(slot, ids).catch(() => undefined);
   }
 
   // 5. Apply, once per operation.
@@ -384,14 +414,16 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
     for (const entry of outcome.updated) updated.push({ ...entry, slot });
     for (const entry of outcome.retired) retired.push({ ...entry, slot });
     for (const change of outcome.fields) set.push({ ...change, slot });
+    confirmed.push(...outcome.confirmed);
   }
-  return { gate, proposed, raw, saved, updated, retired, fields: set };
+  return { gate, proposed, raw, saved, updated, retired, fields: set, confirmed };
 }
 
 function describeProposal(proposal: Proposal): string {
   if (proposal.op === "add") return `add: ${proposal.text}`;
   if (proposal.op === "update") return `update ${proposal.id}: ${proposal.text}`;
   if (proposal.op === "set") return `set ${proposal.field} = ${proposal.value}`;
+  if (proposal.op === "confirm") return `confirm ${proposal.id}`;
   return `retire ${proposal.id}: ${proposal.reason}`;
 }
 
@@ -403,11 +435,11 @@ const OPERATIONS_SCHEMA = z.object({
   changes: z
     .array(
       z.object({
-        op: z.enum(["set", "add", "update", "retire"]),
+        op: z.enum(["set", "add", "update", "retire", "confirm"]),
         slot: z.enum(["profile", "team", "craft"]),
         field: z.string().optional().describe("For set: the field key, exactly as listed."),
         value: z.string().optional().describe("For set: the field's new value, short."),
-        id: z.string().optional().describe("For update and retire: the id of the existing memory, exactly as listed."),
+        id: z.string().optional().describe("For update, retire and confirm: the id of the existing memory, exactly as listed."),
         text: z.string().optional().describe("For add and update: one short standalone sentence, in the third person."),
         kind: z.enum(["preference", "fact", "rule", "lesson"]).optional(),
         reason: z.string().optional().describe("For retire: what the person said that makes it no longer true."),
@@ -442,7 +474,7 @@ const SYSTEM: Record<CaptureMode, string> = {
     "- update: an existing memory whose truth moved on ('now five bullets, not three') or that this exchange makes more precise. Give the existing id and the full new sentence.",
     "- retire: an existing memory the person said is no longer true, or a note that only restates a field you are setting in this same answer (reason: 'now the <field> field'). Give the id and the reason. Never retire a note merely because it was confirmed again.",
     "Never add one-off requests, the details of a task, opinions of the assistant, or anything secret: passwords, codes, keys, tokens, card numbers.",
-    "Never add what is already remembered in other words; update or leave it.",
+    "- confirm: an existing note the person said again, in the same or other words. Give the id. Never add what is already remembered in other words; confirm it.",
     "Write each sentence short, in the third person, e.g. 'Prefers summaries as three bullets.' or 'Their company is Acme Robotics.'",
     "slot 'profile' is about the person; slot 'team' is about how the team or workspace works. Never use 'craft'.",
     "Return an empty list when nothing qualifies. Most exchanges qualify for nothing.",
@@ -515,6 +547,7 @@ export const modelExtract: Extract = async (input, existing, fields) => {
   const changes = result.output?.changes ?? [];
   return changes.flatMap((change): Proposal[] => {
     if (change.op === "set" && change.field !== undefined && change.value !== undefined) return [{ op: "set", slot: change.slot, field: change.field, value: change.value }];
+    if (change.op === "confirm" && change.id !== undefined) return [{ op: "confirm", slot: change.slot, id: change.id }];
     if (change.op === "add" && change.text !== undefined) return [{ op: "add", slot: change.slot, text: change.text, kind: change.kind ?? (change.slot === "craft" ? "lesson" : "fact") }];
     if (change.op === "update" && change.id !== undefined && change.text !== undefined) return [{ op: "update", slot: change.slot, id: change.id, text: change.text, ...(change.kind === undefined ? {} : { kind: change.kind }) }];
     if (change.op === "retire" && change.id !== undefined) return [{ op: "retire", slot: change.slot, id: change.id, reason: change.reason ?? "the person said so" }];

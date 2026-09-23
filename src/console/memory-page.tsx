@@ -19,7 +19,23 @@ interface Entry {
   readonly lastRecalledAt: string | null;
   readonly history?: readonly { readonly text: string; readonly at: string; readonly source: Entry["source"] }[];
   readonly retired?: { readonly at: string; readonly source: Entry["source"]; readonly reason: string } | null;
+  readonly confidence?: number;
+  readonly lastConfirmedAt?: string | null;
 }
+
+const FADE_AFTER_MS = 90 * 24 * 60 * 60 * 1000;
+const DEFAULT_CONFIDENCE: Readonly<Record<Entry["source"]["who"], number>> = { you: 1, hq: 0.85, bot: 0.8, auto: 0.7, import: 0.75 };
+const confidenceOf = (entry: Entry) => entry.confidence ?? DEFAULT_CONFIDENCE[entry.source.who];
+/** Not needed for ninety days: kept, but not recalled until brought back. */
+const isFaded = (entry: Entry) => {
+  if (entry.pinned || entry.retired) return false;
+  const last = Date.parse(entry.lastRecalledAt ?? entry.lastConfirmedAt ?? entry.at);
+  return Number.isFinite(last) && Date.now() - last > FADE_AFTER_MS;
+};
+const sureness = (entry: Entry) => {
+  const value = confidenceOf(entry);
+  return value >= 0.9 ? "sure" : value >= 0.7 ? "fairly sure" : "unsure";
+};
 
 interface FieldDefinition {
   readonly key: string;
@@ -183,12 +199,14 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
           <p className="usage-note memory-intro">
             Memory forms on its own. When you tell HQ how you like things, or a Bot learns how one of your systems behaves, Jev judges whether it is worth
             keeping and it lands here with a note of where it came from. When a preference moves on, the memory is reworded and keeps its old wording; when
-            something stops being true, it is retired, not lost. HQ and every Bot recall what is relevant on each turn. Pinned memories are recalled every time.
+            something stops being true, it is retired, not lost. Each memory carries how sure the team is of it, which rises when you say it again. HQ and every Bot
+            recall what is relevant on each turn; what nobody has needed for ninety days fades out of recall but stays here. Pinned memories are recalled every time.
             Nothing here is a secret: passwords, codes and keys are refused.
           </p>
 
           {view.slots.map((slot) => {
-            const shown = slot.entries.filter((entry) => !entry.retired && matches(entry.text));
+            const shown = slot.entries.filter((entry) => !entry.retired && !isFaded(entry) && matches(entry.text));
+            const faded = slot.entries.filter((entry) => !entry.retired && isFaded(entry) && matches(entry.text));
             const gone = slot.entries.filter((entry) => entry.retired && matches(entry.text));
             const draft = drafts[slot.slot] ?? "";
             return (
@@ -304,9 +322,10 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
                                   {entry.pinned ? <Icon name="pin" size={11} className="memory-pin" /> : null}
                                   {entry.text}
                                 </span>
-                                <small className="faint">
+                                <small className="faint" title={`Confidence ${Math.round(confidenceOf(entry) * 100)}%${entry.lastConfirmedAt ? `, last confirmed ${when(entry.lastConfirmedAt)}` : ""}`}>
                                   {entry.kind} · {provenance(entry)}
                                   {entry.recalls > 0 ? ` · recalled ${entry.recalls}×` : ""}
+                                  {` · ${sureness(entry)}`}
                                 </small>
                                 {entry.history && entry.history.length > 0 ? (
                                   <small className="faint memory-history" title={entry.history.map((rev) => `${when(rev.at)}: ${rev.text}`).join("\n")}>
@@ -376,6 +395,47 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
                     Remember
                   </button>
                 </form>
+                {faded.length === 0 ? null : (
+                  <details className="memory-retired">
+                    <summary className="faint">
+                      {faded.length} not needed for 90 days
+                    </summary>
+                    <ul className="memory-entries">
+                      {faded.map((entry) => (
+                        <li key={entry.id} className="faded">
+                          <div className="memory-text">
+                            <span>{entry.text}</span>
+                            <small className="faint">
+                              {entry.kind} · {provenance(entry)} · left out of recall until brought back
+                            </small>
+                          </div>
+                          <div className="memory-actions">
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={busy !== null}
+                              onClick={() =>
+                                void act(entry.id, () => api(`/bot/v1/memory/${slot.slot}/${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ revive: true }) }), "Could not bring that back.")
+                              }
+                            >
+                              Bring back
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              aria-label="Forget"
+                              title="Forget"
+                              disabled={busy !== null}
+                              onClick={() => void act(entry.id, () => api(`/bot/v1/memory/${slot.slot}/${encodeURIComponent(entry.id)}`, { method: "DELETE" }), "Could not forget that.")}
+                            >
+                              <Icon name="x" size={14} />
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
                 {gone.length === 0 ? null : (
                   <details className="memory-retired">
                     <summary className="faint">

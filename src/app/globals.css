@@ -846,7 +846,8 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .memory-retired > summary { cursor: pointer; font-size: 11.5px; padding: 4px 0; }
 .memory-retired .memory-entries { margin-top: 6px; }
 .memory-entries li.retired .memory-text > span { text-decoration: line-through; color: var(--muted); }
-.memory-entries li.retired .btn { font-size: 11.5px; padding: 3px 9px; }
+.memory-entries li.retired .btn, .memory-entries li.faded .btn { font-size: 11.5px; padding: 3px 9px; }
+.memory-entries li.faded .memory-text > span { color: var(--muted); }
 .memory-pin { color: var(--purple); margin-right: 5px; vertical-align: -1px; }
 .memory-actions { display: flex; gap: 2px; flex: none; opacity: 0.55; }
 .memory-entries li:hover .memory-actions, .memory-entries li:focus-within .memory-actions { opacity: 1; }

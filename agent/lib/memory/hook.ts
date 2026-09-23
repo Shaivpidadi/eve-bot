@@ -146,7 +146,7 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
             workspaceId,
             slot,
             "done",
-            `gate=${result.gate} proposed=${result.proposed} saved=${result.saved.length} updated=${result.updated.length} retired=${result.retired.length} fields=${result.fields.length}${result.raw === undefined ? "" : ` raw=${result.raw}`}${result.error === undefined ? "" : ` extractor failed: ${result.error}`}`,
+            `gate=${result.gate} proposed=${result.proposed} saved=${result.saved.length} updated=${result.updated.length} retired=${result.retired.length} fields=${result.fields.length} confirmed=${result.confirmed.length}${result.raw === undefined ? "" : ` raw=${result.raw}`}${result.error === undefined ? "" : ` extractor failed: ${result.error}`}`,
           );
           const changed = [...result.saved, ...result.updated, ...result.retired];
           if (changed.length + result.fields.length === 0) return;

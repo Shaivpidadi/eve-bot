@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { capture, cues, type CaptureDeps, existingFor, type Judge, type Proposal } from "../agent/lib/memory/capture";
 import { renderCore } from "../agent/lib/memory/provider";
 import { nearest, select, tokens } from "../agent/lib/memory/rank";
-import { acceptable, applyOperations, FIELDS, forget, liveEntries, looksSecret, type MemoryEntry, pin, readEntries, readFields, readForgotten, remember, resolveField, restore, rewrite, setField } from "../agent/lib/memory/store";
+import { acceptable, applyOperations, confidenceOf, confirm, FADE_AFTER_MS, FIELDS, forget, isFaded, liveEntries, looksSecret, type MemoryEntry, pin, readEntries, readFields, readForgotten, recallable, remember, resolveField, restore, revive, rewrite, setField } from "../agent/lib/memory/store";
 
 const entry = (text: string, extra: Partial<MemoryEntry> = {}): MemoryEntry => ({
   id: `mem_${text.replace(/\W/g, "").slice(0, 48)}`,
@@ -123,6 +123,48 @@ describe("memory store", () => {
     expect(again.duplicates).toBe(1);
   });
 
+  it("carries how sure the team is: by who saved it, by what Jev thought, and rising when said again", async () => {
+    const saved = await applyOperations(
+      "ws6",
+      "profile",
+      [
+        { op: "add", text: "Prefers three bullets.", kind: "preference" },
+        { op: "add", text: "Lives in Austin.", kind: "fact", confidence: 0.62 },
+      ],
+      { who: "auto" },
+    );
+    expect(saved.added.map((entry) => entry.confidence)).toEqual([0.7, 0.62]);
+    expect(confidenceOf({ source: { who: "you" } })).toBe(1);
+    expect(confidenceOf({ source: { who: "import" } })).toBe(0.75);
+    await confirm("ws6", "profile", [saved.added[1]!.id], new Date("2026-09-23T12:00:00.000Z"));
+    const after = (await readEntries("ws6", "profile")).find((entry) => entry.id === saved.added[1]!.id)!;
+    expect(after.confidence).toBe(0.72);
+    expect(after.lastConfirmedAt).toBe("2026-09-23T12:00:00.000Z");
+    // Confidence never runs past one.
+    for (let index = 0; index < 5; index += 1) await confirm("ws6", "profile", [after.id]);
+    expect((await readEntries("ws6", "profile")).find((entry) => entry.id === after.id)!.confidence).toBe(1);
+  });
+
+  it("fades what nobody needed for ninety days, keeps pinned entries, and brings one back on request", async () => {
+    const now = Date.parse("2026-09-23T12:00:00.000Z");
+    const old = new Date(now - FADE_AFTER_MS - 1000).toISOString();
+    const fresh = entry("Fresh.", { at: new Date(now - 1000).toISOString() });
+    const stale = entry("Stale.", { at: old, lastRecalledAt: old });
+    const pinned = entry("Pinned.", { at: old, pinned: true });
+    const confirmedLately = entry("Confirmed.", { at: old, lastConfirmedAt: new Date(now - 1000).toISOString() });
+    expect(isFaded(stale, now)).toBe(true);
+    expect(isFaded(fresh, now)).toBe(false);
+    expect(isFaded(pinned, now)).toBe(false);
+    expect(isFaded(confirmedLately, now)).toBe(false);
+    expect(recallable([fresh, stale, pinned, confirmedLately], now).map((row) => row.text)).toEqual(["Fresh.", "Pinned.", "Confirmed."]);
+
+    const saved = await applyOperations("ws7", "craft", [{ op: "add", text: "An old lesson.", kind: "lesson" }], { who: "auto" }, { now: new Date(old) });
+    const id = saved.added[0]!.id;
+    expect(recallable(await readEntries("ws7", "craft"), now)).toEqual([]);
+    expect(await revive("ws7", "craft", id)).toEqual({ ok: true });
+    expect(recallable(await readEntries("ws7", "craft"), Date.now()).map((row) => row.id)).toEqual([id]);
+  });
+
   it("keeps the typed core as fields: set overwrites with history, clears on empty, refuses unknown fields and secrets", async () => {
     expect(FIELDS.profile.map((field) => field.key)).toContain("timezone");
     expect(FIELDS.craft).toEqual([]);
@@ -229,7 +271,7 @@ describe("capture with Jev as the gatekeeper", () => {
   it("stops at the gate when Jev says nothing durable was said", async () => {
     let extracted = 0;
     const result = await capture(input("Please run the inbox review now."), deps(tableJudge({ worth: 0.05 }), [], async () => (extracted += 1, proposals)));
-    expect(result).toEqual({ gate: "closed", proposed: 0, saved: [], updated: [], retired: [], fields: [] });
+    expect(result).toEqual({ gate: "closed", proposed: 0, saved: [], updated: [], retired: [], fields: [], confirmed: [] });
     expect(extracted).toBe(0);
   });
 
@@ -247,11 +289,39 @@ describe("capture with Jev as the gatekeeper", () => {
     expect(replay.saved).toEqual([]);
   });
 
-  it("drops a proposal Jev calls a duplicate of something stored", async () => {
+  it("drops a proposal Jev calls a duplicate of something stored, and counts it as confirming that entry", async () => {
     const stored = [entry("Likes summaries as exactly three bullets.", { kind: "preference" })];
     const judge = tableJudge({ worth: 0.95, durable: 0.95, about: 0.95, safe: 0.95, same0: 0.95, same1: 0.05, same2: 0.05 });
-    const result = await capture(input("Three bullets for summaries please, always."), deps(judge, stored));
+    const confirmed: string[] = [];
+    const result = await capture(input("Three bullets for summaries please, always."), { ...deps(judge, stored), confirm: async (_slot, ids) => void confirmed.push(...ids) });
     expect(result.saved.map((row) => row.text)).not.toContain("Prefers summaries as three bullets.");
+    expect(result.confirmed).toEqual([stored[0]!.id]);
+    expect(confirmed).toEqual([stored[0]!.id]);
+  });
+
+  it("lets the extractor confirm a restated note outright, which needs no judge", async () => {
+    const ws = `ws-${Math.random().toString(36).slice(2, 8)}`;
+    const seeded = await applyOperations(ws, "team", [{ op: "add", text: "Weekly reports go out on Fridays.", kind: "rule" }], { who: "import" });
+    const id = seeded.added[0]!.id;
+    const result = await capture(input("As I said, the weekly report goes out every Friday.", ws), {
+      judge: null,
+      extract: async () => [{ op: "confirm", id, slot: "team" }],
+      floor: 0.7,
+      existing: (slot) => readEntries(ws, slot),
+    });
+    expect(result.confirmed).toEqual([id]);
+    const after = (await readEntries(ws, "team"))[0]!;
+    expect(after.confidence).toBe(0.85);
+    expect(after.lastConfirmedAt).not.toBeNull();
+  });
+
+  it("sets a new entry's confidence from what Jev thought of it", async () => {
+    const judge = tableJudge({ worth: 0.95, durable0: 0.9, about0: 0.8, safe0: 0.99, durable1: 0.05, about1: 0.9, safe1: 0.95, durable2: 0.7, about2: 0.72, safe2: 0.95 });
+    const result = await capture(input("I prefer every summary as three bullets, and invoices need Priya's approval."), deps(judge));
+    expect(result.saved.map((row) => row.confidence)).toEqual([0.85, 0.71]);
+    // Without Jev, the source decides.
+    const plain = await capture(input("From now on I prefer summaries as three bullets."), deps(null));
+    expect(plain.saved.every((row) => row.confidence === 0.7)).toBe(true);
   });
 
   it("rewords an entry when the person's preference moved on, keeping the old wording, and retires what they say is gone", async () => {

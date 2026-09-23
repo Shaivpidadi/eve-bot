@@ -139,7 +139,10 @@ deployment can skip versions.
   overwrite with history rather than a second sentence, and they always fit in
   what HQ and the Bots recall. It learns from what you do as well as what you
   say: a job sent back with a note, and an action you decline when a Bot asks
-  first, go through the same gate. What you forget by hand stays forgotten. HQ and every Bot recall what is relevant on each
+  first, go through the same gate. What you forget by hand stays forgotten.
+  Each memory carries how sure the team is of it, from who saved it and what
+  Jev made of it, rising when you say it again; what nobody has needed for
+  ninety days fades out of recall but stays on the page. HQ and every Bot recall what is relevant on each
   turn. When a preference moves on, the memory is reworded and keeps its old
   wording; when something stops being true, it is retired, not lost. Open
   **Memory** in the console to search it, pin what should always be recalled,

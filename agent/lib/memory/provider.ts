@@ -8,7 +8,7 @@ import { getBot } from "../bots";
 import { getJob } from "../jobs";
 import { attribute, operator } from "../session";
 import { nearest, select } from "./rank";
-import { applyOperations, FIELDS, forget, isMemoryKind, liveEntries, type MemoryEntry, type MemoryFieldValue, type MemorySlot, type MemorySource, noteRecalled, readFields, readEntries, remember, SLOTS } from "./store";
+import { applyOperations, FIELDS, forget, isMemoryKind, liveEntries, type MemoryEntry, type MemoryFieldValue, type MemorySlot, type MemorySource, noteRecalled, readFields, readEntries, recallable, remember, SLOTS } from "./store";
 
 /**
  * eve's memory slots, backed by the workspace's own store.
@@ -110,7 +110,7 @@ export interface WorkspaceMemoryOptions {
 export function workspaceMemory(slot: MemorySlot, options: WorkspaceMemoryOptions) {
   async function recall(ctx: MemoryTurnStartedContext | (Omit<MemoryTurnStartedContext, "turn"> & { readonly turn: MemoryTurnStartedContext["turn"] | null })) {
     const workspaceId = workspaceOf(ctx);
-    const [entries, fields] = await Promise.all([readEntries(workspaceId, slot).then(liveEntries), readFields(workspaceId, slot)]);
+    const [entries, fields] = await Promise.all([readEntries(workspaceId, slot).then((all) => recallable(all)), readFields(workspaceId, slot)]);
     const query = [textOf(ctx.turn?.input ?? [], ["user"]), textOf(lastOfRole(ctx.messages, "user", MAX_QUERY_MESSAGES), ["user"])].join("\n");
     // Lessons grow by the hundred and only matter when the job touches the same system: rank them. The rest is small and always applies.
     const { core, relevant } = select(entries, query, slot === "craft" ? { coreKinds: [] } : {});
