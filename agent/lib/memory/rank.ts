@@ -16,12 +16,16 @@ const STOP = new Set(
   ),
 );
 
+/** Plain plurals fold into their singular, so "invoices" finds "invoice"; addresses are left whole. */
+const singular = (word: string) => (word.length > 4 && /[^suiy@]s$/.test(word) && !word.includes("@") ? word.slice(0, -1) : word);
+
 export function tokens(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[^\p{L}\p{N}@.]+/u)
     .map((word) => word.replace(/^[.]+|[.]+$/g, ""))
-    .filter((word) => word.length > 2 && !STOP.has(word));
+    .filter((word) => word.length > 2 && !STOP.has(word))
+    .map(singular);
 }
 
 /** How rare each word is across the slot, so "invoice" counts for more than "always". */

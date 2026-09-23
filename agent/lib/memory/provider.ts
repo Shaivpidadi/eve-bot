@@ -8,7 +8,7 @@ import { getBot } from "../bots";
 import { getJob } from "../jobs";
 import { attribute, operator } from "../session";
 import { nearest, select } from "./rank";
-import { forget, isMemoryKind, type MemoryEntry, type MemorySlot, type MemorySource, noteRecalled, readEntries, remember, SLOTS } from "./store";
+import { applyOperations, forget, isMemoryKind, liveEntries, type MemoryEntry, type MemorySlot, type MemorySource, noteRecalled, readEntries, remember, SLOTS } from "./store";
 
 /**
  * eve's memory slots, backed by the workspace's own store.
@@ -108,7 +108,7 @@ export interface WorkspaceMemoryOptions {
 export function workspaceMemory(slot: MemorySlot, options: WorkspaceMemoryOptions) {
   async function recall(ctx: MemoryTurnStartedContext | (Omit<MemoryTurnStartedContext, "turn"> & { readonly turn: MemoryTurnStartedContext["turn"] | null })) {
     const workspaceId = workspaceOf(ctx);
-    const entries = await readEntries(workspaceId, slot);
+    const entries = liveEntries(await readEntries(workspaceId, slot));
     const query = [textOf(ctx.turn?.input ?? [], ["user"]), textOf(lastOfRole(ctx.messages, "user", MAX_QUERY_MESSAGES), ["user"])].join("\n");
     // Lessons grow by the hundred and only matter when the job touches the same system: rank them. The rest is small and always applies.
     const { core, relevant } = select(entries, query, slot === "craft" ? { coreKinds: [] } : {});
@@ -151,8 +151,21 @@ export function workspaceMemory(slot: MemorySlot, options: WorkspaceMemoryOption
             return { saved: false as const, reason: "That cannot be remembered: it is empty, too long, or looks like a secret." };
           },
         }),
+        update: defineTool({
+          description: "Reword one memory by its id when the person's preference or situation moved on ('five bullets now, not three'). The old wording is kept in its history. Prefer this over forget-and-remember.",
+          inputSchema: z.object({
+            id: z.string(),
+            text: z.string().min(3).max(500).describe("The full new sentence, in the third person."),
+          }),
+          label: { start: ({ text }) => `Update memory: ${text.slice(0, 60)}` },
+          async execute({ id, text }) {
+            const outcome = await applyOperations(workspaceId, slot, [{ op: "update", id, text }], await source());
+            const entry = outcome.updated[0];
+            return entry !== undefined ? { updated: true as const, id: entry.id, text: entry.text } : { updated: false as const, reason: "No such memory, or nothing changed." };
+          },
+        }),
         forget: defineTool({
-          description: "Forget one memory by its id, when the person says it is wrong or no longer true.",
+          description: "Forget one memory by its id, when the person says it was never true or must not be kept. For something that used to be true and changed, use update instead.",
           inputSchema: z.object({ id: z.string() }),
           label: { start: ({ id }) => `Forget ${id}` },
           async execute({ id }) {
@@ -165,7 +178,7 @@ export function workspaceMemory(slot: MemorySlot, options: WorkspaceMemoryOption
           inputSchema: z.object({ query: z.string().min(2).max(200) }),
           label: { start: ({ query }) => `Search memory: ${query.slice(0, 40)}` },
           async execute({ query }) {
-            const entries = await readEntries(workspaceId, slot);
+            const entries = liveEntries(await readEntries(workspaceId, slot));
             return { matches: nearest(entries, query, 10).map((entry) => ({ id: entry.id, text: entry.text, kind: entry.kind, savedAt: entry.at })) };
           },
         }),

@@ -17,6 +17,8 @@ interface Entry {
   readonly pinned: boolean;
   readonly recalls: number;
   readonly lastRecalledAt: string | null;
+  readonly history?: readonly { readonly text: string; readonly at: string; readonly source: Entry["source"] }[];
+  readonly retired?: { readonly at: string; readonly source: Entry["source"]; readonly reason: string } | null;
 }
 
 interface SlotView {
@@ -164,12 +166,14 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
         <div className="usage-body">
           <p className="usage-note memory-intro">
             Memory forms on its own. When you tell HQ how you like things, or a Bot learns how one of your systems behaves, Jev judges whether it is worth
-            keeping and it lands here with a note of where it came from. HQ and every Bot recall what is relevant on each turn. Pinned memories are recalled
-            every time. Nothing here is a secret: passwords, codes and keys are refused.
+            keeping and it lands here with a note of where it came from. When a preference moves on, the memory is reworded and keeps its old wording; when
+            something stops being true, it is retired, not lost. HQ and every Bot recall what is relevant on each turn. Pinned memories are recalled every time.
+            Nothing here is a secret: passwords, codes and keys are refused.
           </p>
 
           {view.slots.map((slot) => {
-            const shown = slot.entries.filter((entry) => matches(entry.text));
+            const shown = slot.entries.filter((entry) => !entry.retired && matches(entry.text));
+            const gone = slot.entries.filter((entry) => entry.retired && matches(entry.text));
             const draft = drafts[slot.slot] ?? "";
             return (
               <section key={slot.slot} className="usage-section memory-slot">
@@ -177,12 +181,12 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
                   {slot.label}
                   <small className="faint">
                     {" · "}
-                    {slot.entries.length} of {slot.maxEntries}
+                    {slot.entries.filter((entry) => !entry.retired).length} of {slot.maxEntries}
                   </small>
                 </h2>
                 <p className="faint">{slot.detail}</p>
                 {shown.length === 0 ? (
-                  <p className="faint">{slot.entries.length === 0 ? "Nothing remembered yet." : "Nothing matches your search."}</p>
+                  <p className="faint">{slot.entries.filter((entry) => !entry.retired).length === 0 ? "Nothing remembered yet." : "Nothing matches your search."}</p>
                 ) : (
                   <ul className="memory-entries">
                     {[...shown]
@@ -227,6 +231,11 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
                                   {entry.kind} · {provenance(entry)}
                                   {entry.recalls > 0 ? ` · recalled ${entry.recalls}×` : ""}
                                 </small>
+                                {entry.history && entry.history.length > 0 ? (
+                                  <small className="faint memory-history" title={entry.history.map((rev) => `${when(rev.at)}: ${rev.text}`).join("\n")}>
+                                    Replaced “{entry.history[0]!.text}”{entry.history.length > 1 ? ` and ${entry.history.length - 1} earlier` : ""}
+                                  </small>
+                                ) : null}
                               </div>
                               <div className="memory-actions">
                                 <button
@@ -290,6 +299,47 @@ export function MemoryPage({ onClose }: { onClose: () => void }) {
                     Remember
                   </button>
                 </form>
+                {gone.length === 0 ? null : (
+                  <details className="memory-retired">
+                    <summary className="faint">
+                      {gone.length} no longer true
+                    </summary>
+                    <ul className="memory-entries">
+                      {gone.map((entry) => (
+                        <li key={entry.id} className="retired">
+                          <div className="memory-text">
+                            <span>{entry.text}</span>
+                            <small className="faint">
+                              Retired {when(entry.retired!.at)} · {entry.retired!.reason}
+                            </small>
+                          </div>
+                          <div className="memory-actions">
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={busy !== null}
+                              onClick={() =>
+                                void act(entry.id, () => api(`/bot/v1/memory/${slot.slot}/${encodeURIComponent(entry.id)}`, { method: "PATCH", body: JSON.stringify({ restore: true }) }), "Could not bring that back.")
+                              }
+                            >
+                              Still true
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn"
+                              aria-label="Forget for good"
+                              title="Forget for good"
+                              disabled={busy !== null}
+                              onClick={() => void act(entry.id, () => api(`/bot/v1/memory/${slot.slot}/${encodeURIComponent(entry.id)}`, { method: "DELETE" }), "Could not forget that.")}
+                            >
+                              <Icon name="x" size={14} />
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </section>
             );
           })}

@@ -13,7 +13,7 @@ import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScree
 import { cancelJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
-import { forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, remember, rewrite as rewriteMemory, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
+import { forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, remember, restore as restoreMemory, rewrite as rewriteMemory, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
 import { CATALOG } from "../lib/catalog";
 import { addConnector, getConnector, listConnectors, publicConnector, recheckConnector, removeConnector, replaceKey, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
@@ -707,6 +707,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       }
       if (typeof body?.pinned === "boolean") {
         const outcome = await pinMemory(gate.access.workspaceId, slot, id, body.pinned);
+        if (!outcome.ok) return json({ error: outcome.error }, outcome.status);
+      }
+      if (body?.restore === true) {
+        const outcome = await restoreMemory(gate.access.workspaceId, slot, id);
         if (!outcome.ok) return json({ error: outcome.error }, outcome.status);
       }
       return json({ changed: true });

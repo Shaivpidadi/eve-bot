@@ -109,15 +109,26 @@ export function memoryCaptureHook(mode: CaptureMode): HookDefinition {
             { workspaceId, mode, person, reply, source, operationId: `${ctx.session.id}:${event.data.turnId}` },
             defaultDeps(workspaceId),
           );
-          await trace(workspaceId, slot, "done", `gate=${result.gate} proposed=${result.proposed} saved=${result.saved.length}`);
-          if (result.saved.length === 0) return;
+          await trace(
+            workspaceId,
+            slot,
+            "done",
+            `gate=${result.gate} proposed=${result.proposed} saved=${result.saved.length} updated=${result.updated.length} retired=${result.retired.length}`,
+          );
+          const changed = [...result.saved, ...result.updated, ...result.retired];
+          if (changed.length === 0) return;
+          const parts = [
+            result.saved.length === 0 ? null : `Remembered: ${result.saved.map((entry) => entry.text).join(" · ")}`,
+            result.updated.length === 0 ? null : `Updated: ${result.updated.map((entry) => entry.text).join(" · ")}`,
+            result.retired.length === 0 ? null : `No longer true: ${result.retired.map((entry) => entry.text).join(" · ")}`,
+          ].filter((part): part is string => part !== null);
           await record({
             workspaceId,
             kind: "memory.saved",
             botId: job?.botId ?? null,
             jobId: job?.jobId ?? null,
-            text: `Remembered: ${result.saved.map((entry) => entry.text).join(" · ")}`,
-            data: { slots: [...new Set(result.saved.map((entry) => entry.slot))], ids: result.saved.map((entry) => entry.id), gate: result.gate },
+            text: parts.join(" — "),
+            data: { slots: [...new Set(changed.map((entry) => entry.slot))], ids: changed.map((entry) => entry.id), gate: result.gate },
           });
         } catch (error) {
           await trace(workspaceId, slot, "failed", error instanceof Error ? `${error.name}: ${error.message}` : String(error));

@@ -832,6 +832,12 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .memory-entries li.pinned { background: color-mix(in srgb, var(--purple) 6%, var(--card)); }
 .memory-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
 .memory-text small { font-size: 11.5px; }
+.memory-history { font-style: italic; }
+.memory-retired { margin-top: 4px; }
+.memory-retired > summary { cursor: pointer; font-size: 11.5px; padding: 4px 0; }
+.memory-retired .memory-entries { margin-top: 6px; }
+.memory-entries li.retired .memory-text > span { text-decoration: line-through; color: var(--muted); }
+.memory-entries li.retired .btn { font-size: 11.5px; padding: 3px 9px; }
 .memory-pin { color: var(--purple); margin-right: 5px; vertical-align: -1px; }
 .memory-actions { display: flex; gap: 2px; flex: none; opacity: 0.55; }
 .memory-entries li:hover .memory-actions, .memory-entries li:focus-within .memory-actions { opacity: 1; }

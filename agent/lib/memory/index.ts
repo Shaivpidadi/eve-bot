@@ -6,16 +6,18 @@
  * - `capture.ts`: remembering unprompted, with Jev as the gatekeeper.
  * - `provider.ts`: the eve memory provider that ties them together.
  */
-export { capture, cues, defaultDeps, memoryFloor, modelExtract } from "./capture";
-export type { CaptureDeps, CaptureInput, CaptureMode, CaptureResult, Extract, Judge, Proposal } from "./capture";
+export { capture, cues, defaultDeps, existingFor, memoryFloor, modelExtract, slotsFor } from "./capture";
+export type { CaptureDeps, CaptureInput, CaptureMode, CaptureResult, Existing, Extract, Judge, Proposal } from "./capture";
 export { memoryCaptureHook } from "./hook";
 export { byWorkspace, jobOf, namespaceFor, textOf, trace, workspaceMemory } from "./provider";
 export { nearest, select, tokens } from "./rank";
 export {
   acceptable,
+  applyOperations,
   forget,
   isMemoryKind,
   isMemorySlot,
+  liveEntries,
   looksSecret,
   MEMORY_SLOTS,
   normalize,
@@ -24,7 +26,8 @@ export {
   readEntries,
   readMemoryDoc,
   remember,
+  restore,
   rewrite,
   SLOTS,
 } from "./store";
-export type { MemoryCandidate, MemoryDoc, MemoryEntry, MemoryKind, MemorySlot, MemorySource, RememberOutcome } from "./store";
+export type { ApplyOutcome, MemoryCandidate, MemoryDoc, MemoryEntry, MemoryKind, MemoryOperation, MemoryRevision, MemorySlot, MemorySource, RememberOutcome } from "./store";

@@ -680,7 +680,7 @@ export function buildTimeline(
       const remembered = event.kind === "memory.saved";
       const cut = event.text.indexOf(": ");
       if (remembered) {
-        out.push({ kind: "notice", key: event.id, at: event.at, icon: "brain", label: "Remembered", detail: event.text.slice(cut + 2) });
+        out.push({ kind: "notice", key: event.id, at: event.at, icon: "brain", label: "Memory", detail: event.text });
         continue;
       }
       out.push({

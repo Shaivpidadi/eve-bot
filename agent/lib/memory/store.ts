@@ -27,6 +27,13 @@ export interface MemorySource {
   readonly jobId?: string | null;
 }
 
+/** An earlier wording this entry replaced, kept so memory correcting itself stays visible. */
+export interface MemoryRevision {
+  readonly text: string;
+  readonly at: string;
+  readonly source: MemorySource;
+}
+
 export interface MemoryEntry {
   readonly id: string;
   readonly text: string;
@@ -37,6 +44,25 @@ export interface MemoryEntry {
   readonly pinned: boolean;
   readonly recalls: number;
   readonly lastRecalledAt: string | null;
+  /** What this entry used to say, newest first. Absent when it was never changed. */
+  readonly history?: readonly MemoryRevision[];
+  /** Set when the entry was found to be no longer true. Retired entries are kept, shown, and not recalled. */
+  readonly retired?: { readonly at: string; readonly source: MemorySource; readonly reason: string } | null;
+}
+
+/** One change to a slot, as the extractor proposes it and the store applies it. */
+export type MemoryOperation =
+  | { readonly op: "add"; readonly text: string; readonly kind: MemoryKind }
+  | { readonly op: "update"; readonly id: string; readonly text: string; readonly kind?: MemoryKind }
+  | { readonly op: "retire"; readonly id: string; readonly reason: string };
+
+export interface ApplyOutcome {
+  readonly added: readonly MemoryEntry[];
+  readonly updated: readonly MemoryEntry[];
+  readonly retired: readonly MemoryEntry[];
+  readonly duplicates: number;
+  readonly refused: number;
+  readonly replayed: boolean;
 }
 
 export interface MemoryDoc {
@@ -161,46 +187,99 @@ export async function remember(
   source: MemorySource,
   options: { readonly operationId?: string; readonly pinned?: boolean; readonly now?: Date } = {},
 ): Promise<RememberOutcome> {
+  const outcome = await applyOperations(
+    workspaceId,
+    slot,
+    candidates.map((candidate) => ({ op: "add" as const, text: candidate.text, kind: candidate.kind })),
+    source,
+    options,
+  );
+  const added = options.pinned === true && outcome.added.length > 0 ? await pinAll(workspaceId, slot, outcome.added) : outcome.added;
+  return { added, duplicates: outcome.duplicates, refused: outcome.refused, replayed: outcome.replayed };
+}
+
+async function pinAll(workspaceId: string, slot: MemorySlot, entries: readonly MemoryEntry[]): Promise<readonly MemoryEntry[]> {
+  const ids = new Set(entries.map((entry) => entry.id));
+  await updateDoc<MemoryDoc>(key(workspaceId, slot), (current) =>
+    current === null ? null : { ...current, entries: current.entries.map((entry) => (ids.has(entry.id) ? { ...entry, pinned: true } : entry)) },
+  );
+  return entries.map((entry) => ({ ...entry, pinned: true }));
+}
+
+/**
+ * Applies a set of operations in one write: new entries, entries reworded
+ * (the old wording goes into the entry's history), and entries retired as no
+ * longer true. Word-for-word duplicates of a live entry are skipped; an
+ * operation on an id that is gone is skipped; a repeated `operationId`
+ * writes nothing.
+ */
+export async function applyOperations(
+  workspaceId: string,
+  slot: MemorySlot,
+  operations: readonly MemoryOperation[],
+  source: MemorySource,
+  options: { readonly operationId?: string; readonly now?: Date } = {},
+): Promise<ApplyOutcome> {
   const at = (options.now ?? new Date()).toISOString();
-  let outcome: RememberOutcome = { added: [], duplicates: 0, refused: 0, replayed: false };
+  let outcome: ApplyOutcome = { added: [], updated: [], retired: [], duplicates: 0, refused: 0, replayed: false };
   await updateDoc<MemoryDoc>(key(workspaceId, slot), (current) => {
     const doc = current ?? EMPTY;
     if (options.operationId !== undefined && doc.seen.includes(options.operationId)) {
-      outcome = { added: [], duplicates: 0, refused: 0, replayed: true };
+      outcome = { ...outcome, replayed: true };
       return null;
     }
-    const known = new Set(doc.entries.map((entry) => comparable(entry.text)));
+    const entries = [...doc.entries];
+    const live = () => entries.filter((entry) => !entry.retired);
+    const known = () => new Set(live().map((entry) => comparable(entry.text)));
     const added: MemoryEntry[] = [];
+    const updated: MemoryEntry[] = [];
+    const retired: MemoryEntry[] = [];
     let duplicates = 0;
     let refused = 0;
-    for (const candidate of candidates) {
-      const checked = acceptable(candidate);
-      if (!checked.ok) continue;
-      const seenAs = comparable(checked.text);
-      if (known.has(seenAs)) {
-        duplicates += 1;
+
+    for (const operation of operations) {
+      if (operation.op === "add") {
+        const checked = acceptable(operation);
+        if (!checked.ok) continue;
+        if (known().has(comparable(checked.text))) {
+          duplicates += 1;
+          continue;
+        }
+        if (live().length >= SLOTS[slot].maxEntries) {
+          refused += 1;
+          continue;
+        }
+        const entry: MemoryEntry = { id: newId("mem"), text: checked.text, kind: operation.kind, source, at, pinned: false, recalls: 0, lastRecalledAt: null };
+        entries.push(entry);
+        added.push(entry);
         continue;
       }
-      if (doc.entries.length + added.length >= SLOTS[slot].maxEntries) {
-        refused += 1;
-        continue;
+      const index = entries.findIndex((entry) => entry.id === operation.id && !entry.retired);
+      const before = entries[index];
+      if (before === undefined) continue;
+      if (operation.op === "update") {
+        const checked = acceptable({ text: operation.text, kind: operation.kind ?? before.kind });
+        if (!checked.ok || comparable(checked.text) === comparable(before.text)) continue;
+        const next: MemoryEntry = {
+          ...before,
+          text: checked.text,
+          kind: operation.kind ?? before.kind,
+          source,
+          at,
+          history: [{ text: before.text, at: before.at, source: before.source }, ...(before.history ?? [])].slice(0, 10),
+        };
+        entries[index] = next;
+        updated.push(next);
+      } else {
+        const next: MemoryEntry = { ...before, retired: { at, source, reason: normalize(operation.reason).slice(0, 300) } };
+        entries[index] = next;
+        retired.push(next);
       }
-      known.add(seenAs);
-      added.push({
-        id: newId("mem"),
-        text: checked.text,
-        kind: candidate.kind,
-        source,
-        at,
-        pinned: options.pinned ?? false,
-        recalls: 0,
-        lastRecalledAt: null,
-      });
     }
-    outcome = { added, duplicates, refused, replayed: false };
+    outcome = { added, updated, retired, duplicates, refused, replayed: false };
     const seen = options.operationId === undefined ? doc.seen : [...doc.seen, options.operationId].slice(-SEEN_KEPT);
-    if (added.length === 0 && seen === doc.seen) return null;
-    return { entries: [...doc.entries, ...added], seen, updatedAt: at };
+    if (added.length + updated.length + retired.length === 0 && seen === doc.seen) return null;
+    return { ...doc, entries, seen, updatedAt: at };
   });
   return outcome;
 }
@@ -235,6 +314,14 @@ async function editEntry(
   });
   return outcome;
 }
+
+/** Brings a retired entry back, when the person says it is still true. */
+export function restore(workspaceId: string, slot: MemorySlot, id: string): Promise<EditOutcome> {
+  return editEntry(workspaceId, slot, id, (entry) => ({ ...entry, retired: null, at: new Date().toISOString() }));
+}
+
+/** The entries a turn may recall: not retired. */
+export const liveEntries = (entries: readonly MemoryEntry[]): readonly MemoryEntry[] => entries.filter((entry) => !entry.retired);
 
 export function forget(workspaceId: string, slot: MemorySlot, id: string): Promise<EditOutcome> {
   return editEntry(workspaceId, slot, id, () => null);

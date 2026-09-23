@@ -134,8 +134,11 @@ deployment can skip versions.
   after each job, Jev judges whether anything said is worth keeping, a quick
   model phrases it, and it lands in one of three shared slots: about you, your
   team, how to do your work. HQ and every Bot recall what is relevant on each
-  turn. Open **Memory** in the console to search it, pin what should always be
-  recalled, correct it, or forget it. Each Bot also keeps a playbook.
+  turn. When a preference moves on, the memory is reworded and keeps its old
+  wording; when something stops being true, it is retired, not lost. Open
+  **Memory** in the console to search it, pin what should always be recalled,
+  correct it, bring a retired memory back, or forget it. Each Bot also keeps a
+  playbook.
 - **Connectors.** Add GitHub or a documentation source by name, or any MCP
   server by address, once, and every Bot can use it. Each connector has its
   own page: its account and key, every tool with a switch and a read-or-change
@@ -215,6 +218,7 @@ of it; these are the ones that matter.
 | `BOT_MODEL_PRICES` | `model=in/out` USD per million tokens, so spend caps hold off Gateway; OpenRouter is read automatically |
 | `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`) |
 | `BOT_MEMORY_FLOOR` | how sure Jev must be before something is remembered (`0`–`1`; defaults to `BOT_JEV_CONFIDENCE`) |
+| `BOT_MEMORY_MODEL` | the model that reads exchanges for memories (`anthropic/claude-haiku-4-5` on Gateway; the quick model on a custom endpoint) |
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console passwords, each bound to a workspace |

@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { capture, cues, type CaptureDeps, type Judge, type Proposal } from "../agent/lib/memory/capture";
+import { capture, cues, type CaptureDeps, existingFor, type Judge, type Proposal } from "../agent/lib/memory/capture";
 import { nearest, select, tokens } from "../agent/lib/memory/rank";
-import { acceptable, forget, looksSecret, type MemoryEntry, pin, readEntries, remember, rewrite } from "../agent/lib/memory/store";
+import { acceptable, applyOperations, forget, liveEntries, looksSecret, type MemoryEntry, pin, readEntries, remember, restore, rewrite } from "../agent/lib/memory/store";
 
 const entry = (text: string, extra: Partial<MemoryEntry> = {}): MemoryEntry => ({
-  id: `mem_${text.length}_${text.slice(0, 4).replace(/\W/g, "")}`,
+  id: `mem_${text.replace(/\W/g, "").slice(0, 48)}`,
   text,
   kind: "fact",
   source: { who: "auto" },
@@ -76,6 +76,42 @@ describe("memory store", () => {
     expect(await forget("ws2", "team", id)).toEqual({ ok: true });
     expect(await readEntries("ws2", "team")).toHaveLength(0);
   });
+
+  it("applies adds, rewordings with history, and retirements in one write, and can bring a retired entry back", async () => {
+    const first = await applyOperations("ws3", "profile", [{ op: "add", text: "Prefers summaries as three bullets.", kind: "preference" }, { op: "add", text: "Lives in Boston.", kind: "fact" }], { who: "auto" }, { operationId: "t1" });
+    const [bullets, boston] = first.added;
+    expect(first.added).toHaveLength(2);
+
+    const second = await applyOperations(
+      "ws3",
+      "profile",
+      [
+        { op: "update", id: bullets!.id, text: "Prefers summaries as five bullets." },
+        { op: "retire", id: boston!.id, reason: "They said they moved to Austin." },
+        { op: "add", text: "Lives in Austin.", kind: "fact" },
+        { op: "update", id: "mem_missing", text: "Nothing." },
+        { op: "add", text: "prefers summaries as five bullets", kind: "preference" },
+      ],
+      { who: "auto", room: "desk" },
+      { operationId: "t2" },
+    );
+    expect(second.updated.map((entry) => entry.text)).toEqual(["Prefers summaries as five bullets."]);
+    expect(second.updated[0]?.history?.[0]?.text).toBe("Prefers summaries as three bullets.");
+    expect(second.retired.map((entry) => entry.text)).toEqual(["Lives in Boston."]);
+    expect(second.added.map((entry) => entry.text)).toEqual(["Lives in Austin."]);
+    // The duplicate of the just-reworded entry is caught against the new wording.
+    expect(second.duplicates).toBe(1);
+
+    const all = await readEntries("ws3", "profile");
+    expect(all).toHaveLength(3);
+    expect(liveEntries(all).map((entry) => entry.text).sort()).toEqual(["Lives in Austin.", "Prefers summaries as five bullets."]);
+    expect(all.find((entry) => entry.id === boston!.id)?.retired?.reason).toBe("They said they moved to Austin.");
+
+    // A replay writes nothing; a restore brings the retired entry back to life.
+    expect((await applyOperations("ws3", "profile", [{ op: "add", text: "Anything.", kind: "fact" }], { who: "auto" }, { operationId: "t2" })).replayed).toBe(true);
+    expect(await restore("ws3", "profile", boston!.id)).toEqual({ ok: true });
+    expect(liveEntries(await readEntries("ws3", "profile"))).toHaveLength(3);
+  });
 });
 
 describe("recall ranking", () => {
@@ -88,7 +124,7 @@ describe("recall ranking", () => {
   ];
 
   it("tokenises without stop words and keeps addresses whole", () => {
-    expect(tokens("Always cc finance@example.com on the invoice")).toEqual(["always", "finance@example.com", "invoice"]);
+    expect(tokens("Always cc finance@example.com on the invoices")).toEqual(["always", "finance@example.com", "invoice"]);
   });
 
   it("brings every preference, rule and fact whatever the message says, and ranks the rest", () => {
@@ -131,13 +167,13 @@ describe("capture with Jev as the gatekeeper", () => {
   });
 
   const proposals: Proposal[] = [
-    { text: "Prefers summaries as three bullets.", kind: "preference", slot: "profile" },
-    { text: "Asked for the Q3 report today.", kind: "fact", slot: "profile" },
-    { text: "Invoices need approval from Priya.", kind: "rule", slot: "team" },
+    { op: "add", text: "Prefers summaries as three bullets.", kind: "preference", slot: "profile" },
+    { op: "add", text: "Asked for the Q3 report today.", kind: "fact", slot: "profile" },
+    { op: "add", text: "Invoices need approval from Priya.", kind: "rule", slot: "team" },
   ];
-  const deps = (judge: Judge | null, existing: readonly MemoryEntry[] = []): CaptureDeps => ({
+  const deps = (judge: Judge | null, existing: readonly MemoryEntry[] = [], extract?: CaptureDeps["extract"]): CaptureDeps => ({
     judge,
-    extract: async () => proposals,
+    extract: extract ?? (async () => proposals),
     floor: 0.7,
     existing: async () => existing,
   });
@@ -152,8 +188,8 @@ describe("capture with Jev as the gatekeeper", () => {
 
   it("stops at the gate when Jev says nothing durable was said", async () => {
     let extracted = 0;
-    const result = await capture(input("Please run the inbox review now."), { ...deps(tableJudge({ worth: 0.05 })), extract: async () => (extracted += 1, proposals) });
-    expect(result).toEqual({ gate: "closed", proposed: 0, saved: [] });
+    const result = await capture(input("Please run the inbox review now."), deps(tableJudge({ worth: 0.05 }), [], async () => (extracted += 1, proposals)));
+    expect(result).toEqual({ gate: "closed", proposed: 0, saved: [], updated: [], retired: [] });
     expect(extracted).toBe(0);
   });
 
@@ -178,6 +214,40 @@ describe("capture with Jev as the gatekeeper", () => {
     expect(result.saved.map((row) => row.text)).not.toContain("Prefers summaries as three bullets.");
   });
 
+  it("rewords an entry when the person's preference moved on, keeping the old wording, and retires what they say is gone", async () => {
+    const ws = `ws-${Math.random().toString(36).slice(2, 8)}`;
+    const seeded = await applyOperations(ws, "profile", [{ op: "add", text: "Prefers summaries as three bullets.", kind: "preference" }, { op: "add", text: "Lives in Boston.", kind: "fact" }], { who: "you" });
+    const [bullets, boston] = seeded.added;
+    const changes: Proposal[] = [
+      { op: "update", id: bullets!.id, text: "Prefers summaries as five bullets.", slot: "profile" },
+      { op: "retire", id: boston!.id, reason: "They moved to Austin.", slot: "profile" },
+      { op: "add", text: "Lives in Austin.", kind: "fact", slot: "profile" },
+    ];
+    const judge = tableJudge({ worth: 0.95, supersedes0: 0.92, safe0: 0.99, gone1: 0.9, durable2: 0.9, about2: 0.95, safe2: 0.99, same: 0.05 });
+    const result = await capture(
+      { ...input("Make it five bullets from now on, not three. Also I moved to Austin.", ws) },
+      { judge, extract: async () => changes, floor: 0.7, existing: (slot) => readEntries(ws, slot) },
+    );
+    expect(result.updated.map((row) => row.text)).toEqual(["Prefers summaries as five bullets."]);
+    expect(result.updated[0]?.history?.[0]?.text).toBe("Prefers summaries as three bullets.");
+    expect(result.retired.map((row) => row.text)).toEqual(["Lives in Boston."]);
+    expect(result.saved.map((row) => row.text)).toEqual(["Lives in Austin."]);
+    expect(liveEntries(await readEntries(ws, "profile")).map((row) => row.text).sort()).toEqual(["Lives in Austin.", "Prefers summaries as five bullets."]);
+  });
+
+  it("leaves stored entries alone unless Jev clearly agrees they changed", async () => {
+    const ws = `ws-${Math.random().toString(36).slice(2, 8)}`;
+    const seeded = await applyOperations(ws, "profile", [{ op: "add", text: "Prefers summaries as three bullets.", kind: "preference" }], { who: "you" });
+    const id = seeded.added[0]!.id;
+    const changes: Proposal[] = [{ op: "update", id, text: "Prefers summaries as five bullets.", slot: "profile" }, { op: "retire", id, reason: "guessing", slot: "profile" }];
+    // Unsure Jev: probabilities near the middle.
+    const unsure = tableJudge({ worth: 0.95, supersedes0: 0.55, safe0: 0.99, gone1: 0.5 });
+    const result = await capture(input("Five bullets might be nice sometimes.", ws), { judge: unsure, extract: async () => changes, floor: 0.7, existing: (slot) => readEntries(ws, slot) });
+    expect(result.updated).toEqual([]);
+    expect(result.retired).toEqual([]);
+    expect(liveEntries(await readEntries(ws, "profile"))[0]?.text).toBe("Prefers summaries as three bullets.");
+  });
+
   it("without Jev, opens on cues in the wording and otherwise stays shut", async () => {
     expect(cues("I prefer short answers")).toBe(true);
     expect(cues("Run the report")).toBe(false);
@@ -189,11 +259,19 @@ describe("capture with Jev as the gatekeeper", () => {
   });
 
   it("never lets a secret through, whatever the extractor proposed", async () => {
-    const leaky: CaptureDeps = {
-      ...deps(null),
-      extract: async () => [{ text: "Their Gmail password is hunter2.", kind: "fact", slot: "profile" }],
-    };
+    const leaky: CaptureDeps = deps(null, [], async () => [{ op: "add", text: "Their Gmail password is hunter2.", kind: "fact", slot: "profile" }]);
     const result = await capture(input("Remember my Gmail password is hunter2"), leaky);
     expect(result.saved).toEqual([]);
+  });
+
+  it("shows the extractor all of a small slot and the nearest of a large one", () => {
+    const small = [entry("Prefers three bullets."), entry("Lives in Boston.")];
+    expect(existingFor(small, "anything")).toHaveLength(2);
+    const large = Array.from({ length: 150 }, (_, index) => entry(`Lesson ${index} about ${index % 3 === 0 ? "invoices" : "reports"} number ${index}.`, { kind: "lesson", at: `2026-01-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z` }));
+    const shown = existingFor(large, "the invoice export");
+    expect(shown.length).toBeLessThanOrEqual(60);
+    expect(shown.filter((row) => row.text.includes("invoices")).length).toBeGreaterThanOrEqual(30);
+    // Retired entries are never shown as something to change.
+    expect(existingFor([entry("Old.", { retired: { at: "2026-01-01T00:00:00.000Z", source: { who: "auto" }, reason: "gone" } })], "old")).toEqual([]);
   });
 });
