@@ -142,7 +142,9 @@ deployment can skip versions.
   first, go through the same gate. What you forget by hand stays forgotten.
   Each memory carries how sure the team is of it, from who saved it and what
   Jev made of it, rising when you say it again; what nobody has needed for
-  ninety days fades out of recall but stays on the page. HQ and every Bot recall what is relevant on each
+  ninety days fades out of recall but stays on the page. On the Gateway the
+  Bots' lessons are ranked by meaning, with a small embedding per lesson, so
+  "the export drops rows" is found for "CSV loses data"; elsewhere by words. HQ and every Bot recall what is relevant on each
   turn. When a preference moves on, the memory is reworded and keeps its old
   wording; when something stops being true, it is retired, not lost. Open
   **Memory** in the console to search it, pin what should always be recalled,
@@ -228,6 +230,7 @@ of it; these are the ones that matter.
 | `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`) |
 | `BOT_MEMORY_FLOOR` | how sure Jev must be before something is remembered (`0`–`1`; defaults to `BOT_JEV_CONFIDENCE`) |
 | `BOT_MEMORY_MODEL` | the model that reads exchanges for memories (`anthropic/claude-haiku-4-5` on Gateway; the quick model on a custom endpoint) |
+| `BOT_MEMORY_EMBEDDINGS` / `BOT_MEMORY_EMBEDDING_MODEL` | `off` ranks lessons by words only; the model that embeds them otherwise (`openai/text-embedding-3-small`, on Gateway only) |
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console passwords, each bound to a workspace |

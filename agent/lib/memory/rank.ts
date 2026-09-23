@@ -65,7 +65,13 @@ export interface Selection {
 export function select(
   entries: readonly MemoryEntry[],
   query: string,
-  options: { readonly maxChars?: number; readonly coreKinds?: readonly MemoryEntry["kind"][]; readonly relevantMax?: number } = {},
+  options: {
+    readonly maxChars?: number;
+    readonly coreKinds?: readonly MemoryEntry["kind"][];
+    readonly relevantMax?: number;
+    /** The non-core entries already ranked by meaning (best first); word overlap ranks whatever it leaves out. */
+    readonly ranked?: readonly MemoryEntry[];
+  } = {},
 ): Selection {
   const maxChars = options.maxChars ?? 3_500;
   const coreKinds = options.coreKinds ?? ["preference", "rule", "fact"];
@@ -89,7 +95,7 @@ export function select(
 
   const words = new Set(tokens(query));
   const weights = rarity(entries);
-  const ranked =
+  const byWords =
     words.size === 0
       ? [...rest].sort(byRecency)
       : rest
@@ -97,6 +103,9 @@ export function select(
           .filter((row) => row.score > 0)
           .sort((left, right) => right.score - left.score || byRecency(left.entry, right.entry))
           .map((row) => row.entry);
+  // Meaning first when it is known; words fill in behind it for entries meaning did not reach.
+  const known = new Set((options.ranked ?? []).map((entry) => entry.id));
+  const ranked = [...(options.ranked ?? []).filter((entry) => !inCore.has(entry.id)), ...byWords.filter((entry) => !known.has(entry.id))];
 
   const relevant: MemoryEntry[] = [];
   for (const entry of ranked) {

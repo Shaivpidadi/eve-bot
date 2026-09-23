@@ -7,8 +7,9 @@ import { updateDoc } from "../store";
 import { getBot } from "../bots";
 import { getJob } from "../jobs";
 import { attribute, operator } from "../session";
+import { embeddingsEnabled, gatewayEmbedder, rankByMeaning, vectorsFor } from "./embeddings";
 import { nearest, select } from "./rank";
-import { applyOperations, FIELDS, forget, isMemoryKind, liveEntries, type MemoryEntry, type MemoryFieldValue, type MemorySlot, type MemorySource, noteRecalled, readFields, readEntries, recallable, remember, SLOTS } from "./store";
+import { applyOperations, confidenceOf, FIELDS, forget, isMemoryKind, liveEntries, type MemoryEntry, type MemoryFieldValue, type MemorySlot, type MemorySource, noteRecalled, readFields, readEntries, recallable, remember, SLOTS } from "./store";
 
 /**
  * eve's memory slots, backed by the workspace's own store.
@@ -102,6 +103,19 @@ export async function trace(workspaceId: string, slot: MemorySlot, stage: string
   })).catch(() => undefined);
 }
 
+/** Lessons ordered by how close their meaning is to the turn's question; undefined when embeddings are off or fail. */
+async function byMeaning(workspaceId: string, slot: MemorySlot, entries: readonly MemoryEntry[], query: string): Promise<readonly MemoryEntry[] | undefined> {
+  if (!embeddingsEnabled() || entries.length === 0 || query.trim() === "") return undefined;
+  try {
+    const embedder = gatewayEmbedder(workspaceId);
+    const [vectors, [asked]] = await Promise.all([vectorsFor(workspaceId, slot, entries, embedder), embedder([query.slice(0, 2_000)])]);
+    if (asked === undefined) return undefined;
+    return rankByMeaning(entries, asked, vectors, { weight: (entry) => 0.5 + confidenceOf(entry) / 2 }).map((row) => row.entry);
+  } catch {
+    return undefined;
+  }
+}
+
 export interface WorkspaceMemoryOptions {
   /** Who this agent is, for the source line on what its tools save. */
   readonly owner: "hq" | "bot";
@@ -112,8 +126,10 @@ export function workspaceMemory(slot: MemorySlot, options: WorkspaceMemoryOption
     const workspaceId = workspaceOf(ctx);
     const [entries, fields] = await Promise.all([readEntries(workspaceId, slot).then((all) => recallable(all)), readFields(workspaceId, slot)]);
     const query = [textOf(ctx.turn?.input ?? [], ["user"]), textOf(lastOfRole(ctx.messages, "user", MAX_QUERY_MESSAGES), ["user"])].join("\n");
-    // Lessons grow by the hundred and only matter when the job touches the same system: rank them. The rest is small and always applies.
-    const { core, relevant } = select(entries, query, slot === "craft" ? { coreKinds: [] } : {});
+    // Lessons grow by the hundred and only matter when the job touches the same system: rank them, by meaning
+    // when the Gateway is there, by words otherwise. The rest is small and always applies.
+    const ranked = slot === "craft" ? await byMeaning(workspaceId, slot, entries, query) : undefined;
+    const { core, relevant } = select(entries, query, slot === "craft" ? { coreKinds: [], ...(ranked === undefined ? {} : { ranked }) } : {});
     void noteRecalled(workspaceId, slot, [...core, ...relevant].map((entry) => entry.id));
     return {
       messages: [
@@ -198,7 +214,8 @@ export function workspaceMemory(slot: MemorySlot, options: WorkspaceMemoryOption
           label: { start: ({ query }) => `Search memory: ${query.slice(0, 40)}` },
           async execute({ query }) {
             const entries = liveEntries(await readEntries(workspaceId, slot));
-            return { matches: nearest(entries, query, 10).map((entry) => ({ id: entry.id, text: entry.text, kind: entry.kind, savedAt: entry.at })) };
+            const ranked = (await byMeaning(workspaceId, slot, entries, query)) ?? nearest(entries, query, 10);
+            return { matches: ranked.slice(0, 10).map((entry) => ({ id: entry.id, text: entry.text, kind: entry.kind, savedAt: entry.at })) };
           },
         }),
       };

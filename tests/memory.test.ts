@@ -485,3 +485,54 @@ describe("what a turn is told", () => {
     expect(renderCore("team", {}, [])).toContain("Nothing remembered yet.");
   });
 });
+
+describe("ranking by meaning", () => {
+  it("encodes vectors compactly, digests text stably, and measures cosine", async () => {
+    const { cosine, decode, digest, encode } = await import("../agent/lib/memory/embeddings");
+    const vector = [0.1, -0.2, 0.3, 0.4];
+    expect([...decode(encode(vector))].map((value) => Math.round(value * 1e6) / 1e6)).toEqual(vector);
+    expect(digest("Export as CSV.")).toBe(digest("  export as csv. "));
+    expect(digest("Export as CSV.")).not.toBe(digest("Export as PDF."));
+    expect(cosine([1, 0], [1, 0])).toBeCloseTo(1);
+    expect(cosine([1, 0], [0, 1])).toBeCloseTo(0);
+    expect(cosine([0, 0], [1, 1])).toBe(0);
+  });
+
+  it("embeds only what is missing or reworded, keeps vectors beside the slot, and ranks lessons by meaning", async () => {
+    vi.stubEnv("BOT_STORE", "memory");
+    const { rankByMeaning, vectorsFor } = await import("../agent/lib/memory/embeddings");
+    // A toy embedder: "csv" things point one way, "gmail" things another.
+    const calls: string[][] = [];
+    const embedder = async (texts: readonly string[]) => {
+      calls.push([...texts]);
+      return texts.map((text) => (/csv|export|report/i.test(text) ? [1, 0.1, 0] : /gmail|archive/i.test(text) ? [0, 1, 0.1] : [0.3, 0.3, 0.3]));
+    };
+    const lessons = [entry("Export the CRM report as CSV; the PDF drops rows.", { kind: "lesson" }), entry("Gmail's archive button is under the kebab menu.", { kind: "lesson" })];
+    const first = await vectorsFor("wsv", "craft", lessons, embedder, "toy");
+    expect(first.size).toBe(2);
+    expect(calls).toHaveLength(1);
+    // Nothing changed: no embedding call.
+    await vectorsFor("wsv", "craft", lessons, embedder, "toy");
+    expect(calls).toHaveLength(1);
+    // A reworded lesson is embedded again; only that one.
+    const reworded = [{ ...lessons[0]!, text: "Export the CRM report as CSV only." }, lessons[1]!];
+    await vectorsFor("wsv", "craft", reworded, embedder, "toy");
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual(["Export the CRM report as CSV only."]);
+
+    const vectors = await vectorsFor("wsv", "craft", reworded, embedder, "toy");
+    const ranked = rankByMeaning(reworded, [1, 0, 0], vectors);
+    expect(ranked.map((row) => row.entry.text)).toEqual(["Export the CRM report as CSV only."]);
+    // A failing embedder leaves entries unranked rather than failing the turn.
+    const broken = async () => {
+      throw new Error("down");
+    };
+    expect((await vectorsFor("wsv2", "craft", lessons, broken, "toy")).size).toBe(0);
+  });
+
+  it("puts meaning ahead of words when a ranking is given, and words fill in behind", () => {
+    const lessons = [entry("The export drops rows.", { kind: "lesson" }), entry("Invoice tool hides Send under More.", { kind: "lesson" }), entry("Unrelated lesson about badges.", { kind: "lesson" })];
+    const picked = select(lessons, "CSV loses data from the invoice export", { coreKinds: [], ranked: [lessons[0]!] });
+    expect(picked.relevant.map((row) => row.text)).toEqual(["The export drops rows.", "Invoice tool hides Send under More."]);
+  });
+});
