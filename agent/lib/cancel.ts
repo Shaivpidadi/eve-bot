@@ -1,3 +1,4 @@
+import { releaseRun } from "./budget";
 import { cancelJob, type Cancel } from "./jobs";
 import type { Job } from "./types";
 
@@ -47,6 +48,10 @@ export type JobCancellation =
  *    pass `interruptVia(attachSession)`; tools have no handle on another
  *    session in eve 0.58, so they pass nothing.
  * 3. If interrupting fails, step 1 stands as the backstop and the answer says so.
+ * 4. The run's budget reservation is released, so what it held but did not
+ *    spend is free for other runs at once. Whatever the bot spends between
+ *    the cancel and its session stopping still counts (the usage hook charges
+ *    it to the released reservation, which holds nothing more).
  *
  * Idempotent: cancelling a cancelled job succeeds and interrupts its run again,
  * which is how a failed interruption is retried.
@@ -58,6 +63,8 @@ export async function cancelJobRun(
 ): Promise<JobCancellation> {
   const cancelled = await cancelJob(workspaceId, jobId);
   if (!cancelled.ok) return cancelled;
+  // Idempotent, and a no-op for a lease that reserved nothing (a wait, a dispatch).
+  if (cancelled.token !== null) await releaseRun(workspaceId, cancelled.token).catch(() => false);
   const base = {
     ok: true as const,
     job: cancelled.job,

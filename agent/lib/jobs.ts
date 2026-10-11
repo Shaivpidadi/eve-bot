@@ -843,7 +843,7 @@ export async function sendBack(
  * second call can retry interrupting the run.
  */
 export type Cancel =
-  | { ok: true; job: Job; wasRunning: boolean; alreadyCancelled: boolean; session: string | null }
+  | { ok: true; job: Job; wasRunning: boolean; alreadyCancelled: boolean; session: string | null; token: string | null }
   | { ok: false; reason: string };
 
 /**
@@ -863,7 +863,13 @@ export type Cancel =
  */
 export async function cancelJob(workspaceId: string, jobId: string): Promise<Cancel> {
   const mark = { id: newId("cancel"), at: new Date().toISOString() };
-  const outcome = { reason: `No job ${jobId} in this workspace.`, wasRunning: false, already: false, session: null as string | null };
+  const outcome = {
+    reason: `No job ${jobId} in this workspace.`,
+    wasRunning: false,
+    already: false,
+    session: null as string | null,
+    token: null as string | null,
+  };
   const found: { job: Job | null } = { job: null };
   const read = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
     if (current === null) return null;
@@ -871,7 +877,10 @@ export async function cancelJob(workspaceId: string, jobId: string): Promise<Can
       // Ours, if a write that landed was reported as a conflict; else an earlier cancel.
       const mine = current.cancellation?.id === mark.id;
       outcome.already = !mine;
-      if (!mine) outcome.session = current.cancellation?.session ?? null;
+      if (!mine) {
+        outcome.session = current.cancellation?.session ?? null;
+        outcome.token = current.cancellation?.token ?? null;
+      }
       found.job = current;
       return null;
     }
@@ -883,13 +892,15 @@ export async function cancelJob(workspaceId: string, jobId: string): Promise<Can
     // Only a live run's bound session is worth stopping; sessionId may name a past run.
     const lease = current.lease;
     outcome.session = lease !== null && lease.kind === "run" ? (lease.session ?? null) : null;
+    // Whatever lease it was, its token names the reservation (if any) the cancel releases.
+    outcome.token = lease?.token ?? null;
     return stamp({
       ...current,
       status: "cancelled",
       lease: null,
       everyMinutes: null,
       schedule: null,
-      cancellation: { ...mark, session: outcome.session },
+      cancellation: { ...mark, session: outcome.session, token: outcome.token },
     });
   });
   const job = read ?? found.job;
@@ -905,5 +916,5 @@ export async function cancelJob(workspaceId: string, jobId: string): Promise<Can
       text: `Cancelled "${job.title}".`,
     });
   }
-  return { ok: true, job, wasRunning: outcome.wasRunning, alreadyCancelled: outcome.already, session: outcome.session };
+  return { ok: true, job, wasRunning: outcome.wasRunning, alreadyCancelled: outcome.already, session: outcome.session, token: outcome.token };
 }

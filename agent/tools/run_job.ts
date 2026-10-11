@@ -5,6 +5,7 @@ import { z } from "zod";
 import { record, recentActivity } from "../lib/activity";
 import { readArtifact } from "../lib/artifacts";
 import { getBot } from "../lib/bots";
+import { admitClaimedRun, BUDGET_HALT_REASON, releaseRun, runHalted, settleRun } from "../lib/budget";
 import { renderBrief } from "../lib/brief";
 import { reapIdleScreens } from "../lib/computer/reaper";
 import { forgetJob } from "../lib/computer/screens";
@@ -174,6 +175,7 @@ export default defineWorkflowTool({
           if (next !== null) {
             settled = next;
           } else if (!(await keepLease(workspaceId, jobId, claim.token))) {
+            await closeBudget(workspaceId, claim.token, "release");
             return stoppedEarly(jobId, await standing(workspaceId, jobId, claim.token));
           }
         }
@@ -182,7 +184,18 @@ export default defineWorkflowTool({
         // one way the child returns at all: whatever it left is not this
         // job's result any more, so nothing is salvaged, failed, or closed.
         const afterWork = await standing(workspaceId, jobId, claim.token);
-        if (afterWork !== "owns") return stoppedEarly(jobId, afterWork);
+        if (afterWork !== "owns") {
+          await closeBudget(workspaceId, claim.token, "release");
+          return stoppedEarly(jobId, afterWork);
+        }
+
+        // The budget stopped the bot mid-run (see the teammate's usage hook):
+        // the job waits for a person with the reason, rather than failing.
+        const budgetStop = settled.ok ? null : await budgetHalted(workspaceId, claim.token);
+        if (budgetStop !== null) {
+          await markBlocked(workspaceId, jobId, budgetStop, claim.token);
+          return { jobId, ran: true as const, status: "blocked" as const, reason: budgetStop };
+        }
 
         // What the run left behind, in order of trust: the result finish_job
         // recorded, a structured final answer, or the final answer as text with
@@ -222,6 +235,7 @@ export default defineWorkflowTool({
         // manual re-run is refused until this request is answered or times out.
         const held = await parkForSignoff(workspaceId, jobId, claim.token, result);
         if (!held) {
+          await closeBudget(workspaceId, claim.token, "release");
           return {
             jobId,
             ran: true as const,
@@ -410,6 +424,12 @@ async function claimForRun(
   });
   if (!claimed.ok) return claimed;
 
+  // Each claim is its own reservation under its own token, so a routine's
+  // cycles and a job's retries each answer to the workspace budget afresh.
+  // Refused: the job is blocked with the reason, fenced on this token.
+  const refused = await admitClaimedRun(workspaceId, claimed.job, token);
+  if (refused !== null) return { ok: false, reason: refused };
+
   const effort = claimed.job.effort ?? DEFAULT_EFFORT;
   // A job a person sent back carries their note until it closes.
   const revising = Boolean(claimed.job.feedback);
@@ -537,7 +557,7 @@ async function reviewClose(
       closedBy: result.completion ?? "unknown",
     },
     questions,
-    { timeoutMs: 4_000, workspaceId },
+    { timeoutMs: 4_000, workspaceId, runToken: claim.token },
   );
   if (judgement === null) return;
   const overall = readVerdict(judgement, "overall");
@@ -606,6 +626,27 @@ async function keepLease(workspaceId: string, jobId: string, token: string): Pro
   return renewLease(workspaceId, jobId, token, LEASE_MS);
 }
 
+/**
+ * Closes the run's budget reservation: `settle` when the run finished its
+ * part, `release` when it was cancelled or superseded. Both are idempotent
+ * and harmless on a reservation already closed. Best effort: a reservation
+ * left held is released by `repairReservations` once the lease is gone.
+ *
+ * The close steps below (`markDone`, `markFailed`, `markBlocked`,
+ * `parkForSignoff`, `markSentBack`) do the same inline: a plain helper shared
+ * with them would pull the store into the workflow bundle.
+ */
+async function closeBudget(workspaceId: string, token: string, how: "settle" | "release"): Promise<void> {
+  "use step";
+  await (how === "settle" ? settleRun(workspaceId, token) : releaseRun(workspaceId, token)).catch(() => false);
+}
+
+/** The reason to block with when the budget halted this run, else null. A step, so the workflow body never loads the budget. */
+async function budgetHalted(workspaceId: string, token: string): Promise<string | null> {
+  "use step";
+  return (await runHalted(workspaceId, token).catch(() => false)) ? BUDGET_HALT_REASON : null;
+}
+
 async function parkForSignoff(
   workspaceId: string,
   jobId: string,
@@ -614,6 +655,8 @@ async function parkForSignoff(
 ): Promise<boolean> {
   "use step";
   const job = await holdForSignoff(workspaceId, jobId, { token, forMs: SIGNOFF_LEASE_MS, result });
+  // The work is over; waiting on a person spends nothing.
+  if (job !== null) await settleRun(workspaceId, token).catch(() => false);
   return job !== null;
 }
 
@@ -625,6 +668,8 @@ async function markDone(
 ): Promise<{ status: JobStatus | null; nextRunAt: string | null }> {
   "use step";
   const job = await completeJob(workspaceId, jobId, result, { token });
+  // Null: another run holds the job now. Cancelled: a person stopped it.
+  await (job === null || job.status === "cancelled" ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
   // A handover this job raised is over with it.
   await forgetJob(workspaceId, jobId).catch(() => undefined);
   // Browsers nobody is using are stopped; they start again on the next use.
@@ -640,7 +685,8 @@ async function markFailed(
   token: string,
 ): Promise<void> {
   "use step";
-  await failJob(workspaceId, jobId, error, { token });
+  const failed = await failJob(workspaceId, jobId, error, { token });
+  await (failed === null ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
   await forgetJob(workspaceId, jobId).catch(() => undefined);
   await reapIdleScreens().catch(() => 0);
 }
@@ -650,10 +696,11 @@ async function markBlocked(
   jobId: string,
   note: string,
   token: string,
-  result: JobResult,
+  result?: JobResult,
 ): Promise<void> {
   "use step";
-  await blockJob(workspaceId, jobId, note, { token, result });
+  const blocked = await blockJob(workspaceId, jobId, note, { token, ...(result === undefined ? {} : { result }) });
+  await (blocked === null ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
 }
 
 async function markSentBack(
@@ -664,7 +711,8 @@ async function markSentBack(
   result: JobResult,
 ): Promise<void> {
   "use step";
-  await sendBack(workspaceId, jobId, note, { token, result });
+  const sent = await sendBack(workspaceId, jobId, note, { token, result });
+  await (sent === null ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
   await forgetJob(workspaceId, jobId).catch(() => undefined);
   // A person saying what to change is the clearest statement of how they want work done.
   await learnFromFeedback(workspaceId, jobId, note, result);

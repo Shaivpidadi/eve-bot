@@ -130,10 +130,11 @@ export interface Job {
    * How the job was cancelled, once it was: `id` is the cancelling call's own
    * mark, so a retried write that had landed reads as that call's (see
    * `cancelJob`), and `session` is the run that held the job then, which a
-   * repeated cancel interrupts again. Absent on jobs never cancelled, and on
-   * ones cancelled before this was kept.
+   * repeated cancel interrupts again. `token` is that run's lease token, whose
+   * budget reservation the cancel releases (absent on older records). Absent
+   * on jobs never cancelled, and on ones cancelled before this was kept.
    */
-  cancellation?: { readonly id: string; readonly at: string; readonly session: string | null };
+  cancellation?: { readonly id: string; readonly at: string; readonly session: string | null; readonly token?: string | null };
 }
 
 /**

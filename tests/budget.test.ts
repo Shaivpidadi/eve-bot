@@ -337,3 +337,34 @@ describe("model spend on the budget", () => {
     expect((await readLedger(WS)).jev?.costUsd).toBe(0.02);
   });
 });
+
+describe("cancelling a running job", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+    vi.stubEnv("BOT_BUDGET_MONTHLY_USD", "10");
+  });
+
+  it("releases the run's reservation, and cancelling again is harmless", async () => {
+    const jobs = await import("../agent/lib/jobs");
+    const budget = await import("../agent/lib/budget");
+    const { cancelJobRun } = await import("../agent/lib/cancel");
+    const job = await jobs.assignJob({ workspaceId: WS, botId: "bot_1", requestedBy: "op", title: "Watch", brief: "Watch it.", effort: "deep" });
+    const claimed = await jobs.claimJob(WS, job.id, { token: "lease_A", forMs: 20 * 60_000, status: "running", kind: "run", countAttempt: true });
+    if (!claimed.ok) throw new Error(claimed.reason);
+    expect(await budget.admitClaimedRun(WS, claimed.job, "lease_A")).toBeNull();
+    await budget.recordSpend(WS, "lease_A", 1, "job");
+    expect((await budget.readBudget(WS)).reservedUsd).toBe(3);
+
+    const first = await cancelJobRun(WS, job.id);
+    expect(first.ok && first.job.cancellation?.token).toBe("lease_A");
+    const doc = await budget.readBudget(WS);
+    expect(doc.reservations.lease_A).toMatchObject({ state: "released", spentUsd: 1 });
+    expect(doc.reservedUsd).toBe(0);
+    expect(doc.spentUsd).toBe(1);
+
+    const again = await cancelJobRun(WS, job.id);
+    expect(again.ok && again.alreadyCancelled).toBe(true);
+    expect((await budget.readBudget(WS)).reservations.lease_A?.state).toBe("released");
+  });
+});
