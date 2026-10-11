@@ -15,6 +15,7 @@ import {
   computerRuntime,
   type ComputerRuntime,
 } from "./script";
+import { DEFAULT_SHELL_PORTS } from "./shell-helper";
 
 /**
  * Operating the team's computer: its screens, sign-ins and files.
@@ -150,6 +151,34 @@ export async function installSoftware(io: ComputerIo): Promise<void> {
       throw new ComputerError(answer?.error ?? `Installing the computer's software failed: ${tail(result)}`, answer?.step ?? "install");
     }
   });
+  // The Bot shell's user and fence go into the template too; a computer that cannot
+  // have them refuses the shell on first use instead (see `shell.ts`).
+  const isolated = await io.run([COMPUTER_SCRIPT, "isolate", shellPorts()].map(shellQuote).join(" "), { timeoutMs: CALL_TIMEOUT_MS });
+  const answer = lastJson<ScriptAnswer>(isolated.stdout);
+  if (answer?.ok !== true) console.warn("The Bot shell could not be isolated on the computer:", answer?.error ?? tail(isolated));
+}
+
+/** What a Bot's shell may connect to when Landlock fences it: the defaults plus `BOT_SHELL_TCP_PORTS`. */
+export function shellPorts(): string {
+  const extra = (process.env.BOT_SHELL_TCP_PORTS ?? "").split(",").map((entry) => Number(entry.trim()));
+  const ports = new Set<number>([...DEFAULT_SHELL_PORTS, ...extra.filter((port) => Number.isInteger(port) && port > 0 && port < 65536)]);
+  return [...ports].sort((left, right) => left - right).join(",");
+}
+
+export type ShellMode = "iptables" | "landlock";
+
+export interface ShellIsolation {
+  readonly mode: ShellMode;
+  /** What the shell may connect to on this machine (iptables), or anywhere (Landlock). */
+  readonly ports: readonly number[];
+}
+
+/**
+ * Sets up the Bot shell's own user and its fence off the browser, idempotently.
+ * Throws when this computer cannot have them; the shell then refuses to run.
+ */
+export function isolateShell(io: ComputerIo): Promise<ShellIsolation> {
+  return untilInstalled(() => runScript<ShellIsolation>(io, ["isolate", shellPorts()], CALL_TIMEOUT_MS));
 }
 
 /** Every folder the runtime's files live in. */
@@ -256,6 +285,8 @@ export interface ComputerStatus {
   readonly version: string;
   readonly installed: boolean;
   readonly gateway: boolean;
+  /** How a Bot's shell is kept off the browser (see `shell.ts`); "none" or "unset" means it is refused. */
+  readonly shell?: ShellMode | "none" | "unset";
   readonly screens: readonly { screen: number; display: boolean; browser: boolean; desktop: boolean }[];
 }
 
