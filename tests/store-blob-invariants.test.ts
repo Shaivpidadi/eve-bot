@@ -285,6 +285,23 @@ describe("jobs on Blob when a write's answer is lost", () => {
   );
 });
 
+describe("browser approvals on Blob when a write's answer is lost", () => {
+  it(
+    "uses an approved proposal once, and does not waste the approval when the use's answer is lost",
+    async () => {
+      const { claimProposal } = await import("../agent/subagents/teammate/lib/gate");
+      const { writeDoc } = await import("../agent/lib/store");
+      const path = `browser-actions/${WS}/sess_A/act_1.json`;
+      await writeDoc(path, { id: "act_1", workspaceId: WS, sessionId: "sess_A", description: "Click", expiresAt: new Date(Date.now() + 60_000).toISOString() });
+      blob.inject({ kind: "lose-response", op: "put", pathname: `t/${path}` });
+      expect(await claimProposal(WS, "sess_A", "act_1")).toBe(true);
+      // Used: another call with the same approval is refused.
+      expect(await claimProposal(WS, "sess_A", "act_1")).toBe(false);
+    },
+    RETRY_FAULT_MS,
+  );
+});
+
 describe("bots on Blob when a write's answer is lost", () => {
   it(
     "hires once, and says so, when the create's answer is lost",

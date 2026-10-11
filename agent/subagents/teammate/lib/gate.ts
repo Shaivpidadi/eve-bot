@@ -82,6 +82,8 @@ export interface Proposal {
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly usedAt?: string;
+  /** Which use claimed it, so a use whose write's answer was lost knows the claim is its own. */
+  readonly usedBy?: string;
 }
 
 const proposalKey = (workspaceId: string, sessionId: string, id: string) =>
@@ -633,6 +635,25 @@ export type Confirmed =
  * page still shows what was approved. Called from `page_confirm` after eve's
  * approval; every refusal uses the proposal up, so the next try asks again.
  */
+/**
+ * Marks a stored proposal used, once: true for the one use that claimed it.
+ * A write whose answer was lost (see docs/decisions/0001-state-store.md) is
+ * retried by the store and finds this use's own mark, which is a claim, not a
+ * reuse, so the person's approval is not wasted.
+ */
+export async function claimProposal(workspaceId: string, sessionId: string, id: string): Promise<boolean> {
+  const use = randomBytes(12).toString("hex");
+  let ownMark = false;
+  const used = await updateDoc<Proposal>(proposalKey(workspaceId, sessionId, id), (current) => {
+    if (current !== null && current.usedBy === use) {
+      ownMark = true;
+      return null;
+    }
+    return current === null || current.usedAt !== undefined ? null : { ...current, usedAt: new Date().toISOString(), usedBy: use };
+  });
+  return used !== null || ownMark;
+}
+
 export async function carryOut(ctx: ToolContext, id: string, approvedText: string): Promise<Confirmed> {
   const { workspaceId } = operator(ctx);
   const key = proposalKey(workspaceId, ctx.session.id, id);
@@ -645,10 +666,7 @@ export async function carryOut(ctx: ToolContext, id: string, approvedText: strin
   }
 
   // Use it exactly once: a second call with the same id, or a retry, asks again.
-  const used = await updateDoc<Proposal>(key, (current) =>
-    current === null || current.usedAt !== undefined ? null : { ...current, usedAt: new Date().toISOString() },
-  );
-  if (used === null) {
+  if (!(await claimProposal(workspaceId, ctx.session.id, id))) {
     return { ok: false, reason: "used", message: "That approval was already used. Propose the action again if it is still needed." };
   }
   if (Date.parse(stored.expiresAt) < Date.now()) {
