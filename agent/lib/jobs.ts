@@ -449,6 +449,40 @@ export async function releaseJob(
 }
 
 /**
+ * Hands a claimed run back before its bot started, to be tried again at
+ * `runAt`: something it needed to start (the budget check) was unavailable,
+ * not refused. The job goes back to waiting, `scheduled` for a routine and
+ * `queued` otherwise, due at `runAt`, and the claim's attempt is not counted.
+ * With `waitToken` the run that will retry holds a `wait` lease until then
+ * (as `holdUntilDue` would), so the watchdog leaves it to that run and only
+ * steps in once the lease lapses; without one, the watchdog picks it up when
+ * it is due. Fenced on the run's token: null when the run no longer owns the
+ * job (cancelled, superseded), and nothing is written.
+ */
+export async function deferRun(
+  workspaceId: string,
+  jobId: string,
+  token: string,
+  options: { runAt: string; waitToken?: string },
+): Promise<Job | null> {
+  return updateDoc<Job>(key(workspaceId, jobId), (current) => {
+    if (current === null || current.status === "cancelled" || CLOSED.includes(current.status)) return null;
+    if (current.lease === null || current.lease.token !== token) return null;
+    const startsAt = Date.parse(options.runAt);
+    return stamp({
+      ...current,
+      status: isRoutine(current) ? "scheduled" : "queued",
+      runAt: options.runAt,
+      attempts: Math.max(0, current.attempts - 1),
+      lease:
+        options.waitToken === undefined
+          ? null
+          : { token: options.waitToken, kind: "wait", until: new Date(startsAt + WAIT_GRACE_MS).toISOString() },
+    });
+  });
+}
+
+/**
  * Changes when a routine runs, from the console: a new interval or a new clock
  * schedule, effective from now. A routine waiting for its next cycle moves at
  * once; a running cycle keeps its lease and the change lands when it closes,

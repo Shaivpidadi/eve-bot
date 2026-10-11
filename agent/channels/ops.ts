@@ -10,7 +10,7 @@ import { findBot, getBot, hireBot, listBots, patchBot, retireBot } from "../lib/
 import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
-import { cancelJobRun, describeInterruption, interruptVia } from "../lib/cancel";
+import { cancelJobRun, describeInterruption, interruptVia, within } from "../lib/cancel";
 import { isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
@@ -97,7 +97,7 @@ async function restartWedgedRoom(
   const old = (await getRoomState(workspaceId, room))?.sessionId ?? null;
   const generation = await restartRoom(workspaceId, room);
   if (old !== null) {
-    await Promise.race([attachSession(old).cancel({ tasks: false }), new Promise((resolve) => setTimeout(resolve, 5_000))]).catch(() => undefined);
+    await within(attachSession(old).cancel({ tasks: false }), 5_000).catch(() => undefined);
   }
   const botId = botIdForRoom(room);
   const bot = botId === null ? null : await getBot(workspaceId, botId);
@@ -342,13 +342,13 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const recorded = (await getRoomState(workspaceId, room))?.sessionId ?? null;
       const generation = await resetRoom(workspaceId, room);
 
-      const within = <T>(work: Promise<T>, ms = 8_000): Promise<T> =>
-        Promise.race([work, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timed out")), ms))]);
       const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
       const cancelledJobs: string[] = [];
       // The teammate's own session holds its open requests, such as a cost-limit
-      // card, so each job's run is stopped with it (see cancelJobRun).
+      // card, so each job's sessions are stopped with it: the run's bound one and
+      // the one the job records, which is all a run that never called job_brief
+      // has (see cancelJobRun).
       const interrupt = interruptVia(attachSession, "Room reset");
       for (const job of await listOpenJobs(workspaceId)) {
         if (job.room !== room || isRoutine(job)) continue;

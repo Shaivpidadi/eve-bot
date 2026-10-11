@@ -158,6 +158,33 @@ describe("cancelJobRun", () => {
     expect((await read()).status).toBe("cancelled");
   });
 
+  it("also stops the session the job records when the run has not bound one", async () => {
+    const jobs = await import("../agent/lib/jobs");
+    const cancel = await import("../agent/lib/cancel");
+    const job = await jobs.assignJob({ workspaceId: WORKSPACE, botId: "bot_1", requestedBy: "op", title: "Watch", brief: "Watch." });
+    const claimed = await jobs.claimJob(WORKSPACE, job.id, { token: "lease_A", forMs: 60_000, status: "running", kind: "run", countAttempt: true });
+    expect(claimed.ok).toBe(true);
+    // A lease from before runs were fenced: the session is on the job, not on the lease.
+    await jobs.patchJob(WORKSPACE, job.id, (current) => ({ ...current, sessionId: "sess_legacy" }));
+    expect((await jobs.getJob(WORKSPACE, job.id))?.lease?.session).toBeUndefined();
+    const { attachSession, calls } = fakeSessions();
+
+    const outcome = await cancel.cancelJobRun(WORKSPACE, job.id, { interrupt: cancel.interruptVia(attachSession, "x") });
+    expect(outcome).toMatchObject({ ok: true, session: null, sessions: ["sess_legacy"], interruption: "interrupted" });
+    expect(calls).toEqual(["cancel sess_legacy tasks=true", "reset sess_legacy x"]);
+  });
+
+  it("stops the run's bound session and the job's recorded one, each once", async () => {
+    const { cancel, jobs, job } = await running();
+    await jobs.patchJob(WORKSPACE, job.id, (current) => ({ ...current, sessionId: "sess_earlier" }));
+    const { attachSession, calls } = fakeSessions();
+    const outcome = await cancel.cancelJobRun(WORKSPACE, job.id, { interrupt: cancel.interruptVia(attachSession, "x") });
+    expect(outcome).toMatchObject({ ok: true, session: "sess_A", sessions: ["sess_A", "sess_earlier"], interruption: "interrupted" });
+    expect(calls.filter((call) => call.startsWith("cancel"))).toEqual(["cancel sess_A tasks=true", "cancel sess_earlier tasks=true"]);
+    expect(cancel.sessionsToInterrupt("sess_A", { sessionId: "sess_A" })).toEqual(["sess_A"]);
+    expect(cancel.sessionsToInterrupt(null, { sessionId: null })).toEqual([]);
+  });
+
   it("does not interrupt a job nobody is working on", async () => {
     const jobs = await import("../agent/lib/jobs");
     const cancel = await import("../agent/lib/cancel");
@@ -266,6 +293,53 @@ describe("the cancel_job tool and the console's DELETE route", () => {
     expect(String(answer.note)).not.toContain("may finish its current step");
     expect((await read()).status).toBe("cancelled");
     expect(await cancelJob.execute({ jobId: job.id }, ctxFor("sess_hq"))).toMatchObject({ cancelled: true, alreadyCancelled: true });
+  });
+
+  /** A job in HQ's room claimed by a run that never called job_brief, its session recorded only on the job. */
+  async function unboundRun() {
+    const jobs = await import("../agent/lib/jobs");
+    const job = await jobs.assignJob({ workspaceId: WORKSPACE, botId: "bot_1", requestedBy: "op", title: "Draft", brief: "Draft it.", room: "desk" });
+    const claimed = await jobs.claimJob(WORKSPACE, job.id, { token: "lease_A", forMs: 60_000, status: "running", kind: "run", countAttempt: true });
+    expect(claimed.ok).toBe(true);
+    await jobs.patchJob(WORKSPACE, job.id, (current) => ({ ...current, sessionId: "sess_unbound" }));
+    return { jobs, job };
+  }
+
+  type Route = { method: string; path: string; handler: (request: Request, args: unknown) => Promise<Response> };
+  const routeOf = async (method: string, path: string): Promise<Route> => {
+    const ops = (await import("../agent/channels/ops")).default as unknown as { routes: Route[] };
+    const route = ops.routes.find((candidate) => candidate.method === method && candidate.path === path);
+    expect(route).toBeDefined();
+    return route!;
+  };
+
+  it("starting a room over stops a job's session even when its run never bound it", async () => {
+    const { jobs, job } = await unboundRun();
+    const route = await routeOf("POST", "/bot/v1/rooms/:room/reset");
+    const { attachSession, calls } = fakeSessions();
+    const response = await route.handler(new Request("http://localhost/bot/v1/rooms/desk/reset", { method: "POST" }), {
+      attachSession,
+      params: { room: "desk" },
+      resolveSession: async () => undefined,
+      from: () => ({ reset: async () => undefined }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ cancelledJobs: [job.id] });
+    expect(calls).toContain("cancel sess_unbound tasks=true");
+    expect(calls).toContain("reset sess_unbound Room reset");
+    expect((await jobs.getJob(WORKSPACE, job.id))?.status).toBe("cancelled");
+  });
+
+  it("DELETE /bot/v1/jobs/:jobId stops a session its run never bound", async () => {
+    const { job } = await unboundRun();
+    const route = await routeOf("DELETE", "/bot/v1/jobs/:jobId");
+    const { attachSession, calls } = fakeSessions();
+    const response = await route.handler(new Request(`http://localhost/bot/v1/jobs/${job.id}`, { method: "DELETE" }), {
+      attachSession,
+      params: { jobId: job.id },
+    });
+    expect(await response.json()).toMatchObject({ cancelled: true, interruption: "interrupted" });
+    expect(calls).toEqual(["cancel sess_unbound tasks=true", expect.stringMatching(/^reset sess_unbound /)]);
   });
 
   it("DELETE /bot/v1/jobs/:jobId cancels and stops the bound session", async () => {

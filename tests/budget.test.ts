@@ -154,6 +154,65 @@ describe.each(backends)("workspace budget on the %s store", (backend) => {
     expect((await readBudget(WS, "2026-11")).spentUsd).toBe(0);
   });
 
+  /**
+   * The budget documents read, in order, not counting the read the fs store
+   * makes inside its own compare-and-set write.
+   */
+  async function watchReads() {
+    const { store } = await import("../agent/lib/store");
+    const kv = store();
+    const get = kv.get.bind(kv);
+    const put = kv.put.bind(kv);
+    const reads: string[] = [];
+    let writing = 0;
+    const spies = [
+      vi.spyOn(kv, "put").mockImplementation(async (...args) => {
+        writing += 1;
+        try {
+          return await put(...args);
+        } finally {
+          writing -= 1;
+        }
+      }),
+      vi.spyOn(kv, "get").mockImplementation(async (path) => {
+        if (writing === 0 && path.startsWith("budget/")) reads.push(path);
+        return get(path);
+      }),
+    ];
+    return { reads, restore: () => spies.forEach((spy) => spy.mockRestore()) };
+  }
+
+  it("reads the budget once per spend, settle and release in the common path", async () => {
+    const { admitRun, recordSpend, settleRun, releaseRun } = await load();
+    await admitRun(WS, "lease_a", 2);
+    await admitRun(WS, "lease_b", 2);
+    const { reads, restore } = await watchReads();
+    const budgetReads = () => reads.length;
+
+    expect(await recordSpend(WS, "lease_a", 0.5, "job")).toEqual({ counted: true, halted: false });
+    expect(budgetReads()).toBe(1);
+    expect(await settleRun(WS, "lease_a")).toBe(true);
+    expect(budgetReads()).toBe(2);
+    expect(await releaseRun(WS, "lease_b")).toBe(true);
+    expect(budgetReads()).toBe(3);
+    restore();
+  });
+
+  it("finds last month's reservation only after this month's document misses it", async () => {
+    const { admitRun, recordSpend, runHalted, readBudget } = await load();
+    const lastDay = new Date("2026-10-31T23:59:00Z");
+    const nextDay = new Date("2026-11-01T00:05:00Z");
+    await admitRun(WS, "lease_a", 2, { now: lastDay });
+    await recordSpend(WS, null, 0.1, "hq", { now: nextDay });
+    const { reads, restore } = await watchReads();
+    await recordSpend(WS, "lease_a", 1, "job", { now: nextDay });
+    expect(reads).toEqual([`budget/${WS}/2026-11.json`, `budget/${WS}/2026-10.json`]);
+    restore();
+    expect((await readBudget(WS, "2026-10")).reservations.lease_a?.spentUsd).toBe(1);
+    expect((await readBudget(WS, "2026-11")).spentUsd).toBe(0.1);
+    expect(await runHalted(WS, "lease_a", nextDay)).toBe(false);
+  });
+
   it("applies the daily limit too", async () => {
     vi.stubEnv("BOT_BUDGET_DAILY_USD", "2");
     const { admitRun, recordSpend } = await load();
@@ -200,11 +259,26 @@ describe("budget admission on a claimed job", () => {
     vi.stubEnv("BOT_BUDGET_MONTHLY_USD", "1");
   });
 
-  async function claimed(effort: "quick" | "standard" | "deep") {
+  async function claimed(effort: "quick" | "standard" | "deep", extra: { everyMinutes?: number; waitToken?: string } = {}) {
     const { assignJob, claimJob } = await import("../agent/lib/jobs");
-    const job = await assignJob({ workspaceId: WS, botId: "bot_x", requestedBy: "op", title: "Check the inbox", brief: "Check it.", effort });
+    const job = await assignJob({
+      workspaceId: WS,
+      botId: "bot_x",
+      requestedBy: "op",
+      title: "Check the inbox",
+      brief: "Check it.",
+      effort,
+      ...(extra.everyMinutes === undefined ? {} : { everyMinutes: extra.everyMinutes }),
+    });
     const token = `lease_${Math.random().toString(36).slice(2)}`;
-    const claim = await claimJob(WS, job.id, { token, forMs: 20 * 60_000, status: "running", kind: "run", countAttempt: true });
+    const claim = await claimJob(WS, job.id, {
+      token,
+      forMs: 20 * 60_000,
+      status: "running",
+      kind: "run",
+      countAttempt: true,
+      ...(extra.waitToken === undefined ? {} : { waitToken: extra.waitToken }),
+    });
     if (!claim.ok) throw new Error(claim.reason);
     return { job: claim.job, token };
   }
@@ -214,8 +288,9 @@ describe("budget admission on a claimed job", () => {
     const { getJob } = await import("../agent/lib/jobs");
     const { recentActivity } = await import("../agent/lib/activity");
     const { job, token } = await claimed("standard");
-    const reason = await admitClaimedRun(WS, job, token);
-    expect(reason).toMatch(/budget/);
+    const admission = await admitClaimedRun(WS, job, token);
+    expect(admission).toMatchObject({ admitted: false, retryAt: null });
+    expect(!admission.admitted && admission.reason).toMatch(/budget/);
     const after = await getJob(WS, job.id);
     expect(after?.status).toBe("blocked");
     expect(after?.lease).toBeNull();
@@ -223,11 +298,81 @@ describe("budget admission on a claimed job", () => {
     expect(feed.some((event) => event.kind === "job.blocked" && event.text.includes("BOT_BUDGET_MONTHLY_USD"))).toBe(true);
   });
 
+  /** Every write to the budget fails, as a store outage would, until the returned function is called. */
+  async function budgetStoreDown() {
+    const { store } = await import("../agent/lib/store");
+    const kv = store();
+    const put = kv.put.bind(kv);
+    const spy = vi.spyOn(kv, "put").mockImplementation(async (path, value, options) => {
+      if (path.startsWith("budget/")) throw new Error("store unavailable");
+      return put(path, value, options);
+    });
+    return () => spy.mockRestore();
+  }
+
+  it("hands a routine's claim back, never blocks it, when the budget cannot be checked", async () => {
+    vi.stubEnv("BOT_BUDGET_MONTHLY_USD", "100");
+    const { admitClaimedRun, deferralDelayMs, readBudget } = await import("../agent/lib/budget");
+    const { claimJob, getJob } = await import("../agent/lib/jobs");
+    const { recentActivity } = await import("../agent/lib/activity");
+    const { job, token } = await claimed("quick", { everyMinutes: 60, waitToken: "wait_1" });
+    const restore = await budgetStoreDown();
+
+    const now = new Date();
+    const first = await admitClaimedRun(WS, job, token, { waitToken: "wait_1", deferrals: 0, now });
+    expect(first).toMatchObject({ admitted: false, retryAt: new Date(now.getTime() + deferralDelayMs(0)).toISOString() });
+    expect(!first.admitted && first.reason).toMatch(/could not be checked/);
+    const waiting = await getJob(WS, job.id);
+    expect(waiting).toMatchObject({ status: "scheduled", attempts: 0, everyMinutes: 60 });
+    expect(waiting?.runAt).toBe(!first.admitted ? first.retryAt : "");
+    // The run that will retry holds the job while it sleeps, so the watchdog leaves it alone.
+    expect(waiting?.lease).toMatchObject({ token: "wait_1", kind: "wait" });
+
+    // The retry finds the store still down: deferred again, said once.
+    const retry = await claimJob(WS, job.id, { token: "lease_retry", forMs: 60_000, status: "running", kind: "run", countAttempt: true, waitToken: "wait_1" });
+    expect(retry.ok).toBe(true);
+    const second = await admitClaimedRun(WS, job, "lease_retry", { waitToken: "wait_1", deferrals: 1 });
+    expect(second.admitted === false && second.retryAt).not.toBeNull();
+    const feed = await recentActivity(WS, { jobId: job.id, limit: 20 });
+    expect(feed.filter((event) => event.text.includes("could not be checked"))).toHaveLength(1);
+    expect(feed.some((event) => event.kind === "job.blocked")).toBe(false);
+
+    // Once the store answers, the same wait token claims it and the run is admitted.
+    restore();
+    const again = await claimJob(WS, job.id, { token: "lease_ok", forMs: 60_000, status: "running", kind: "run", countAttempt: true, waitToken: "wait_1" });
+    expect(again.ok).toBe(true);
+    expect(await admitClaimedRun(WS, job, "lease_ok", { waitToken: "wait_1", deferrals: 2 })).toEqual({ admitted: true });
+    expect((await getJob(WS, job.id))?.status).toBe("running");
+    expect((await readBudget(WS)).reservations.lease_ok?.state).toBe("held");
+  });
+
+  it("leaves a one-off job queued for the watchdog when no run waits to retry it", async () => {
+    vi.stubEnv("BOT_BUDGET_MONTHLY_USD", "100");
+    const { admitClaimedRun } = await import("../agent/lib/budget");
+    const { getJob } = await import("../agent/lib/jobs");
+    const { job, token } = await claimed("quick");
+    await budgetStoreDown();
+    const admission = await admitClaimedRun(WS, job, token);
+    expect(admission.admitted === false && admission.retryAt).toEqual(expect.any(String));
+    expect(await getJob(WS, job.id)).toMatchObject({ status: "queued", lease: null });
+  });
+
+  it("does not hand back a claim the run no longer owns", async () => {
+    vi.stubEnv("BOT_BUDGET_MONTHLY_USD", "100");
+    const { admitClaimedRun } = await import("../agent/lib/budget");
+    const { cancelJob, getJob } = await import("../agent/lib/jobs");
+    const { job, token } = await claimed("quick");
+    await cancelJob(WS, job.id);
+    await budgetStoreDown();
+    expect(await admitClaimedRun(WS, job, token)).toMatchObject({ admitted: false, retryAt: null });
+    expect((await getJob(WS, job.id))?.status).toBe("cancelled");
+  });
+
   it("admits a job whose estimate fits and keeps it running", async () => {
     const { admitClaimedRun, readBudget } = await import("../agent/lib/budget");
     const { getJob } = await import("../agent/lib/jobs");
     const { job, token } = await claimed("quick");
-    expect(await admitClaimedRun(WS, job, token)).toBeNull();
+    expect(await admitClaimedRun(WS, job, token)).toEqual({ admitted: true });
     expect((await getJob(WS, job.id))?.status).toBe("running");
     expect((await readBudget(WS)).reservations[token]).toMatchObject({ jobId: job.id, reservedUsd: 0.25, state: "held" });
   });
@@ -291,7 +436,7 @@ describe("model spend on the budget", () => {
     const job = await jobs.assignJob({ workspaceId: WS, botId: "bot_1", requestedBy: "op", title: "Watch", brief: "Watch it.", effort: "quick" });
     const claimed = await jobs.claimJob(WS, job.id, { token: "lease_A", forMs: 20 * 60_000, status: "running", kind: "run", countAttempt: true });
     if (!claimed.ok) throw new Error(claimed.reason);
-    expect(await budget.admitClaimedRun(WS, claimed.job, "lease_A")).toBeNull();
+    expect(await budget.admitClaimedRun(WS, claimed.job, "lease_A")).toEqual({ admitted: true });
     expect((await jobs.bindRun(WS, job.id, "lease_A", "sess_A")).ok).toBe(true);
     const hook = (await import("../agent/subagents/teammate/hooks/usage")).default as unknown as Hook;
     return { jobs, budget, job, hook };
@@ -352,7 +497,7 @@ describe("cancelling a running job", () => {
     const job = await jobs.assignJob({ workspaceId: WS, botId: "bot_1", requestedBy: "op", title: "Watch", brief: "Watch it.", effort: "deep" });
     const claimed = await jobs.claimJob(WS, job.id, { token: "lease_A", forMs: 20 * 60_000, status: "running", kind: "run", countAttempt: true });
     if (!claimed.ok) throw new Error(claimed.reason);
-    expect(await budget.admitClaimedRun(WS, claimed.job, "lease_A")).toBeNull();
+    expect(await budget.admitClaimedRun(WS, claimed.job, "lease_A")).toEqual({ admitted: true });
     await budget.recordSpend(WS, "lease_A", 1, "job");
     expect((await budget.readBudget(WS)).reservedUsd).toBe(3);
 

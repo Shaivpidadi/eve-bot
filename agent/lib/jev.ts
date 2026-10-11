@@ -87,16 +87,20 @@ export interface Judgement<QUESTIONS extends Record<string, EvaluationQuestion>>
 
 const count = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 
-/** One judgement's usage as the ledger counts it, with Gateway's price when it sent one. */
+/**
+ * One judgement's usage as the ledger counts it, with Gateway's price when it
+ * sent one. The ledger has no "unknown": a price that is missing or not a
+ * number is 0 here, while the budget is told separately that nobody priced the
+ * call (`reportedCost` is null; see `judge`).
+ */
 export function spent(usage: unknown, metadata: unknown, model: string = process.env.BOT_JEV_MODEL?.trim() || DEFAULT_MODEL): Usage {
   const raw = (usage ?? {}) as { inputTokens?: unknown; outputTokens?: unknown; inputTokenDetails?: { cacheReadTokens?: unknown; cacheWriteTokens?: unknown } };
-  const cost = (metadata as { gateway?: { cost?: unknown } } | undefined)?.gateway?.cost;
   return {
     inputTokens: count(raw.inputTokens),
     outputTokens: count(raw.outputTokens),
     cacheReadTokens: count(raw.inputTokenDetails?.cacheReadTokens),
     cacheWriteTokens: count(raw.inputTokenDetails?.cacheWriteTokens),
-    costUsd: typeof cost === "string" || typeof cost === "number" ? count(Number(cost)) : 0,
+    costUsd: reportedCost(metadata) ?? 0,
     steps: 1,
     models: { [model]: 1 },
   };

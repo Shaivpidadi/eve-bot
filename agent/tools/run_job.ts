@@ -48,6 +48,8 @@ const SIGNOFF_TIMEOUT = "24h";
 const SIGNOFF_LEASE_MS = 25 * 60 * 60_000;
 /** A run waits again when its job is rescheduled, but not forever. */
 const MAX_WAKES = 20;
+/** How often a run retries a budget it could not check before leaving the job to the watchdog. */
+const MAX_DEFERRALS = 5;
 /**
  * A routine's run keeps its own schedule, then hands off to a fresh run. Runs
  * finish on the deployment that started them, so a day's bound is how code
@@ -150,10 +152,22 @@ export default defineWorkflowTool({
       let signedOff = false;
       let done: { result: JobResult; token: string; title: string; botName: string; previous: string | null } | null = null;
       work: {
-        const claim = await claimForRun(workspaceId, jobId, {
+        let claim = await claimForRun(workspaceId, jobId, {
           waitToken,
           takeOverWait: now === true && cycle === 1,
+          deferrals: 0,
         });
+        // The budget could not be checked: the claim went back and the job
+        // waits under this run's wait token. Sleep and try again, a few times,
+        // then leave it to the watchdog, which picks it up once the wait lapses.
+        for (let deferrals = 1; !claim.ok && claim.retryAt !== null; deferrals += 1) {
+          if (deferrals > MAX_DEFERRALS) {
+            return { jobId, ran: cycle > 1, cyclesRun: cycle - 1, reason: `${claim.reason} The job is waiting; the watchdog will try it again.` };
+          }
+          yield { phase: "scheduled", title: claim.title, runAt: claim.retryAt };
+          await sleep(new Date(claim.retryAt));
+          claim = await claimForRun(workspaceId, jobId, { waitToken, takeOverWait: false, deferrals });
+        }
         if (!claim.ok) return { jobId, ran: cycle > 1, cyclesRun: cycle - 1, reason: claim.reason };
 
         yield { phase: claim.revising ? "revising" : "working", bot: claim.botName, title: claim.title };
@@ -363,7 +377,8 @@ function stoppedEarly(jobId: string, standing: Standing) {
 }
 
 type Claim =
-  | { ok: false; reason: string }
+  /** Not run. `retryAt` is set when the claim was handed back to be tried again then (see `admitClaimedRun`). */
+  | { ok: false; reason: string; retryAt: string | null; title: string }
   | {
       ok: true;
       token: string;
@@ -390,18 +405,19 @@ type Claim =
 async function claimForRun(
   workspaceId: string,
   jobId: string,
-  options: { waitToken: string; takeOverWait: boolean },
+  options: { waitToken: string; takeOverWait: boolean; deferrals: number },
 ): Promise<Claim> {
   "use step";
   const job = await getJob(workspaceId, jobId);
-  if (job === null) return { ok: false, reason: `No job ${jobId} in this workspace.` };
+  if (job === null) return { ok: false, reason: `No job ${jobId} in this workspace.`, retryAt: null, title: "" };
+  const refused = (reason: string): Claim => ({ ok: false, reason, retryAt: null, title: job.title });
 
   const bot = await getBot(workspaceId, job.botId);
-  if (bot === null) return { ok: false, reason: "That job's bot is no longer on the roster." };
+  if (bot === null) return refused("That job's bot is no longer on the roster.");
   if (bot.status === "paused") {
     // Hand a dispatched job back; the watchdog skips paused bots until they resume.
     await releaseJob(workspaceId, jobId);
-    return { ok: false, reason: `${bot.name} is paused. Resume them to run this job.` };
+    return refused(`${bot.name} is paused. Resume them to run this job.`);
   }
 
   // A job whose last run failed gets another try on a more capable model.
@@ -422,13 +438,17 @@ async function claimForRun(
     waitToken: options.waitToken,
     takeOverWait: options.takeOverWait,
   });
-  if (!claimed.ok) return claimed;
+  if (!claimed.ok) return refused(claimed.reason);
 
   // Each claim is its own reservation under its own token, so a routine's
   // cycles and a job's retries each answer to the workspace budget afresh.
   // Refused: the job is blocked with the reason, fenced on this token.
-  const refused = await admitClaimedRun(workspaceId, claimed.job, token);
-  if (refused !== null) return { ok: false, reason: refused };
+  // Unchecked: the claim goes back and this run retries at `retryAt`.
+  const admission = await admitClaimedRun(workspaceId, claimed.job, token, {
+    waitToken: options.waitToken,
+    deferrals: options.deferrals,
+  });
+  if (!admission.admitted) return { ok: false, reason: admission.reason, retryAt: admission.retryAt, title: claimed.job.title };
 
   const effort = claimed.job.effort ?? DEFAULT_EFFORT;
   // A job a person sent back carries their note until it closes.

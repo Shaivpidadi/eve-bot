@@ -1,4 +1,5 @@
-import { blockJob, getJob } from "./jobs";
+import { record } from "./activity";
+import { blockJob, deferRun, getJob } from "./jobs";
 import { DEFAULT_EFFORT, type JobEffort } from "./models";
 import { readDoc, store, updateDoc } from "./store";
 import type { Job } from "./types";
@@ -204,9 +205,21 @@ const usd = (value: number) => `$${value.toFixed(2)}`;
 // Pure transitions
 // ---------------------------------------------------------------------------
 
+/**
+ * Why a run was not admitted:
+ *
+ * - `limit`: it does not fit under the monthly or daily limit. A decision; the
+ *   job waits for a person.
+ * - `closed`: its reservation was already closed (the run was cancelled or
+ *   superseded meanwhile). A decision too.
+ * - `unavailable`: the budget could not be checked (a store failure, or
+ *   contention past `updateDoc`'s retries). Not a decision: try again shortly.
+ */
+export type Refusal = "limit" | "closed" | "unavailable";
+
 export type Admission =
   | { readonly ok: true; readonly reservedUsd: number; readonly alreadyAdmitted: boolean }
-  | { readonly ok: false; readonly reason: string };
+  | { readonly ok: false; readonly refusal: Refusal; readonly reason: string };
 
 /**
  * Admits a run, or says why not. `next` is null when nothing should be written
@@ -221,7 +234,7 @@ export function applyAdmit(
     // Ours already: a replayed step, or a write that landed but came back as a conflict.
     return existing.state === "held"
       ? { next: null, admission: { ok: true, reservedUsd: existing.reservedUsd, alreadyAdmitted: true } }
-      : { next: null, admission: { ok: false, reason: "This run's budget reservation was already closed." } };
+      : { next: null, admission: { ok: false, refusal: "closed", reason: "This run's budget reservation was already closed." } };
   }
   const estimate = money(Math.max(0, input.estimateUsd));
   const committed = current.spentUsd + current.reservedUsd;
@@ -237,7 +250,7 @@ export function applyAdmit(
   }
   if (reason !== null) {
     // A refusal is not written: it changes nothing, and writing it would contend with admissions that fit.
-    return { next: null, admission: { ok: false, reason } };
+    return { next: null, admission: { ok: false, refusal: "limit", reason } };
   }
   const reservation: Reservation = {
     jobId: input.jobId,
@@ -348,15 +361,30 @@ export async function readBudget(workspaceId: string, period: string = periodOf(
 }
 
 /**
- * The period whose document holds a run's reservation: this month's, or, for a
- * run admitted before midnight UTC on the last day of the month, last month's.
- * A run's spend stays with the month that admitted it.
+ * Applies `mutate` to the document that holds a run's reservation: this
+ * month's, or, for a run admitted before midnight UTC on the last day of the
+ * month, last month's. A run's spend stays with the month that admitted it.
+ *
+ * This month's is tried in the compare-and-set that writes it, and last
+ * month's is read only when the reservation is not there, so the common path
+ * reads the budget once. `period` is null when neither holds it; `written`
+ * says whether `mutate` changed anything.
  */
-async function periodHolding(workspaceId: string, runToken: string, at: Date): Promise<string> {
-  const now = periodOf(at);
-  if ((await readBudget(workspaceId, now)).reservations[runToken] !== undefined) return now;
-  const before = previousPeriod(at);
-  return (await readBudget(workspaceId, before)).reservations[runToken] !== undefined ? before : now;
+async function updateHolding(
+  workspaceId: string,
+  runToken: string,
+  at: Date,
+  mutate: (current: BudgetDoc) => BudgetDoc | null,
+): Promise<{ period: string | null; written: boolean }> {
+  for (const period of [periodOf(at), previousPeriod(at)]) {
+    const seen = { found: false };
+    const written = await updateDoc<BudgetDoc>(key(workspaceId, period), (current) => {
+      seen.found = current !== null && current.reservations[runToken] !== undefined;
+      return current !== null && seen.found ? mutate(current) : null;
+    });
+    if (seen.found) return { period, written: written !== null };
+  }
+  return { period: null, written: false };
 }
 
 /**
@@ -376,7 +404,7 @@ export async function admitRun(
   const attempt = async (): Promise<Admission> => {
     const at = options.now ?? new Date();
     const limits = options.limits ?? budgetLimits();
-    const outcome: { admission: Admission } = { admission: { ok: false, reason: "The budget could not be read." } };
+    const outcome: { admission: Admission } = { admission: { ok: false, refusal: "unavailable", reason: "The budget could not be read." } };
     try {
       await updateDoc<BudgetDoc>(key(workspaceId, periodOf(at)), (current) => {
         const result = applyAdmit(current ?? emptyBudget(workspaceId, periodOf(at)), {
@@ -393,6 +421,7 @@ export async function admitRun(
       // Contention past updateDoc's retries, or a store failure: not admitted.
       return {
         ok: false,
+        refusal: "unavailable",
         reason: `The workspace budget could not be checked (${error instanceof Error ? error.message : String(error)}); try again shortly.`,
       };
     }
@@ -400,7 +429,8 @@ export async function admitRun(
   };
 
   const first = await attempt();
-  if (first.ok) return first;
+  // Only a refusal on the numbers can be undone by repair; a store that could not be read cannot.
+  if (first.ok || first.refusal !== "limit") return first;
   const repaired = await repairReservations(workspaceId, { now: options.now }).catch(() => 0);
   return repaired > 0 ? attempt() : first;
 }
@@ -425,13 +455,18 @@ export async function recordSpend(
   const limits = options.limits ?? budgetLimits();
   const id = options.id ?? `spend_${crypto.randomUUID()}`;
   const outcome: { value: SpendOutcome } = { value: { counted: false, halted: false } };
+  const apply = (current: BudgetDoc | null, period: string): BudgetDoc | null => {
+    const result = applySpend(current ?? emptyBudget(workspaceId, period), { runToken, usd, category, id, limits, at });
+    outcome.value = result.outcome;
+    return result.next;
+  };
   try {
-    const period = runToken === null ? periodOf(at) : await periodHolding(workspaceId, runToken, at);
-    await updateDoc<BudgetDoc>(key(workspaceId, period), (current) => {
-      const result = applySpend(current ?? emptyBudget(workspaceId, period), { runToken, usd, category, id, limits, at });
-      outcome.value = result.outcome;
-      return result.next;
-    });
+    const held = runToken === null ? { period: null } : await updateHolding(workspaceId, runToken, at, (current) => apply(current, current.period));
+    if (held.period === null) {
+      // Workspace-level spend, or a run whose reservation no month holds (pruned): this month's.
+      const period = periodOf(at);
+      await updateDoc<BudgetDoc>(key(workspaceId, period), (current) => apply(current, period));
+    }
   } catch (error) {
     console.warn(`[bot] Could not record spend on the workspace budget: ${error instanceof Error ? error.message : String(error)}`);
     return { counted: false, halted: false };
@@ -442,11 +477,7 @@ export async function recordSpend(
 async function close(workspaceId: string, runToken: string, state: "settled" | "released", now?: Date): Promise<boolean> {
   const at = now ?? new Date();
   const limits = budgetLimits();
-  const period = await periodHolding(workspaceId, runToken, at);
-  const closed = await updateDoc<BudgetDoc>(key(workspaceId, period), (current) =>
-    current === null ? null : applyClose(current, { runToken, state, limits, at }),
-  );
-  return closed !== null;
+  return (await updateHolding(workspaceId, runToken, at, (current) => applyClose(current, { runToken, state, limits, at }))).written;
 }
 
 /**
@@ -466,22 +497,81 @@ export function releaseRun(workspaceId: string, runToken: string, options: { rea
 
 /** Whether a run went past its reservation with the workspace out of headroom. */
 export async function runHalted(workspaceId: string, runToken: string, now: Date = new Date()): Promise<boolean> {
-  const period = await periodHolding(workspaceId, runToken, now);
-  return (await readBudget(workspaceId, period)).reservations[runToken]?.halted === true;
+  for (const period of [periodOf(now), previousPeriod(now)]) {
+    const reservation = (await readBudget(workspaceId, period)).reservations[runToken];
+    if (reservation !== undefined) return reservation.halted === true;
+  }
+  return false;
 }
 
 /**
- * Admission for a run that has just claimed its job (`run_job`'s claim step):
- * holds the estimate for the job's effort under the run's lease token, or
- * blocks the job, fenced on that token, with the refusal as its reason, so it
- * shows on the board and the feed as waiting on a person and the watchdog
- * does not re-dispatch it. Returns the refusal, or null when admitted.
+ * What became of a run that has just claimed its job:
+ *
+ * - admitted: it holds its estimate and may start.
+ * - refused (`retryAt: null`): the budget said no, and the job is blocked with
+ *   the reason, waiting on a person.
+ * - deferred (`retryAt` set): the budget could not be checked, so the claim
+ *   went back and the job waits to be tried again at `retryAt`.
  */
-export async function admitClaimedRun(workspaceId: string, job: Pick<Job, "id" | "effort">, runToken: string): Promise<string | null> {
-  const admission = await admitRun(workspaceId, runToken, estimateForEffort(job.effort ?? DEFAULT_EFFORT), { jobId: job.id });
-  if (admission.ok) return null;
-  await blockJob(workspaceId, job.id, admission.reason, { token: runToken });
-  return admission.reason;
+export type ClaimedAdmission =
+  | { readonly admitted: true }
+  | { readonly admitted: false; readonly reason: string; readonly retryAt: string | null };
+
+/** How long a run waits before checking a budget it could not read again: 30s, doubling, at most 10 minutes. */
+export const deferralDelayMs = (deferrals: number): number => Math.min(10 * 60_000, 30_000 * 2 ** Math.max(0, deferrals));
+
+/**
+ * Admission for a run that has just claimed its job (`run_job`'s claim step),
+ * under the run's lease token.
+ *
+ * Refused on the numbers: the job is blocked, fenced on that token, with the
+ * refusal as its reason, so it shows on the board and the feed as waiting on a
+ * person and the watchdog does not re-dispatch it.
+ *
+ * Not checked at all (the store failed or stayed contended): that is no
+ * reason to stop a job, and a blocked routine would never run again. The
+ * claim is handed back instead (`deferRun`): the job waits again, due after a
+ * short backoff, a routine keeps its schedule, and the feed says so once, on
+ * the first deferral. `waitToken` lets the caller hold the job while it
+ * sleeps and retry; `deferrals` is how many times it already has.
+ */
+export async function admitClaimedRun(
+  workspaceId: string,
+  job: Pick<Job, "id" | "effort" | "title" | "botId">,
+  runToken: string,
+  options: { readonly waitToken?: string; readonly deferrals?: number; readonly now?: Date } = {},
+): Promise<ClaimedAdmission> {
+  const admission = await admitRun(workspaceId, runToken, estimateForEffort(job.effort ?? DEFAULT_EFFORT), {
+    jobId: job.id,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  });
+  if (admission.ok) return { admitted: true };
+  if (admission.refusal !== "unavailable") {
+    await blockJob(workspaceId, job.id, admission.reason, { token: runToken });
+    return { admitted: false, reason: admission.reason, retryAt: null };
+  }
+
+  const deferrals = options.deferrals ?? 0;
+  const retryAt = new Date((options.now ?? new Date()).getTime() + deferralDelayMs(deferrals)).toISOString();
+  // A write that landed but came back as a failure may have reserved after all.
+  await releaseRun(workspaceId, runToken, options.now === undefined ? {} : { now: options.now }).catch(() => false);
+  const deferred = await deferRun(workspaceId, job.id, runToken, {
+    runAt: retryAt,
+    ...(options.waitToken === undefined ? {} : { waitToken: options.waitToken }),
+  });
+  // Cancelled or taken over meanwhile: nothing to hand back, and no retry.
+  if (deferred === null) return { admitted: false, reason: admission.reason, retryAt: null };
+  if (deferrals === 0) {
+    await record({
+      workspaceId,
+      kind: "job.progress",
+      botId: job.botId,
+      jobId: job.id,
+      text: `"${job.title}" did not start: the workspace budget could not be checked. It will try again at ${retryAt}.`,
+      data: { budget: "unavailable", retryAt },
+    }).catch(() => undefined);
+  }
+  return { admitted: false, reason: admission.reason, retryAt };
 }
 
 /** What `run_job` blocks a halted run with. */
