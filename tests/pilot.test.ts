@@ -77,6 +77,7 @@ describe("readChoice", () => {
     const stopped = readChoice(answer("a3"), candidates);
     expect(stopped.stop).toBe("consequential");
     expect(stopped.pick?.name).toBe("Pay now");
-    expect(readChoice(answer("a3"), candidates, { allowConsequential: true }).stop).toBeNull();
+    // No option lets it through: only a person's approval does, via page_confirm.
+    expect(readChoice(answer("a3"), candidates, { allowConsequential: true } as never).stop).toBe("consequential");
   });
 });
