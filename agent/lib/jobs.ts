@@ -3,7 +3,7 @@ import { newId } from "./ids";
 import { getBot, patchBot } from "./bots";
 import { DEFAULT_EFFORT, type JobEffort } from "./models";
 import { describeSchedule, nextRun, type Schedule } from "./schedule";
-import { deleteDoc, listDocs, readDoc, store, updateDoc, writeDoc } from "./store";
+import { createDoc, deleteDoc, listDocs, readDoc, store, updateDoc } from "./store";
 import type { Job, JobArtifact, JobResult, JobStatus } from "./types";
 import { describeUsage } from "./usage";
 
@@ -94,7 +94,7 @@ export async function assignJob(input: {
   // Index first: a crash after this line leaves a harmless marker, never an
   // open job the dispatcher cannot see.
   await markOpen(job.workspaceId, job.id);
-  await writeDoc(key(job.workspaceId, job.id), job, null);
+  await createDoc(key(job.workspaceId, job.id), job);
   const bot = await getBot(job.workspaceId, job.botId);
   await record({
     workspaceId: job.workspaceId,
@@ -274,9 +274,17 @@ export async function claimJob(
   if (options.kind === "run") await markOpen(workspaceId, jobId);
 
   const now = Date.now();
-  const outcome = { reason: `No job ${jobId} in this workspace.` };
+  const outcome: { reason: string; mine: Job | null } = { reason: `No job ${jobId} in this workspace.`, mine: null };
   const job = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
     if (current === null) return null;
+    const held = current.lease;
+    if (held !== null && held.token === options.token && held.kind === options.kind && current.status === options.status) {
+      // Already this claim's: a replayed step, or a claim that landed and came
+      // back as a conflict (the Blob SDK retries it into its own write). Not
+      // "a bot is already working on it": that bot is this run.
+      outcome.mine = current;
+      return null;
+    }
     if (!allowed.includes(current.status)) {
       outcome.reason = unavailable(current);
       return null;
@@ -318,7 +326,8 @@ export async function claimJob(
     };
   });
 
-  return job === null ? { ok: false, reason: outcome.reason } : { ok: true, job };
+  const claimed = job ?? outcome.mine;
+  return claimed === null ? { ok: false, reason: outcome.reason } : { ok: true, job: claimed };
 }
 
 export type Hold =
@@ -465,8 +474,14 @@ export async function deferRun(
   token: string,
   options: { runAt: string; waitToken?: string },
 ): Promise<Job | null> {
-  return updateDoc<Job>(key(workspaceId, jobId), (current) => {
+  const found: { mine: Job | null } = { mine: null };
+  const deferred = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
     if (current === null || current.status === "cancelled" || CLOSED.includes(current.status)) return null;
+    if (deferredBy(current, options)) {
+      // This deferral already landed (a write reported as a conflict): success, not "taken over".
+      found.mine = current;
+      return null;
+    }
     if (current.lease === null || current.lease.token !== token) return null;
     const startsAt = Date.parse(options.runAt);
     return stamp({
@@ -480,6 +495,13 @@ export async function deferRun(
           : { token: options.waitToken, kind: "wait", until: new Date(startsAt + WAIT_GRACE_MS).toISOString() },
     });
   });
+  return deferred ?? found.mine;
+}
+
+/** Whether `job` is already waiting as `deferRun` with these options leaves it. */
+function deferredBy(job: Job, options: { runAt: string; waitToken?: string }): boolean {
+  if (job.runAt !== options.runAt || (job.status !== "queued" && job.status !== "scheduled")) return false;
+  return options.waitToken === undefined ? job.lease === null : job.lease?.kind === "wait" && job.lease.token === options.waitToken;
 }
 
 /**

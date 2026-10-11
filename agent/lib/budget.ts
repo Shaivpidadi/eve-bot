@@ -59,6 +59,8 @@ export interface Reservation {
   /** When it was admitted. */
   readonly at: string;
   readonly closedAt?: string;
+  /** The call that closed it, so that call knows its own close when the write comes back as a conflict. */
+  readonly closedBy?: string;
   /** Spent past its reservation while the workspace had no headroom: no more model steps. */
   readonly halted?: boolean;
 }
@@ -335,7 +337,13 @@ export function applySpend(
 /** Closes a reservation. Closing one already closed, or one not on this doc, writes nothing and is success. */
 export function applyClose(
   current: BudgetDoc,
-  input: { readonly runToken: string; readonly state: Exclude<ReservationState, "held">; readonly limits: BudgetLimits; readonly at: Date },
+  input: {
+    readonly runToken: string;
+    readonly state: Exclude<ReservationState, "held">;
+    readonly limits: BudgetLimits;
+    readonly at: Date;
+    readonly by?: string;
+  },
 ): BudgetDoc | null {
   const reservation = current.reservations[input.runToken];
   if (reservation === undefined || reservation.state !== "held") return null;
@@ -344,7 +352,12 @@ export function applyClose(
       ...current,
       reservations: {
         ...current.reservations,
-        [input.runToken]: { ...reservation, state: input.state, closedAt: input.at.toISOString() },
+        [input.runToken]: {
+          ...reservation,
+          state: input.state,
+          closedAt: input.at.toISOString(),
+          ...(input.by === undefined ? {} : { closedBy: input.by }),
+        },
       },
     },
     input.limits,
@@ -477,7 +490,14 @@ export async function recordSpend(
 async function close(workspaceId: string, runToken: string, state: "settled" | "released", now?: Date): Promise<boolean> {
   const at = now ?? new Date();
   const limits = budgetLimits();
-  return (await updateHolding(workspaceId, runToken, at, (current) => applyClose(current, { runToken, state, limits, at }))).written;
+  const by = `close_${crypto.randomUUID()}`;
+  const seen = { mine: false };
+  const { written } = await updateHolding(workspaceId, runToken, at, (current) => {
+    // Closed by this call already: its write landed but came back as a conflict (Blob).
+    seen.mine = current.reservations[runToken]?.closedBy === by;
+    return seen.mine ? null : applyClose(current, { runToken, state, limits, at, by });
+  });
+  return written || seen.mine;
 }
 
 /**

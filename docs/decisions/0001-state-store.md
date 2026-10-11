@@ -35,7 +35,7 @@ There is no KV/Redis backend: `kv.ts` is only the interface. Backends are picked
 | Read freshness | Immediate | Immediate | `useCache:false` on reads (`blob.ts:42,76`). `list` freshness is not verified here: treat it as possibly stale and never use it for invariants |
 | List | Exact, sorted | Directory walk, not a snapshot (`fs.ts:92-100`) | Paginated, not a snapshot (`blob.ts:80-89`) |
 | Multi-doc atomicity | None | None | None. `listDocs` reads each key separately (`index.ts:69-73`) |
-| Tested | `tests/store-concurrency.test.ts` | `tests/store-concurrency.test.ts`, `tests/store.test.ts` | **Untested**: no @vercel/blob mock exists. Covered only by the error-name check in `tests/store.test.ts` |
+| Tested | `tests/store-concurrency.test.ts` | `tests/store-concurrency.test.ts`, `tests/store.test.ts` | `tests/store-blob.test.ts`, `tests/store-blob-invariants.test.ts`: the real SDK over HTTP against an in-process fake of the Blob service (`tests/blob-fake.ts`), with several runtimes and injected lost answers and 5xx. Not the real service: the fake's ETag, error and paging behaviour is read off the SDK, not measured |
 
 ### Ambiguous commits on Blob (finding)
 
@@ -44,6 +44,8 @@ The Blob SDK retries network errors and 5xx responses up to `VERCEL_BLOB_RETRIES
 - a non-idempotent mutate (`n + 1`) can apply twice
 - a claim/transition guarded on state (`owner === null`) returns `null` ("someone else won") even though this caller won. The work stays leased until the lease expires
 - create-if-absent reports a duplicate for a first delivery
+
+`tests/store-blob.test.ts` reproduces this against the fake service (the PUT is retried with `x-api-blob-request-attempt: 1` and refused 412 or "already exists"). `tests/store-blob-invariants.test.ts` drives the callers through it. It found and now covers: `claimJob` reporting its own landed claim as "a bot is already working on it" (the job stayed leased to nobody until the lease lapsed); `deferRun` reporting its own deferral as "taken over", so the run never retried; `assignJob` and `hireBot` throwing on their own landed create, inviting a duplicate on retry (now `createDoc`); the default-Bot seed claim reading its own write as another process's, so the workspace was not seeded; and `settleRun`/`releaseRun` returning false for their own close, so a repair that freed headroom did not re-try the refused admission.
 
 So on Blob every mutate must be **idempotent and self-recognising**. It carries the writer's identity (`runId`, `fence`, `actionId`, `eventId`) and treats "already contains my change" as success, not as a lost race. The fs and memory backends do not retry, so this affects only Blob.
 

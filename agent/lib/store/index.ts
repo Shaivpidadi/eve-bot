@@ -54,6 +54,30 @@ export async function writeDoc<T>(
   return store().put(key, JSON.stringify(value, null, 2), { expectedVersion });
 }
 
+/**
+ * Creates a document under a key nobody else writes (one named by a fresh
+ * id), exactly once.
+ *
+ * On Blob a create-only write that landed can come back as "already exists":
+ * the SDK retries a request whose answer was lost, and the retry meets its own
+ * write (docs/decisions/0001-state-store.md). A key made from a fresh id can
+ * only hold this call's own write, so finding exactly these bytes there is
+ * success. Anything else at the key is a real conflict and still throws.
+ *
+ * Not for dedupe keys that several writers share (an inbox event id): there,
+ * identical bytes from another writer would be read as this call's own.
+ */
+export async function createDoc<T>(key: string, value: T): Promise<string> {
+  try {
+    return await writeDoc(key, value, null);
+  } catch (error) {
+    if (!isConflict(error)) throw error;
+    const landed = await store().get(key);
+    if (landed === null || landed.value !== JSON.stringify(value, null, 2)) throw error;
+    return landed.version;
+  }
+}
+
 export function writeBytes(key: string, bytes: Uint8Array): Promise<void> {
   return store().putBytes(key, bytes);
 }
