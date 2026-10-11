@@ -4,6 +4,7 @@ import {
   type ActionFacts,
   classifyAction,
   type DomFacts,
+  bestMatches,
   refsMatching,
   scriptUrl,
   treeFacts,
@@ -172,8 +173,32 @@ describe("refsMatching", () => {
 
   it("resolves a semantic locator to the refs it could mean", () => {
     expect(refsMatching(TREE, "role", "link", "Inbox")).toEqual(["@e6"]);
-    expect(refsMatching(TREE, "text", "Send")).toEqual(["@e3", "@e5"]);
-    expect(refsMatching(TREE, "testid", "send")).toEqual([]);
+    expect(refsMatching(TREE, "role", "button")).toEqual(["@e3", "@e5"]);
+  });
+
+  it("prefers the exact name, case and spacing aside, over names that contain it", () => {
+    const tree = `- button "Send" [ref=e1]
+- button "Sender" [ref=e2]
+- button "Send  later" [ref=e3]
+- link "Archive \\"old\\" mail" [ref=e4]`;
+    expect(refsMatching(tree, "text", "Send")).toEqual(["@e1"]);
+    expect(refsMatching(tree, "text", "  send ")).toEqual(["@e1"]);
+    expect(refsMatching(tree, "role", "button", "SEND")).toEqual(["@e1"]);
+    expect(refsMatching(tree, "text", "send later")).toEqual(["@e3"]);
+    // A part of a name, when nothing reads exactly: one match, or several for the caller to refuse.
+    expect(refsMatching(tree, "text", "later")).toEqual(["@e3"]);
+    expect(refsMatching(tree, "text", "Sen")).toEqual(["@e1", "@e2", "@e3"]);
+    expect(refsMatching(tree, "text", 'Archive "old" mail')).toEqual(["@e4"]);
+    expect(refsMatching(tree, "text", "")).toEqual([]);
+  });
+});
+
+describe("bestMatches", () => {
+  it("takes the exact matches when there are any, and parts only otherwise", () => {
+    const labels = (item: string) => [item];
+    expect(bestMatches(["Email", "Email address", "Backup email"], labels, "email")).toEqual(["Email"]);
+    expect(bestMatches(["Email address", "Backup email"], labels, "email")).toEqual(["Email address", "Backup email"]);
+    expect(bestMatches(["Email address", "Phone"], labels, "EMAIL")).toEqual(["Email address"]);
   });
 });
 

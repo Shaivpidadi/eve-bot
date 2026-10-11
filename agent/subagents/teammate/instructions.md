@@ -59,7 +59,9 @@ Treat the page the way a person does: look, act, then confirm.
    between steps. Call `request_takeover` at a sign-in. When you already know
    the control — the Send button, the field labelled Email — set `by` to
    `text`, `label`, `placeholder`, `testid` or `role` and name it instead of
-   reading the page to find its ref.
+   reading the page to find its ref. Use the wording the page shows: an exact
+   match wins over a longer name that contains it, and a name that could mean
+   two controls is refused rather than guessed.
    `page_set` for a dropdown or a checkbox, by the state you want.
    `page_get` for one fact (a field's value, how many rows, a link's href)
    without paying for a whole tree. `page_upload` attaches a file you wrote.

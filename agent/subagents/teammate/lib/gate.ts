@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import type { ToolContext } from "eve/tools";
 
@@ -101,6 +101,8 @@ export function samePage(a: string, b: string): boolean {
   }
 }
 
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
 /** Blurs whatever has focus, so a focus that silently fails cannot report the previous element. */
 const BLUR = "(() => { const e = document.activeElement; if (e && e !== document.body && typeof e.blur === 'function') e.blur(); return true; })()";
 
@@ -121,7 +123,7 @@ const PROBE = `(() => {
     tag: String(e.tagName || "").toUpperCase(),
     type: String(typeof e.type === "string" ? e.type : attr("type") || "").toLowerCase(),
     role: String(attr("role") || "").toLowerCase(),
-    name: clip(attr("aria-label") || attr("title") || e.innerText || e.value || attr("placeholder")),
+    name: clip(attr("aria-label") || (e.labels && e.labels[0] ? e.labels[0].innerText : "") || attr("title") || e.innerText || attr("placeholder") || e.value),
     href: String(attr("href") || ""),
     form: f ? { method, action } : null,
     inSearch: Boolean((e.closest && e.closest('[role="search"], search')) || (f && f.getAttribute("role") === "search")),
@@ -168,14 +170,93 @@ async function probeDom(ctx: ToolContext, selector: string): Promise<DomFacts | 
   return readDom(data === null ? read.output : data.result);
 }
 
+/** The attribute a located element is marked with, so the action reaches that element and no other. */
+const MARK = "data-eve-gate";
+
+/**
+ * Finds the one element a label, placeholder or test id means, in the page
+ * itself, and marks it so the action can name it. A fixed function: the
+ * locator reaches it only as JSON data in the argument, never as code.
+ *
+ * Label is the element's own aria-label, its aria-labelledby text, or the text
+ * of a <label> for it; placeholder is the attribute; test id is data-testid,
+ * exactly. Label and placeholder follow `bestMatches` in `consequence.ts`:
+ * exact (case and spacing aside) first, a part of the text only when nothing
+ * reads exactly. Elements that are not rendered are not candidates.
+ */
+const LOCATE_FN = `((q) => {
+  const norm = (s) => String(s == null ? "" : s).replace(/\\s+/g, " ").trim().toLowerCase();
+  const shown = (e) => {
+    const box = e.getBoundingClientRect();
+    const style = getComputedStyle(e);
+    return box.width > 0 && box.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+  };
+  const texts = (e) => {
+    if (q.by === "placeholder") return [e.getAttribute("placeholder")];
+    const out = [e.getAttribute("aria-label")];
+    const ids = String(e.getAttribute("aria-labelledby") || "").split(/\\s+/).filter(Boolean);
+    if (ids.length > 0) out.push(ids.map((id) => { const l = document.getElementById(id); return l ? l.textContent : ""; }).join(" "));
+    if (e.labels) for (const l of Array.from(e.labels)) out.push(l.textContent);
+    return out.filter((t) => t != null);
+  };
+  const pool =
+    q.by === "testid" ? "[data-testid]"
+    : q.by === "placeholder" ? "[placeholder]"
+    : "input, textarea, select, button, meter, output, progress, [contenteditable], [role], [aria-label], [aria-labelledby]";
+  const all = Array.from(document.querySelectorAll(pool)).filter(shown);
+  let found;
+  if (q.by === "testid") {
+    found = all.filter((e) => e.getAttribute("data-testid") === q.value);
+  } else {
+    const want = norm(q.value);
+    const exact = want === "" ? [] : all.filter((e) => texts(e).some((t) => norm(t) === want));
+    found = exact.length > 0 || want === "" ? exact : all.filter((e) => texts(e).some((t) => norm(t).includes(want)));
+  }
+  for (const e of Array.from(document.querySelectorAll("[" + q.attr + "]"))) e.removeAttribute(q.attr);
+  if (found.length === 1) found[0].setAttribute(q.attr, q.mark);
+  return JSON.stringify({ count: found.length });
+})`;
+
+/** The expression that locates `value` by `by`: the fixed function, applied to the locator as JSON. */
+export const locateExpression = (by: "label" | "placeholder" | "testid", value: string, mark: string): string =>
+  `${LOCATE_FN}(${JSON.stringify({ by, value, mark, attr: MARK })})`;
+
+/** How many elements the page has for a label, placeholder or test id, marking the one when there is one. */
+async function locate(ctx: ToolContext, by: "label" | "placeholder" | "testid", value: string): Promise<{ count: number | null; selector: string }> {
+  const mark = randomBytes(8).toString("hex");
+  const selector = `[${MARK}="${mark}"]`;
+  const read = await browser(ctx, ["eval", locateExpression(by, value, mark)]);
+  if (!read.ok) return { count: null, selector };
+  const data = payload(read);
+  let parsed: unknown = data === null ? read.output : data.result;
+  for (let i = 0; i < 2 && typeof parsed === "string"; i += 1) {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return { count: null, selector };
+    }
+  }
+  const count = (parsed as { count?: unknown } | null)?.count;
+  return { count: typeof count === "number" ? count : null, selector };
+}
+
 export interface Inspected {
   readonly url: string;
-  /** What to act on: a ref or CSS selector. A semantic locator is resolved to the one ref it means. */
+  /** What to act on: a ref or CSS selector. A semantic locator is resolved to the one element it means. */
   readonly selector: string | null;
   readonly element: ElementPrint;
+  /** How the element was named, when it was found by a semantic locator: `label "Email"`. */
+  readonly located?: string;
   /** Why the element could not be pinned down, when `selector` is null. */
   readonly problem?: string;
 }
+
+const unmatched = (target: Target, count: number | null): string =>
+  count === null
+    ? `the page could not be searched for ${target.by} "${target.target}" to check it`
+    : count === 0
+      ? `nothing on the page could be matched to ${target.by} "${target.target}" to check it`
+      : `${count} elements match ${target.by} "${target.target}", so which one would be acted on is not certain`;
 
 /** The page's address and the named element, as the tree and the DOM describe it. */
 export async function inspect(ctx: ToolContext, target: Target, options: { readonly dom?: boolean } = {}): Promise<Inspected> {
@@ -186,24 +267,39 @@ export async function inspect(ctx: ToolContext, target: Target, options: { reado
 
   let selector: string | null = target.target;
   let problem: string | undefined;
-  if (target.by !== undefined && target.by !== "ref") {
-    const refs = refsMatching(tree, target.by, target.target, target.name);
-    if (refs.length === 1) {
-      selector = refs[0] as string;
-    } else {
+  const by = target.by;
+  if (by === "text" || by === "role") {
+    const refs = refsMatching(tree, by, target.target, target.name);
+    if (refs.length === 1) selector = refs[0] as string;
+    else {
       selector = null;
-      problem =
-        refs.length === 0
-          ? `nothing on the page could be matched to ${target.by} "${target.target}" to check it`
-          : `${refs.length} elements match ${target.by} "${target.target}", so which one would be acted on is not certain`;
+      problem = unmatched(target, refs.length);
+    }
+  } else if (by === "label" || by === "placeholder" || by === "testid") {
+    // Not in the tree: a label or placeholder is often not the accessible name, and a test id never is.
+    const found = await locate(ctx, by, target.target);
+    if (found.count === 1) selector = found.selector;
+    else {
+      selector = null;
+      problem = unmatched(target, found.count);
     }
   }
+  const located =
+    by === undefined || by === "ref"
+      ? undefined
+      : by === "role"
+        ? `role ${clip(target.target, 40)}${target.name ? ` named "${clip(target.name, 80)}"` : ""}`
+        : `${by} "${clip(target.target, 80)}"`;
   const treeFact = selector !== null && selector.startsWith("@") ? treeFacts(tree, selector) : null;
   const dom = selector !== null && options.dom !== false ? await probeDom(ctx, selector) : null;
-  return { url, selector, element: { tree: treeFact, dom }, ...(problem === undefined ? {} : { problem }) };
+  return {
+    url,
+    selector,
+    element: { tree: treeFact, dom },
+    ...(located === undefined ? {} : { located }),
+    ...(problem === undefined ? {} : { problem }),
+  };
 }
-
-const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 /** Shortened from the middle: the end of a path, query or fragment is usually the id that tells two records apart. */
 const middle = (text: string, max: number): string => {
@@ -227,10 +323,11 @@ export const address = (url: string): string => {
   }
 };
 
-function elementWords(element: ElementPrint, selector: string): string {
+function elementWords(element: ElementPrint, selector: string, located?: string): string {
   const role = element.tree?.role || element.dom?.role || element.dom?.tag.toLowerCase() || "element";
   const name = element.tree?.name || element.dom?.name || "";
-  return name === "" ? `${role} ${selector}` : `${role} "${clip(name, 80)}"`;
+  if (name !== "") return `${role} "${clip(name, 80)}"`;
+  return located === undefined ? `${role} ${selector}` : `${role} found by ${located}`;
 }
 
 /** The one line a person approves: what, on which element, on which page, and why it was flagged. */
@@ -239,12 +336,13 @@ export function describeProposal(input: {
   readonly url: string;
   readonly selector: string;
   readonly element: ElementPrint;
+  readonly located?: string;
   readonly reasons: readonly string[];
   readonly value?: string;
   readonly option?: string;
   readonly files?: readonly string[];
 }): string {
-  const what = elementWords(input.element, input.selector);
+  const what = elementWords(input.element, input.selector, input.located);
   const verb =
     input.kind === "click"
       ? `Click ${what}`
@@ -342,6 +440,7 @@ export async function gate(ctx: ToolContext, request: GateRequest): Promise<Gate
       url: seen.url,
       selector: seen.selector,
       element: seen.element,
+      ...(seen.located === undefined ? {} : { located: seen.located }),
       reasons: classification.reasons,
       ...(request.value === undefined ? {} : { value: request.value }),
       ...(request.option === undefined ? {} : { option: request.option }),

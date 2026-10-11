@@ -16,6 +16,8 @@ interface FakeElement {
   readonly name: string;
   readonly dom: DomFacts | null;
   value?: string;
+  /** What the page itself says about it, outside the tree: for label, placeholder and test id lookups. */
+  readonly attrs?: { readonly testid?: string; readonly placeholder?: string; readonly label?: string };
   readonly onClick?: () => void;
   readonly onEnter?: () => void;
 }
@@ -29,6 +31,10 @@ interface FakePage {
 const fake = vi.hoisted(() => ({
   page: null as unknown as FakePage,
   focused: null as string | null,
+  /** The element the gate's lookup marked, and the mark. */
+  marked: null as { mark: string; ref: string } | null,
+  /** Every eval the gate ran. */
+  evals: [] as string[],
   /** Every command that acts on the page, in order. */
   acted: [] as string[][],
 }));
@@ -63,8 +69,25 @@ vi.mock("../agent/subagents/teammate/lib/browser", async (importOriginal) => {
   };
   const fail = (error: string) => ({ ok: false, output: error, data: null, error });
   const find = (selector: string) => {
+    const mark = /^\[data-eve-gate="([0-9a-f]+)"\]$/.exec(selector)?.[1];
+    if (mark !== undefined) return fake.marked?.mark === mark ? fake.marked.ref : null;
     const ref = selector.replace(/^@/, "");
     return fake.page.elements[ref] === undefined ? null : ref;
+  };
+  /** The gate's DOM lookup, done over the fake's attributes with the same rule: exact first, then a part. */
+  const locate = (code: string) => {
+    const query = JSON.parse(/\)\((\{.*\})\)$/s.exec(code)?.[1] ?? "null") as { by: string; value: string; mark: string };
+    const norm = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
+    const entries = Object.entries(fake.page.elements);
+    const text = (attrs: FakeElement["attrs"]) => (query.by === "label" ? attrs?.label : query.by === "placeholder" ? attrs?.placeholder : undefined);
+    let found: string[];
+    if (query.by === "testid") found = entries.filter(([, element]) => element.attrs?.testid === query.value).map(([ref]) => ref);
+    else {
+      const exact = entries.filter(([, element]) => norm(text(element.attrs) ?? "\u0000") === norm(query.value)).map(([ref]) => ref);
+      found = exact.length > 0 ? exact : entries.filter(([, element]) => norm(text(element.attrs) ?? "").includes(norm(query.value)) && text(element.attrs) !== undefined).map(([ref]) => ref);
+    }
+    fake.marked = found.length === 1 ? { mark: query.mark, ref: found[0]! } : null;
+    return JSON.stringify({ count: found.length });
   };
   return {
     payload: actual.payload,
@@ -91,6 +114,8 @@ vi.mock("../agent/subagents/teammate/lib/browser", async (importOriginal) => {
           return envelope({});
         case "eval": {
           const code = rest[0] ?? "";
+          fake.evals.push(code);
+          if (code.includes("data-testid")) return envelope({ result: locate(code) });
           if (code.includes("blur()")) {
             fake.focused = null;
             return envelope({ result: true });
@@ -186,6 +211,8 @@ function mailApp(): FakePage {
 async function setup(page: FakePage = mailApp(), options: { lapsed?: boolean } = {}) {
   fake.page = page;
   fake.focused = null;
+  fake.marked = null;
+  fake.evals = [];
   fake.acted = [];
   const jobs = await import("../agent/lib/jobs");
   const tool = async (name: string) => (await import(`../agent/subagents/teammate/tools/${name}.ts`)).default as Tool;
@@ -338,6 +365,89 @@ describe("consequential browser actions", () => {
   });
 });
 
+/** An account settings page in a single-page app: fields named by labels, buttons with test ids. */
+function settingsApp(): FakePage {
+  const field = (name: string): DomFacts => ({ ...button(name), tag: "INPUT", type: "email" });
+  return {
+    url: "https://app.example.com/settings",
+    tree: `- textbox "Email address" [ref=e1]
+- textbox "Backup email" [ref=e2]
+- button "Save changes" [ref=e3]
+- button "Send" [ref=e4]
+- button "Sender" [ref=e5]`,
+    elements: {
+      e1: { role: "textbox", name: "Email address", dom: field("Email address"), attrs: { label: "Email address", placeholder: "you@example.com" } },
+      e2: { role: "textbox", name: "Backup email", dom: field("Backup email"), attrs: { label: "Backup email", placeholder: "backup@example.com" } },
+      e3: { role: "button", name: "Save changes", dom: button("Save changes"), attrs: { testid: "save-btn" } },
+      e4: { role: "button", name: "Send", dom: button("Send") },
+      e5: { role: "button", name: "Sender", dom: button("Sender") },
+    },
+  };
+}
+
+describe("semantic locators", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+  });
+
+  it("finds a control by its test id, and acts on that element once approved", async () => {
+    const saved: string[] = [];
+    const page = settingsApp();
+    page.elements.e3 = { ...page.elements.e3!, onClick: () => saved.push("saved") };
+    const { tools, approveAndRun } = await setup(page);
+    const proposed = await tools.click.execute({ target: "save-btn", by: "testid" }, ctxFor("sess_A"));
+    expect(proposed).toMatchObject({ clicked: false, needsApproval: true, verdict: "consequential" });
+    const proposal = proposed.proposal as { proposal: string; action: string };
+    expect(proposal.action).toMatch(/^Click button "Save changes" on app\.example\.com\/settings/);
+    expect(clicks()).toEqual([]);
+
+    expect(await approveAndRun(proposal)).toMatchObject({ done: true });
+    expect(saved).toEqual(["saved"]);
+    expect(clicks()).toEqual([["click", `[data-eve-gate="${fake.marked?.mark}"]`]]);
+  });
+
+  it("takes the exact name over one that only starts with it", async () => {
+    const { tools } = await setup(settingsApp());
+    const proposed = await tools.click.execute({ target: "Send", by: "text" }, ctxFor("sess_A"));
+    expect(proposed).toMatchObject({ needsApproval: true });
+    expect((proposed.proposal as { action: string }).action).toMatch(/^Click button "Send" on/);
+  });
+
+  it("finds a field by its placeholder when its accessible name comes from a label", async () => {
+    const { tools } = await setup(settingsApp());
+    const result = await tools.fill.execute({ target: "you@example.com", by: "placeholder", value: "ana@example.com", submit: true }, ctxFor("sess_A"));
+    expect(result).toMatchObject({ filled: true, submitted: false, needsApproval: true });
+    expect(fake.page.elements.e1?.value).toBe("ana@example.com");
+    expect(fake.page.elements.e2?.value).toBeUndefined();
+    expect(clicks()).toEqual([]);
+  });
+
+  it("refuses a label that could mean more than one field", async () => {
+    const { tools } = await setup(settingsApp());
+    const result = await tools.fill.execute({ target: "email", by: "label", value: "x", submit: true }, ctxFor("sess_A"));
+    expect(result).toMatchObject({ filled: false });
+    expect(String(result.error)).toMatch(/2 elements match label "email"/);
+    expect(fake.page.elements.e1?.value).toBeUndefined();
+    expect(fake.page.elements.e2?.value).toBeUndefined();
+  });
+
+  it("hands the page a locator only as data, never as code", async () => {
+    const { tools } = await setup(settingsApp());
+    const evil = `"}); window.pwned = 1; ({"`;
+    await tools.click.execute({ target: evil, by: "label" }, ctxFor("sess_A"));
+    const { locateExpression } = await import("../agent/subagents/teammate/lib/gate");
+    const code = fake.evals.find((entry) => entry.includes("data-testid")) ?? "";
+    const mark = /"mark":"([0-9a-f]+)"/.exec(code)?.[1] ?? "";
+    expect(code).toBe(locateExpression("label", evil, mark));
+    const argument = `(${JSON.stringify({ by: "label", value: evil, mark, attr: "data-eve-gate" })})`;
+    const plain = locateExpression("label", "Email", mark);
+    // The same fixed function, applied to different data.
+    expect(code.slice(0, -argument.length)).toBe(plain.slice(0, -`(${JSON.stringify({ by: "label", value: "Email", mark, attr: "data-eve-gate" })})`.length));
+    expect(clicks()).toEqual([]);
+  });
+});
+
 describe("approval bound to the action", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -484,5 +594,83 @@ describe("the address an approval holds for", () => {
     expect(long.length).toBeLessThan(200);
     expect(long).toMatch(/id=REC-42#tab=/);
     expect(long).toMatch(/-END$/);
+  });
+});
+
+describe("the page-side lookup", () => {
+  /** Just enough of a DOM to run the real lookup expression in a sandboxed context. */
+  function dom(elements: { attrs: Record<string, string>; labels?: string[]; hidden?: boolean; id?: string; text?: string }[]) {
+    const nodes = elements.map((spec) => ({
+      attrs: { ...spec.attrs },
+      labels: spec.labels?.map((text) => ({ textContent: text })) ?? null,
+      textContent: spec.text ?? "",
+      getAttribute(name: string) {
+        return name in this.attrs ? (this.attrs as Record<string, string>)[name]! : null;
+      },
+      setAttribute(name: string, value: string) {
+        (this.attrs as Record<string, string>)[name] = value;
+      },
+      removeAttribute(name: string) {
+        delete (this.attrs as Record<string, string>)[name];
+      },
+      getBoundingClientRect: () => ({ width: spec.hidden === true ? 0 : 10, height: 10 }),
+    }));
+    const has = (selector: string) => /^\[([a-z-]+)\]$/.exec(selector)?.[1];
+    const context = {
+      window: {} as Record<string, unknown>,
+      getComputedStyle: () => ({ visibility: "visible", display: "block" }),
+      document: {
+        querySelectorAll: (selector: string) => {
+          const attr = has(selector);
+          return attr === undefined ? nodes : nodes.filter((node) => attr in node.attrs);
+        },
+        getElementById: (id: string) => nodes.find((node) => node.attrs.id === id) ?? null,
+      },
+    };
+    return { nodes, context };
+  }
+
+  const run = async (by: "label" | "placeholder" | "testid", value: string, page: ReturnType<typeof dom>) => {
+    const { runInNewContext } = await import("node:vm");
+    const { locateExpression } = await import("../agent/subagents/teammate/lib/gate");
+    return JSON.parse(runInNewContext(locateExpression(by, value, "abc123"), page.context) as string) as { count: number };
+  };
+  const marked = (page: ReturnType<typeof dom>) => page.nodes.findIndex((node) => node.attrs["data-eve-gate"] === "abc123");
+
+  it("finds a test id exactly, and marks it", async () => {
+    const page = dom([{ attrs: { "data-testid": "save-btn" } }, { attrs: { "data-testid": "save-btn-2" } }]);
+    expect(await run("testid", "save-btn", page)).toEqual({ count: 1 });
+    expect(marked(page)).toBe(0);
+    expect(await run("testid", "Save-btn", page)).toEqual({ count: 0 });
+    expect(marked(page)).toBe(-1);
+  });
+
+  it("finds a label through <label>, aria-label and aria-labelledby, exact first", async () => {
+    const page = dom([
+      { attrs: {}, labels: ["Email  "] },
+      { attrs: { "aria-label": "Backup email" } },
+      { attrs: { "aria-labelledby": "l1" } },
+      { attrs: { id: "l1" }, text: "Phone number", hidden: true },
+    ]);
+    expect(await run("label", "email", page)).toEqual({ count: 1 });
+    expect(marked(page)).toBe(0);
+    expect(await run("label", "phone", page)).toEqual({ count: 1 });
+    expect(marked(page)).toBe(2);
+    expect(await run("label", "mail", page)).toEqual({ count: 2 });
+    expect(marked(page)).toBe(-1);
+  });
+
+  it("skips what is not rendered, and finds a placeholder", async () => {
+    const page = dom([{ attrs: { placeholder: "Search" }, hidden: true }, { attrs: { placeholder: "Search" } }]);
+    expect(await run("placeholder", "search", page)).toEqual({ count: 1 });
+    expect(marked(page)).toBe(1);
+  });
+
+  it("runs a hostile locator as a string to compare, never as code", async () => {
+    const page = dom([{ attrs: { "aria-label": "x" } }]);
+    for (const evil of [`"}); window.pwned = 1; ({"`, "`); window.pwned = 1; (`", " window.pwned = 1", "</script><script>window.pwned=1</script>"]) {
+      expect(await run("label", evil, page)).toEqual({ count: 0 });
+    }
+    expect(page.context.window.pwned).toBeUndefined();
   });
 });

@@ -305,32 +305,46 @@ export function treeFacts(tree: string, ref: string): TreeFacts | null {
   return null;
 }
 
+/** Case and runs of whitespace do not distinguish two labels a person would read as the same. */
+export const sameLabel = (text: string): string => text.replace(/\s+/g, " ").trim().toLowerCase();
+
 /**
- * The refs of interactive elements whose role and name fit a semantic locator,
- * so a `by` target can be checked and then acted on as the one element it
- * means. Text, label and placeholder match the accessible name, which is what
- * agent-browser's `find` matches too.
+ * Which of `labels` a locator means: the ones that read exactly as `wanted`
+ * (case and spacing aside) when there are any, otherwise the ones that contain
+ * it. "Send" means the Send button, not Send later beside it; a part of a long
+ * label still finds it, but only when it is the only one, which is for the
+ * caller to check. Generic over what is matched, so the DOM lookup in `gate.ts`
+ * follows the same rule.
  */
-export function refsMatching(tree: string, by: "text" | "label" | "placeholder" | "role" | "testid", target: string, name?: string): string[] {
-  if (by === "testid") return [];
-  const wanted = (by === "role" ? (name ?? "") : target).trim().toLowerCase();
-  const refs: string[] = [];
+export function bestMatches<T>(items: readonly T[], label: (item: T) => readonly string[], wanted: string): T[] {
+  const want = sameLabel(wanted);
+  if (want === "") return [];
+  const exact = items.filter((item) => label(item).some((text) => sameLabel(text) === want));
+  return exact.length > 0 ? exact : items.filter((item) => label(item).some((text) => sameLabel(text).includes(want)));
+}
+
+/**
+ * The refs of interactive elements in an accessibility tree that fit a `text`
+ * or `role` locator, so the target can be checked and then acted on as the one
+ * element it means. Text is matched against the accessible name, exact first
+ * (see `bestMatches`); a role with no name means every element of that role.
+ * Label, placeholder and test id are not in the tree; `gate.ts` finds those in
+ * the page itself.
+ */
+export function refsMatching(tree: string, by: "text" | "role", target: string, name?: string): string[] {
+  const entries: { ref: string; name: string }[] = [];
   for (const raw of tree.split("\n")) {
     const match = TREE_LINE.exec(raw);
     if (match === null) continue;
     const [, , role = "", rawName, rest = ""] = match;
-    const ref = /ref=(e\d+)/.exec(rest)?.[1];
+    const ref = /\bref=(e\d+)/.exec(rest)?.[1];
     if (ref === undefined) continue;
-    const label = (rawName ?? "").trim().toLowerCase();
-    if (by === "role") {
-      if (role.toLowerCase() !== target.trim().toLowerCase()) continue;
-      if (wanted !== "" && !label.includes(wanted)) continue;
-    } else if (wanted === "" || !label.includes(wanted)) {
-      continue;
-    }
-    refs.push(`@${ref}`);
+    if (by === "role" && role.toLowerCase() !== target.trim().toLowerCase()) continue;
+    entries.push({ ref: `@${ref}`, name: (rawName ?? "").replace(/\\(.)/g, "$1") });
   }
-  return refs;
+  const wanted = by === "role" ? (name ?? "") : target;
+  if (by === "role" && sameLabel(wanted) === "") return entries.map((entry) => entry.ref);
+  return bestMatches(entries, (entry) => [entry.name], wanted).map((entry) => entry.ref);
 }
 
 /**
