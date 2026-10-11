@@ -165,3 +165,84 @@ export function pricedModel(model: WrappableModel, baseURL: string, modelId: str
   };
   return wrapLanguageModel({ model, middleware });
 }
+
+// ---------------------------------------------------------------------------
+// The computer's runtime
+// ---------------------------------------------------------------------------
+
+/**
+ * What the team's computer costs to run, as the deployment's owner sets it.
+ *
+ * Vercel bills Sandbox by usage (active CPU, provisioned memory, network,
+ * creations) at rates that change and depend on the plan, and nothing in this
+ * app or its dependencies states them, so none is assumed: unset means the
+ * computer's cost is unknown, and the budget says so. Set any of these, in USD,
+ * from your plan's pricing page; a session's cost is the sum of the parts set.
+ *
+ * - `BOT_COMPUTER_USD_PER_HOUR`: per wall-clock hour the computer runs (an
+ *   all-in figure of your own).
+ * - `BOT_COMPUTER_USD_PER_CPU_HOUR`: per hour of active CPU, as Vercel
+ *   reports it for the session.
+ * - `BOT_COMPUTER_USD_PER_GB_HOUR`: per GB of memory provisioned, per
+ *   wall-clock hour.
+ */
+export interface ComputerRates {
+  readonly perHour: number | null;
+  readonly perCpuHour: number | null;
+  readonly perGbHour: number | null;
+}
+
+function rateFrom(name: string, value: string | undefined): number | null {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed === "") return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    console.warn(`[bot] Ignoring ${name}="${trimmed}"; expected a non-negative number of USD.`);
+    return null;
+  }
+  return parsed;
+}
+
+/** The computer's rates, or null when none is set: its runtime is then unpriced. */
+export function computerRates(env: NodeJS.ProcessEnv = process.env): ComputerRates | null {
+  const rates: ComputerRates = {
+    perHour: rateFrom("BOT_COMPUTER_USD_PER_HOUR", env.BOT_COMPUTER_USD_PER_HOUR),
+    perCpuHour: rateFrom("BOT_COMPUTER_USD_PER_CPU_HOUR", env.BOT_COMPUTER_USD_PER_CPU_HOUR),
+    perGbHour: rateFrom("BOT_COMPUTER_USD_PER_GB_HOUR", env.BOT_COMPUTER_USD_PER_GB_HOUR),
+  };
+  return rates.perHour === null && rates.perCpuHour === null && rates.perGbHour === null ? null : rates;
+}
+
+/** One finished run of the computer's VM: a Vercel Sandbox session, as its API reports it. */
+export interface ComputerSession {
+  readonly id: string;
+  /** Wall-clock milliseconds it ran; undefined when the provider has not said. */
+  readonly durationMs: number | undefined;
+  /** Active CPU milliseconds; Vercel reports it only once the session stopped. */
+  readonly activeCpuMs: number | undefined;
+  /** Memory provisioned, in MB. */
+  readonly memoryMb: number;
+}
+
+const HOUR_MS = 60 * 60_000;
+
+/**
+ * What one session cost at `rates`, or null when it cannot be priced: no rate
+ * is set, or a rate that is set needs a figure the provider did not report.
+ * Null is counted as unknown cost, never as free.
+ */
+export function computerSessionCost(session: ComputerSession, rates: ComputerRates | null): number | null {
+  if (rates === null) return null;
+  const known = (value: number | undefined): value is number => value !== undefined && Number.isFinite(value) && value >= 0;
+  let usd = 0;
+  if (rates.perHour !== null || rates.perGbHour !== null) {
+    if (!known(session.durationMs)) return null;
+    const hours = session.durationMs / HOUR_MS;
+    usd += (rates.perHour ?? 0) * hours + (rates.perGbHour ?? 0) * (session.memoryMb / 1024) * hours;
+  }
+  if (rates.perCpuHour !== null) {
+    if (!known(session.activeCpuMs)) return null;
+    usd += rates.perCpuHour * (session.activeCpuMs / HOUR_MS);
+  }
+  return usd;
+}
