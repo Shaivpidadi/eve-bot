@@ -1,8 +1,9 @@
 import { ConnectionAuthorizationFailedError, ConnectionAuthorizationRequiredError, defineMcpClientConnection, type McpClientConnectionDefinition } from "eve/connections";
-import type { ApprovalContext, ApprovalStatus } from "eve/tools/approval";
+import type { ApprovalContext, ApprovalResponseContext, ApprovalStatus } from "eve/tools/approval";
 
 import { toolEffect } from "./catalog";
 import { allowedTools, type Connector, connectorHeaders, connectorToken, getConnector, permissionVersion } from "./connectors";
+import { readDoc, updateDoc } from "./store";
 
 /**
  * One connector as an eve MCP connection, for HQ or for a Bot at work.
@@ -13,10 +14,14 @@ import { allowedTools, type Connector, connectorHeaders, connectorToken, getConn
  * those has to bite on the next call, not the next session. So every hook
  * eve offers re-reads the stored connector and fails closed:
  *
- * - `approval` runs before every tool call with the tool's name. It decides
- *   from the live record: gone, off, tool not allowed (for HQ: not a reviewed
- *   read) is a denial with a reason the model sees; otherwise the live gate
- *   and live policy decide whether a person is asked.
+ * - `approval.request` runs before every tool call with the tool's name. It
+ *   decides from the live record: gone, off, tool not allowed (for HQ: not a
+ *   reviewed read) is a denial with a reason the model sees; otherwise the
+ *   live gate and live policy decide whether a person is asked.
+ * - `approval.response` runs when a person approves (never on a denial). It
+ *   records, per session, the permission version the tool was approved under,
+ *   which is what the "all" gate's "first use in a job" is measured against
+ *   (see `decideCall`). It only records: it always allows.
  * - `headers` and `getToken` run when eve opens the connection to the server.
  *   They read the key from the live record, so a rotated key is the one sent,
  *   and a removed or switched-off connector gets no credentials at all.
@@ -26,34 +31,40 @@ import { allowedTools, type Connector, connectorHeaders, connectorToken, getConn
  * eve caches an open connection (and the headers it was opened with) until
  * the connection set is replaced; the resolvers in `connections/` re-resolve
  * on every turn, so a new key is in use from the next turn. Within a turn the
- * approval check is what stops a call.
+ * approval check is what stops a call. Nothing about approvals lives in the
+ * connection itself, so rebuilding it each turn neither loses nor revives one.
  */
 export type Audience = "hq" | "bot";
 
 /** A denial the model sees as the tool's result. */
 const deny = (reason: string): ApprovalStatus => ({ type: "denied", reason });
 
+/** The tool's own name, without the `<connector>__` prefix eve gives connection tools. */
+export function bareTool(connectorName: string, toolName: string): string {
+  return toolName.startsWith(`${connectorName}__`) ? toolName.slice(connectorName.length + 2) : (toolName.split("__").pop() ?? toolName);
+}
+
 /**
  * The per-call decision, given the live record. Pure, so the rules can be
  * tested without eve.
  *
- * `version` is the permission version the session was set up with. When the
- * live record is newer, an approval given in this session ("once" per tool)
- * was given under old settings and is not reused: the person is asked again,
- * once, and `reapproved` remembers that they were.
+ * `approvedAt` is the permission version this session last had the tool
+ * approved under by a person (`approvedVersion`), or null. Under the "all"
+ * gate a call goes ahead unasked only when that is the live version: an
+ * approval given under older settings, or never given (a denial records
+ * nothing), means the person is asked. eve's own `approvedTools` is not used:
+ * it lasts the whole session whatever the settings did since.
  */
 export function decideCall(input: {
   readonly audience: Audience;
   readonly live: Connector | null;
-  readonly version: number;
   readonly toolName: string;
-  readonly approvedTools: ReadonlySet<string>;
-  readonly reapproved: Set<string>;
+  readonly approvedAt: number | null;
 }): ApprovalStatus {
   const { audience, live, toolName } = input;
   if (live === null) return deny("This connector was removed; its tools can no longer be used.");
   if (!live.enabled) return deny(`${live.label} is switched off on the Connectors page.`);
-  const bare = toolName.startsWith(`${live.name}__`) ? toolName.slice(live.name.length + 2) : (toolName.split("__").pop() ?? toolName);
+  const bare = bareTool(live.name, toolName);
   if (!allowedTools(live, { readsOnly: audience === "hq" }).includes(bare)) {
     return audience === "hq"
       ? deny(`HQ only uses ${live.label} tools a person confirmed only read; hand this to a Bot as a job.`)
@@ -61,13 +72,60 @@ export function decideCall(input: {
   }
   if (audience === "hq") return "not-applicable";
   if (live.gate === "writes") return toolEffect(live, bare).effect === "write" ? "user-approval" : "not-applicable";
-  if (live.gate === "all") {
-    const stale = permissionVersion(live) !== input.version;
-    if (input.approvedTools.has(toolName) && (!stale || input.reapproved.has(toolName))) return "not-applicable";
-    if (stale) input.reapproved.add(toolName);
-    return "user-approval";
-  }
+  if (live.gate === "all") return input.approvedAt !== null && input.approvedAt === permissionVersion(live) ? "not-applicable" : "user-approval";
   return "not-applicable";
+}
+
+/**
+ * Which tools of one connector a person approved in one session, and under
+ * which permission version: `{ [tool]: version }`. One doc per session and
+ * connector, written only by the approval response policy, so only an actual
+ * approval lands here. Durable rather than held by the connection, which eve
+ * rebuilds every turn and which may live in another instance.
+ */
+const approvalsKey = (sessionId: string, connectorId: string) => `approvals/connectors/${sessionId}/${connectorId}.json`;
+
+type ConnectorApprovals = Readonly<Record<string, number>>;
+
+/** The version `tool` was last approved under in this session, or null (never, or unreadable: either way, ask). */
+export async function approvedVersion(sessionId: string, connectorId: string, tool: string): Promise<number | null> {
+  try {
+    const approvals = (await readDoc<ConnectorApprovals>(approvalsKey(sessionId, connectorId)))?.value;
+    const version = approvals !== undefined && Object.hasOwn(approvals, tool) ? approvals[tool] : undefined;
+    return typeof version === "number" ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Records that a person approved `tool` under `version`. One CAS on one doc;
+ * setting a key to a value is idempotent, so a retried or replayed approval
+ * (or a Blob write whose reply was lost) changes nothing the second time.
+ */
+export async function recordApproval(sessionId: string, connectorId: string, tool: string, version: number): Promise<void> {
+  await updateDoc<ConnectorApprovals>(approvalsKey(sessionId, connectorId), (current) =>
+    current !== null && Object.hasOwn(current, tool) && current[tool] === version ? null : { ...current, [tool]: version },
+  );
+}
+
+/**
+ * How long an approval waits for its record. eve gives a response policy 10s
+ * before it fails the approval, and a failed approval leaves the person
+ * stuck; a record that is late (or lost) only means the next call asks again.
+ */
+const RECORD_WAIT_MS = 5_000;
+
+/** Best effort and bounded: an approval never fails, or waits long, because its record could not be written. */
+async function noteApproved(connector: Connector, sessionId: string, toolName: string): Promise<void> {
+  const work = (async () => {
+    const live = await liveConnector(connector);
+    if (live === null || !live.enabled) return;
+    await recordApproval(sessionId, live.id, bareTool(live.name, toolName), permissionVersion(live));
+  })().catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([work, new Promise<void>((resolve) => (timer = setTimeout(resolve, RECORD_WAIT_MS)))]);
+  clearTimeout(timer);
 }
 
 /** The live record, or null when it is gone or cannot be read: either way, nothing is allowed. */
@@ -100,8 +158,6 @@ export function connectorConnection(
   if (!connector.enabled) return null;
   const allow = allowedTools(connector, { readsOnly: audience === "hq" });
   if (allow.length === 0) return null;
-  const version = permissionVersion(connector);
-  const reapproved = new Set<string>();
 
   /** The record a request may go out under, or a thrown error when there is none; never a credential from the snapshot. */
   const usable = async (): Promise<Connector> => {
@@ -135,13 +191,23 @@ export function connectorConnection(
       return live.auth.kind === "oauth" ? {} : connectorHeaders(live);
     },
     tools: { allow },
-    approval: async (ctx: ApprovalContext) => {
-      if (options.checkCaller !== undefined) {
-        const caller = await options.checkCaller(ctx);
-        if (!caller.ok) return deny(caller.message);
-      }
-      const { toolName, approvedTools } = ctx;
-      return decideCall({ audience, live: await liveConnector(connector), version, toolName, approvedTools, reapproved });
+    approval: {
+      request: async (ctx: ApprovalContext) => {
+        if (options.checkCaller !== undefined) {
+          const caller = await options.checkCaller(ctx);
+          if (!caller.ok) return deny(caller.message);
+        }
+        const live = await liveConnector(connector);
+        // Only the "all" gate depends on a past approval; the read is skipped otherwise.
+        const approvedAt =
+          audience === "bot" && live?.enabled === true && live.gate === "all" ? await approvedVersion(ctx.session.id, live.id, bareTool(live.name, ctx.toolName)) : null;
+        return decideCall({ audience, live, toolName: ctx.toolName, approvedAt });
+      },
+      // Runs only on an approval. It records and always allows: rejecting here would leave the request pending.
+      response: async ({ request, session }: ApprovalResponseContext) => {
+        await noteApproved(connector, session.id, request.toolName);
+        return { status: "allowed" };
+      },
     },
   });
 }

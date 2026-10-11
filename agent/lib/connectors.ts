@@ -70,9 +70,10 @@ export interface Connector {
   readonly reviewed?: readonly string[];
   /**
    * Bumped on every change to who may do what with this connector: on or off,
-   * gate, tool switches, policy, the tool list, the key, the sign-in. A
-   * session compares the version it was set up with against the live one, so
-   * a decision made under old settings (an approval "once") is not reused.
+   * gate, tool switches, policy, the tool list, the key, the sign-in. An
+   * approval is recorded with the version it was given under and counts only
+   * while that is still the live one, so a decision made under old settings
+   * (an approval "once") is not reused (see `connector-connection.ts`).
    * Absent means 0.
    */
   readonly permissionVersion?: number;

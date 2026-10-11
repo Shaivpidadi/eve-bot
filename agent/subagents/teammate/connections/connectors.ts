@@ -19,6 +19,9 @@ import { operator } from "../../../lib/session";
  * tool's first use in a job. Reads under a "writes" gate flow without a
  * prompt. The gate, the policy, and the tool switches are read live on every
  * call, and the set is resolved again each turn (see `connector-connection.ts`).
+ * A "first use" approval is recorded per session with the settings version it
+ * was given under, not held by the connection, so a rebuild here neither
+ * forgets it nor revives one given under settings changed since.
  * Before any of that, the Bot must still be its job's current run: once the
  * job is cancelled or a newer run takes it over, every connector call is
  * refused, the same as its other tools (see `guardSideEffect`).

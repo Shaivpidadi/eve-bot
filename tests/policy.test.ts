@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ApprovalContext, ApprovalStatus } from "eve/tools/approval";
+import type { ApprovalContext, ApprovalResponseContext, ApprovalResponseDecision, ApprovalStatus } from "eve/tools/approval";
 
 /**
  * Settings changed on the Connectors page while a session is running: every
@@ -33,10 +33,26 @@ async function load() {
 
 type Def = NonNullable<ReturnType<Awaited<ReturnType<typeof load>>["connectorConnection"]>>;
 
+type Approval = {
+  request: (ctx: ApprovalContext) => Promise<ApprovalStatus>;
+  response: (ctx: ApprovalResponseContext) => Promise<ApprovalResponseDecision>;
+};
+const approvalOf = (def: Def) => def.approval as unknown as Approval;
+const session = (id: string) => ({ id, auth: { current: null, initiator: null }, turn: { id: "t", sequence: 1 } });
+
 /** Asks the connection's approval policy about one call, as eve does before running it. */
-async function ask(def: Def, name: string, tool: string, approvedTools: ReadonlySet<string> = new Set()): Promise<ApprovalStatus> {
-  const policy = def.approval as (ctx: ApprovalContext) => Promise<ApprovalStatus>;
-  return policy({ toolName: `${name}__${tool}`, approvedTools, callId: "call_1" } as unknown as ApprovalContext);
+async function ask(def: Def, name: string, tool: string, sessionId = "sess_1"): Promise<ApprovalStatus> {
+  return approvalOf(def).request({ toolName: `${name}__${tool}`, approvedTools: new Set(), callId: "call_1", session: session(sessionId) } as unknown as ApprovalContext);
+}
+
+/** A person approves one call, as eve runs the response policy when they click Approve. A denial runs nothing. */
+async function approve(def: Def, name: string, tool: string, sessionId = "sess_1"): Promise<ApprovalResponseDecision> {
+  return approvalOf(def).response({
+    request: { callId: "call_1", requestId: "req_1", toolName: `${name}__${tool}` },
+    response: { decision: "approve" },
+    responder: { principalId: "owner" },
+    session: session(sessionId),
+  } as unknown as ApprovalResponseContext);
 }
 
 const headersOf = (def: Def) => (def.headers as () => Promise<Record<string, string>>)();
@@ -163,14 +179,62 @@ describe("live connector permissions", () => {
   it("does not reuse a once-per-job approval given under older settings", async () => {
     const { lib, connector } = await added("all");
     const def = lib.connectorConnection(connector, "bot")!;
-    const approved = new Set([`${connector.name}__get_issue`]);
     expect(await ask(def, connector.name, "get_issue")).toBe("user-approval");
-    expect(await ask(def, connector.name, "get_issue", approved)).toBe("not-applicable");
+    expect(await approve(def, connector.name, "get_issue")).toEqual({ status: "allowed" });
+    expect(await ask(def, connector.name, "get_issue")).toBe("not-applicable");
 
     await lib.updateConnector(WORKSPACE, connector.id, { tools: { list_issues: false } });
-    // Settings changed since the session started: ask again, once.
-    expect(await ask(def, connector.name, "get_issue", approved)).toBe("user-approval");
-    expect(await ask(def, connector.name, "get_issue", approved)).toBe("not-applicable");
+    // Settings changed since the approval: ask again, and keep asking until a person says yes.
+    expect(await ask(def, connector.name, "get_issue")).toBe("user-approval");
+    await approve(def, connector.name, "get_issue");
+    expect(await ask(def, connector.name, "get_issue")).toBe("not-applicable");
+  });
+
+  it("does not count a denied re-ask as an approval", async () => {
+    const { lib, connector } = await added("all");
+    const def = lib.connectorConnection(connector, "bot")!;
+    await approve(def, connector.name, "create_issue");
+    expect(await ask(def, connector.name, "create_issue")).toBe("not-applicable");
+
+    await lib.updateConnector(WORKSPACE, connector.id, { policy: { create_issue: "write" } });
+    // The re-ask is sent; the person clicks Deny, which runs no response policy.
+    expect(await ask(def, connector.name, "create_issue")).toBe("user-approval");
+    // The next call is asked again rather than run on the old approval.
+    expect(await ask(def, connector.name, "create_issue")).toBe("user-approval");
+    expect(await ask(def, connector.name, "create_issue")).toBe("user-approval");
+  });
+
+  it("asks again after a settings change, on a later turn's rebuilt connection too", async () => {
+    const { lib, connector } = await added("all");
+    const turn1 = lib.connectorConnection(connector, "bot")!;
+    await approve(turn1, connector.name, "get_issue");
+
+    await lib.updateConnector(WORKSPACE, connector.id, { gate: "all", tools: { list_issues: false } });
+    // eve resolves the connection set again on the next turn, from the changed record.
+    const turn2 = lib.connectorConnection((await lib.getConnector(WORKSPACE, connector.id))!, "bot")!;
+    expect(await ask(turn2, connector.name, "get_issue")).toBe("user-approval");
+    expect(await ask(turn1, connector.name, "get_issue")).toBe("user-approval");
+    await approve(turn2, connector.name, "get_issue");
+    expect(await ask(turn2, connector.name, "get_issue")).toBe("not-applicable");
+  });
+
+  it("keeps an approval under unchanged settings across turns, for that session only", async () => {
+    const { lib, connector } = await added("all");
+    const turn1 = lib.connectorConnection(connector, "bot")!;
+    await approve(turn1, connector.name, "get_issue", "sess_1");
+    const turn2 = lib.connectorConnection((await lib.getConnector(WORKSPACE, connector.id))!, "bot")!;
+    expect(await ask(turn2, connector.name, "get_issue", "sess_1")).toBe("not-applicable");
+    // Per tool, and per session: another job's Bot is asked for itself.
+    expect(await ask(turn2, connector.name, "create_issue", "sess_1")).toBe("user-approval");
+    expect(await ask(turn2, connector.name, "get_issue", "sess_2")).toBe("user-approval");
+  });
+
+  it("always allows an approval, recording nothing for a connector that is gone", async () => {
+    const { lib, connector } = await added("all");
+    const def = lib.connectorConnection(connector, "bot")!;
+    await lib.removeConnector(WORKSPACE, connector.id);
+    expect(await approve(def, connector.name, "get_issue")).toEqual({ status: "allowed" });
+    expect(await lib.approvedVersion("sess_1", connector.id, "get_issue")).toBeNull();
   });
 
   it("bumps the permission version on every settings change, and keeps old records loading", async () => {
