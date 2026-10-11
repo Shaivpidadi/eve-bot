@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
-import { catalogEntry, isReviewedRead, mergePolicy, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind, type ToolEffect, type ToolPolicy } from "./catalog";
+import { catalogEntry, guessedReads, isReviewedRead, mergePolicy, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind, type ToolEffect, type ToolPolicy } from "./catalog";
 import { authorizeUrl, beginPkce, discover, exchangeCode, needsRefresh, type OAuthClient, type OAuthMetadata, refreshTokens, registerClient, type TokenSet } from "./connector-oauth";
 import { computerKey } from "./computer/keys";
 import { newId } from "./ids";
@@ -258,6 +258,45 @@ export async function updateConnector(
       ...(permissions ? bump(current) : {}),
     };
   });
+}
+
+/**
+ * Confirms, in one operator action, that tools guessed to read do only read,
+ * so HQ may use them: the upgrade path for connectors stored before HQ needed
+ * reviewed reads, which otherwise means one "reads?" click per tool.
+ *
+ * Only a tool that is a guessed read on the record as it stands when the write
+ * lands (`guessedReads`) is marked reviewed; anything else asked for — a
+ * write, a switched-off tool, one already reviewed, one the server no longer
+ * lists — is left alone and reported back as skipped. `tools` omitted means
+ * every guessed read. The policy entry stays "read" (it already is), the
+ * permission version moves once in the same write, and nothing moves when
+ * there was nothing to confirm.
+ */
+export async function confirmGuessedReads(
+  workspaceId: string,
+  id: string,
+  tools?: readonly string[],
+): Promise<{ connector: Connector; confirmed: string[]; skipped: string[] } | null> {
+  let confirmed: string[] = [];
+  let skipped: string[] = [];
+  const updated = await updateDoc<Connector>(key(workspaceId, id), (current) => {
+    if (current === null) return null;
+    const guessed = guessedReads(current);
+    const wanted = tools === undefined ? guessed : [...new Set(tools)];
+    confirmed = wanted.filter((tool) => guessed.includes(tool));
+    skipped = wanted.filter((tool) => !guessed.includes(tool));
+    if (confirmed.length === 0) return current;
+    const policy: Record<string, ToolEffect> = { ...current.policy };
+    for (const tool of confirmed) policy[tool] = "read";
+    return {
+      ...current,
+      policy,
+      reviewed: [...new Set([...(current.reviewed ?? []), ...confirmed])].sort(),
+      ...bump(current),
+    };
+  });
+  return updated === null ? null : { connector: updated, confirmed, skipped };
 }
 
 /**

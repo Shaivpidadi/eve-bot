@@ -256,6 +256,25 @@ export const isReviewedRead = (source: PolicySource, toolName: string): boolean 
 };
 
 /**
+ * The tools Bots treat as reads on a guess and HQ is not offered until a
+ * person confirms them: listed by the server at the last check, switched on,
+ * guessed to read, and neither reviewed nor vouched for by the catalog. The
+ * "N tools need your confirmation" count on the Connectors page, and the only
+ * tools a bulk confirmation may mark reviewed, so it can never turn a write
+ * (recorded or guessed) into a read.
+ */
+export function guessedReads(
+  source: PolicySource & { readonly check: { readonly tools: readonly string[] }; readonly disabledTools?: readonly string[] },
+): string[] {
+  const off = new Set(source.disabledTools ?? []);
+  return source.check.tools.filter((tool) => {
+    if (off.has(tool)) return false;
+    const { effect, reviewed } = toolEffect(source, tool);
+    return effect === "read" && !reviewed;
+  });
+}
+
+/**
  * Keeps what the operator decided, classifies what is new, forgets what is gone.
  *
  * An unreviewed entry is only kept when it is a write; an unreviewed read is
