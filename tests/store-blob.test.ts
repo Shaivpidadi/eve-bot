@@ -133,6 +133,24 @@ describe("blobKv on the Blob service", () => {
     expect(await kv.getBytes("files/missing.bin")).toBeNull();
   });
 
+  it("treats the live service's 'conflicting operation' refusal as a lost race, so updateDoc re-reads and lands once", async () => {
+    vi.stubEnv("BOT_STORE", "blob");
+    const store = await import("../agent/lib/store");
+    await store.writeDoc("docs/busy", { n: 1 });
+    blob.inject({ kind: "conflicting-operation", op: "put", pathname: "t/docs/busy", times: 2 });
+    expect(await store.updateDoc<{ n: number }>("docs/busy", (current) => ({ n: (current?.n ?? 0) + 1 }))).toEqual({ n: 2 });
+    expect((await store.readDoc<{ n: number }>("docs/busy"))?.value).toEqual({ n: 2 });
+    expect(blob.requests("put", "t/docs/busy").map((request) => request.status)).toEqual([200, 409, 409, 200]);
+  });
+
+  it("does not take that refusal for a lost race on an unconditional write", async () => {
+    const { blobKv } = await import("../agent/lib/store/blob");
+    const { KvConflictError } = await import("../agent/lib/store/kv");
+    blob.inject({ kind: "conflicting-operation", op: "put", pathname: "t/docs/plain" });
+    const kv = blobKv("t");
+    await expect(kv.put("docs/plain", "{}")).rejects.not.toBeInstanceOf(KvConflictError);
+  });
+
   it("rides out a 5xx before the write: the SDK retries and the write lands once", async () => {
     const kv = await load();
     blob.inject({ kind: "fail-before", op: "put", pathname: "t/doc" });

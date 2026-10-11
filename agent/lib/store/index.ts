@@ -132,7 +132,7 @@ async function withKeyLock<T>(key: string, run: () => Promise<T>): Promise<T> {
 export async function updateDoc<T>(
   key: string,
   mutate: (current: T | null) => T | null,
-  attempts = 5,
+  attempts = 8,
 ): Promise<T | null> {
   return withKeyLock(key, async () => {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -145,7 +145,9 @@ export async function updateDoc<T>(
       } catch (error) {
         if (!isConflict(error) || attempt === attempts - 1) throw error;
         // The other writer may be another runtime mid-cycle: give it a moment, with jitter.
-        await new Promise((resolve) => setTimeout(resolve, 40 * 2 ** attempt + Math.random() * 60));
+        // On Blob a cycle is a few hundred milliseconds, so a busy document (the
+        // workspace budget under several Bots) needs the later, longer waits.
+        await new Promise((resolve) => setTimeout(resolve, Math.min(40 * 2 ** attempt, 1_600) + Math.random() * 100));
       }
     }
     return null;

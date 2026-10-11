@@ -44,6 +44,11 @@ import { vi } from "vitest";
  *   meets the state the lost write left behind.
  * - `fail-before`: 503 `service_unavailable` without applying (retried).
  * - `fail-after`: applied, then 500 `internal_server_error` (also retried).
+ * - `conflicting-operation`: not applied, 409 `bad_request` "The conditional
+ *   request cannot succeed due to a conflicting operation against this
+ *   resource", which the live service answers a conditional write racing
+ *   another write to the same blob (seen against Vercel Blob; not retried by
+ *   the SDK, a plain BlobError).
  *
  * The SDK's backoff starts at about a second, so every retried fault costs a
  * test one to two seconds.
@@ -57,7 +62,7 @@ export interface BlobObject {
   readonly uploadedAt: string;
 }
 
-export type FaultKind = "lose-response" | "fail-before" | "fail-after";
+export type FaultKind = "lose-response" | "fail-before" | "fail-after" | "conflicting-operation";
 
 export interface Fault {
   readonly kind: FaultKind;
@@ -231,6 +236,12 @@ export class FakeBlobService {
     if (fault?.kind === "fail-before") {
       entry("put", pathname, 503);
       return this.json(res, 503, { error: { code: "service_unavailable", message: "Service unavailable" } });
+    }
+    if (fault?.kind === "conflicting-operation") {
+      entry("put", pathname, 409);
+      return this.json(res, 409, {
+        error: { code: "bad_request", message: "The conditional request cannot succeed due to a conflicting operation against this resource." },
+      });
     }
     const existing = this.objects.get(pathname);
     const ifMatch = headers["x-if-match"];

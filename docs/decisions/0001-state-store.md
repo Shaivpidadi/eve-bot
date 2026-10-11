@@ -7,7 +7,7 @@
 
 M1–M3 add runs with lease fencing, an approval/action ledger, budget reservations, an event inbox and a delivery outbox (IMPLEMENTATION_PLAN.md §3, M1 F1/F5/F7). S4 asks whether the existing store can hold these invariants, or whether hosted state needs a transactional database.
 
-The store is a small versioned key-value contract (`kv.ts:23-32`): `get` returns `{value, version}`; `put` takes `expectedVersion` (`undefined` = unconditional, `null` = create only, string = must match, `kv.ts:14-21`); `delete` and `list(prefix)` take no condition. `updateDoc` (`index.ts:108-129`) is the read-modify-write primitive: it takes an in-process per-key lock (`index.ts:83-98`), reads, runs a pure `mutate` (returning `null` abandons the write), writes with the version it read, and on conflict backs off and retries, 5 attempts by default, then throws.
+The store is a small versioned key-value contract (`kv.ts:23-32`): `get` returns `{value, version}`; `put` takes `expectedVersion` (`undefined` = unconditional, `null` = create only, string = must match, `kv.ts:14-21`); `delete` and `list(prefix)` take no condition. `updateDoc` (`index.ts:108-129`) is the read-modify-write primitive: it takes an in-process per-key lock (`index.ts:83-98`), reads, runs a pure `mutate` (returning `null` abandons the write), writes with the version it read, and on conflict backs off and retries, 8 attempts by default (waits doubling from 40 ms to a 1.6 s cap, with jitter), then throws.
 
 There is no KV/Redis backend: `kv.ts` is only the interface. Backends are picked by `store()` (`index.ts:25-36`): Blob when it has credentials or `VERCEL=1`, otherwise fs. Memory runs only when `BOT_STORE=memory` is set.
 
@@ -26,7 +26,7 @@ There is no KV/Redis backend: `kv.ts` is only the interface. Backends are picked
 
 | | memory (`memory.ts`) | fs (`fs.ts`) | Vercel Blob (`blob.ts`, @vercel/blob 2.8.0) |
 |---|---|---|---|
-| Single-doc CAS mechanism | Check and set run with no `await` between them (`memory.ts:20-26`); version = global counter | Per-key promise queue serialises check→write (`fs.ts:18-35, 57-72`); version = sha256 of content (`fs.ts:9,50`) | Server-side: `ifMatch` → `x-if-match` header; `allowOverwrite:false` → create-only (`blob.ts:52-55`; SDK `chunk-YYMLUMXS.js:904-930`). 412 → `KvConflictError` (`blob.ts:20-23,59`) |
+| Single-doc CAS mechanism | Check and set run with no `await` between them (`memory.ts:20-26`); version = global counter | Per-key promise queue serialises check→write (`fs.ts:18-35, 57-72`); version = sha256 of content (`fs.ts:9,50`) | Server-side: `ifMatch` → `x-if-match` header; `allowOverwrite:false` → create-only (`blob.ts:52-55`; SDK `chunk-YYMLUMXS.js:904-930`). 412, "already exists" on a create, and the live service's "conflicting operation" refusal of a conditional write → `KvConflictError` (`blob.ts`, `isBlobConflict`) |
 | Scope of CAS safety | One process (data is process-local, `memory.ts:8`) | **One process only.** Two processes sharing a data dir can both pass the check and both rename: a lost update or a double create | Cross-instance, cross-region (enforced by the Blob service) |
 | Version semantics | Monotonic; no ABA | **Content-addressed: ABA possible.** A doc that changes back to identical bytes accepts an old version (tested). Fences must be counters inside the doc | ETag (strong form; weak `W/` stripped, `blob.ts:31`) |
 | Create-if-absent (I5) | Yes | Yes, in one process | Yes (`allowOverwrite:false`, mapped from "already exists", `blob.ts:22`) |
@@ -35,7 +35,7 @@ There is no KV/Redis backend: `kv.ts` is only the interface. Backends are picked
 | Read freshness | Immediate | Immediate | `useCache:false` on reads (`blob.ts:42,76`). `list` freshness is not verified here: treat it as possibly stale and never use it for invariants |
 | List | Exact, sorted | Directory walk, not a snapshot (`fs.ts:92-100`) | Paginated, not a snapshot (`blob.ts:80-89`) |
 | Multi-doc atomicity | None | None | None. `listDocs` reads each key separately (`index.ts:69-73`) |
-| Tested | `tests/store-concurrency.test.ts` | `tests/store-concurrency.test.ts`, `tests/store.test.ts` | `tests/store-blob.test.ts`, `tests/store-blob-invariants.test.ts`: the real SDK over HTTP against an in-process fake of the Blob service (`tests/blob-fake.ts`), with several runtimes and injected lost answers and 5xx. Not the real service: the fake's ETag, error and paging behaviour is read off the SDK, not measured |
+| Tested | `tests/store-concurrency.test.ts` | `tests/store-concurrency.test.ts`, `tests/store.test.ts` | `tests/store-blob.test.ts`, `tests/store-blob-invariants.test.ts`: the real SDK over HTTP against an in-process fake of the Blob service (`tests/blob-fake.ts`), with several runtimes and injected lost answers and 5xx. The fake's behaviour is read off the SDK; five concurrent processes were also run against a real Vercel Blob store (2026-10-11), which found the "conflicting operation" refusal below |
 
 ### Ambiguous commits on Blob (finding)
 
@@ -46,6 +46,8 @@ The Blob SDK retries network errors and 5xx responses up to `VERCEL_BLOB_RETRIES
 - create-if-absent reports a duplicate for a first delivery
 
 `tests/store-blob.test.ts` reproduces this against the fake service (the PUT is retried with `x-api-blob-request-attempt: 1` and refused 412 or "already exists"). `tests/store-blob-invariants.test.ts` drives the callers through it. It found and now covers: `claimJob` reporting its own landed claim as "a bot is already working on it" (the job stayed leased to nobody until the lease lapsed); `deferRun` reporting its own deferral as "taken over", so the run never retried; `assignJob` and `hireBot` throwing on their own landed create, inviting a duplicate on retry (now `createDoc`); the default-Bot seed claim reading its own write as another process's, so the workspace was not seeded; and `settleRun`/`releaseRun` returning false for their own close, so a repair that freed headroom did not re-try the refused admission.
+
+Against the live service a second refusal appears that the SDK source does not show: a conditional PUT that races another write to the same blob in flight is answered `bad_request`, "The conditional request cannot succeed due to a conflicting operation against this resource", which the SDK raises as a plain `BlobError` and does not retry. It is a lost race like a 412, and `blob.ts` now reports it as a conflict; before that, five processes incrementing one document saw most of them crash on it, some after their write had landed. With it, and the longer backoff above, the same run lands every increment exactly once, one create and one claim win, and nothing throws (`tests/blob-fake.ts` now injects it as `conflicting-operation`).
 
 So on Blob every mutate must be **idempotent and self-recognising**. It carries the writer's identity (`runId`, `fence`, `actionId`, `eventId`) and treats "already contains my change" as success, not as a lost race. The fs and memory backends do not retry, so this affects only Blob.
 

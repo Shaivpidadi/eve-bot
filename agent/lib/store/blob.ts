@@ -15,11 +15,17 @@ import { KvConflictError, isConflict, type Kv, type KvPutOptions } from "./kv";
  * Whether a failed write lost a compare-and-set. @vercel/blob's errors do not
  * set `name`, so they are matched by class: a stale `ifMatch` throws
  * BlobPreconditionFailedError, and a create-only write to a key that already
- * exists throws a plain BlobError saying so.
+ * exists throws a plain BlobError saying so. A conditional write that races
+ * another write to the same blob in flight is refused by the service as a bad
+ * request ("The conditional request cannot succeed due to a conflicting
+ * operation against this resource"), which the fake never showed: found
+ * against the live service, it is a lost race like the others.
  */
 function isBlobConflict(error: unknown, expectedVersion: string | null | undefined): boolean {
   if (error instanceof BlobPreconditionFailedError) return true;
-  return expectedVersion === null && error instanceof BlobError && /already exists/i.test(error.message);
+  if (!(error instanceof BlobError) || expectedVersion === undefined) return false;
+  if (/conflicting operation/i.test(error.message)) return true;
+  return expectedVersion === null && /already exists/i.test(error.message);
 }
 
 /**
