@@ -94,3 +94,25 @@ export async function chargeComputerRuntime(
   if (charges.length === 0) return 0;
   return recordComputerSessions(options.workspaceId ?? workspace(), charges, { now });
 }
+
+/** How often a process sweeps outside the tick, and how long it waits for one. */
+const SOON_EVERY_MS = 5 * 60_000;
+const SOON_WAIT_MS = 5_000;
+let lastSoon = 0;
+
+/**
+ * A sweep at a moment the budget matters (a run asking to start, the usage
+ * page), so the computer's finished sessions are charged by the next job
+ * rather than the next tick, which is daily on Hobby. Throttled per process,
+ * bounded, and best effort: it never holds up what called it, and the tick
+ * still sweeps whatever it missed.
+ */
+export async function chargeComputerRuntimeSoon(): Promise<void> {
+  if (Date.now() - lastSoon < SOON_EVERY_MS) return;
+  lastSoon = Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    chargeComputerRuntime().catch(() => 0),
+    new Promise((resolve) => (timer = setTimeout(resolve, SOON_WAIT_MS))),
+  ]).finally(() => clearTimeout(timer));
+}

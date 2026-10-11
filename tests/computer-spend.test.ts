@@ -181,3 +181,40 @@ describe("the sweep outside Vercel", () => {
     expect(await chargeComputerRuntime({ now: NOW })).toBe(0);
   });
 });
+
+describe("sweeping when the budget matters", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.useRealTimers();
+  });
+
+  it("never holds up its caller, and sweeps at most once per few minutes per process", async () => {
+    vi.stubEnv("VERCEL_OIDC_TOKEN", "test-token");
+    vi.stubEnv("BOT_COMPUTER", "");
+    let asked = 0;
+    // A Vercel API that never answers.
+    vi.doMock("@vercel/sandbox", () => ({
+      Sandbox: {
+        get: () => {
+          asked += 1;
+          return new Promise(() => undefined);
+        },
+      },
+    }));
+    const spend = await import("../agent/lib/computer-spend");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const first = spend.chargeComputerRuntimeSoon();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await first;
+    expect(asked).toBe(1);
+    await spend.chargeComputerRuntimeSoon();
+    expect(asked).toBe(1);
+    vi.setSystemTime(Date.now() + 5 * 60_000 + 1);
+    const later = spend.chargeComputerRuntimeSoon();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await later;
+    expect(asked).toBe(2);
+    vi.useRealTimers();
+    vi.doUnmock("@vercel/sandbox");
+  });
+});

@@ -6,6 +6,7 @@ import { record, recentActivity } from "../lib/activity";
 import { readArtifact } from "../lib/artifacts";
 import { getBot } from "../lib/bots";
 import { admitClaimedRun, BUDGET_HALT_REASON, releaseRun, runHalted, settleRun } from "../lib/budget";
+import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
 import { renderBrief } from "../lib/brief";
 import { reapIdleScreens } from "../lib/computer/reaper";
 import { forgetJob } from "../lib/computer/screens";
@@ -478,6 +479,8 @@ async function claimForRun(
   // cycles and a job's retries each answer to the workspace budget afresh.
   // Refused: the job is blocked with the reason, fenced on this token.
   // Unchecked: the claim goes back and this run retries at `retryAt`.
+  // The computer's sessions that finished since the last sweep count before this run is admitted.
+  await chargeComputerRuntimeSoon();
   const admission = await admitClaimedRun(workspaceId, claimed.job, token, {
     waitToken: options.waitToken,
     deferrals: options.deferrals,

@@ -302,8 +302,10 @@ counted after each model step, so the limit can be overshot by the steps in
 flight when it runs out: a run past its reservation with no budget left is
 halted before its next step. A step whose provider reported no cost is counted
 and shown as unknown, never as free. Vercel Sandbox runtime is charged to the
-workspace once you set its rate (`BOT_COMPUTER_USD_PER_HOUR` and friends),
-up to a day late on Hobby; until then it is shown as unpriced.
+workspace once you set its rate (`BOT_COMPUTER_USD_PER_HOUR` and friends):
+each session the computer ran is charged once it stops, swept before the next
+run is admitted and whenever the usage page loads (and by the tick); until a
+rate is set it is shown as unpriced.
 `BOT_JOB_COST_LIMIT_USD` and `BOT_HQ_COST_LIMIT_USD` still cap each session.
 
 ### Upgrading to this version

@@ -12,6 +12,7 @@ import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
 import { cancelJobRun, describeInterruption, interruptVia, within } from "../lib/cancel";
 import { stopRunCommands } from "../lib/computer/shell";
+import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
 import { isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
@@ -760,6 +761,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     GET("/bot/v1/usage", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
+      await chargeComputerRuntimeSoon();
       return json(await usageReport(gate.access.workspaceId));
     }),
 
