@@ -10,7 +10,8 @@ import { findBot, getBot, hireBot, listBots, patchBot, retireBot } from "../lib/
 import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
-import { cancelJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
+import { cancelJobRun, describeInterruption, interruptVia } from "../lib/cancel";
+import { isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
 import { FIELDS as MEMORY_FIELDS, forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, readFields, remember, restore as restoreMemory, revive as reviveMemory, rewrite as rewriteMemory, setField, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
@@ -346,17 +347,14 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
       const cancelledJobs: string[] = [];
+      // The teammate's own session holds its open requests, such as a cost-limit
+      // card, so each job's run is stopped with it (see cancelJobRun).
+      const interrupt = interruptVia(attachSession, "Room reset");
       for (const job of await listOpenJobs(workspaceId)) {
         if (job.room !== room || isRoutine(job)) continue;
-        const cancelled = await cancelJob(workspaceId, job.id);
+        const cancelled = await cancelJobRun(workspaceId, job.id, { interrupt });
         if (!cancelled.ok) continue;
         cancelledJobs.push(job.id);
-        // The teammate's own session holds its open requests, such as a cost-limit card.
-        if (job.sessionId) {
-          const child = attachSession(job.sessionId);
-          await quietly(within(child.cancel({ tasks: true })));
-          await quietly(within(child.reset({ reason: "Room reset" })));
-        }
       }
       const old = [...new Set([live?.id ?? null, recorded].filter((id): id is string => id !== null))];
       // The session alone, not its tasks: the one-off jobs' sessions were cancelled
@@ -609,7 +607,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * open one-off jobs are cancelled, its playbook goes with it, and a handover it
      * was waiting on is over. The console confirms with the person first.
      */
-    DELETE("/bot/v1/bots/:botId", async (request, { params }) => {
+    DELETE("/bot/v1/bots/:botId", async (request, { attachSession, params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const workspaceId = gate.access.workspaceId;
@@ -617,8 +615,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (bot === null) return json({ error: "no such bot" }, 404);
       const open = (await listOpenJobs(workspaceId)).filter((job) => job.botId === bot.id);
       const cancelled: string[] = [];
+      const interrupt = interruptVia(attachSession, `${bot.name} was removed`);
       for (const job of open) {
-        const outcome = await cancelJob(workspaceId, job.id);
+        const outcome = await cancelJobRun(workspaceId, job.id, { interrupt });
         if (outcome.ok) cancelled.push(job.id);
       }
       await retireBot(workspaceId, bot.id);
@@ -812,12 +811,26 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return changed.ok ? json({ job: changed.job }) : json({ error: changed.reason }, 422);
     }),
 
-    /** Stops a job or routine from the console; what it already delivered stays. */
-    DELETE("/bot/v1/jobs/:jobId", async (request, { params }) => {
+    /**
+     * Stops a job or routine from the console; what it already delivered stays.
+     * The same cancelJobRun as cancel_job, and here the bot's running session is
+     * stopped too. A failed interruption still answers 200: the job is cancelled
+     * and fenced, and `interruption` says the session was not stopped.
+     */
+    DELETE("/bot/v1/jobs/:jobId", async (request, { attachSession, params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      const cancelled = await cancelJob(gate.access.workspaceId, params.jobId ?? "");
-      return cancelled.ok ? json({ cancelled: true, job: { id: cancelled.job.id, title: cancelled.job.title } }) : json({ error: cancelled.reason }, 422);
+      const cancelled = await cancelJobRun(gate.access.workspaceId, params.jobId ?? "", {
+        interrupt: interruptVia(attachSession, `Cancelled from the console by ${gate.access.user}`),
+      });
+      if (!cancelled.ok) return json({ error: cancelled.reason }, 422);
+      return json({
+        cancelled: true,
+        job: { id: cancelled.job.id, title: cancelled.job.title },
+        alreadyCancelled: cancelled.alreadyCancelled,
+        interruption: cancelled.interruption,
+        note: describeInterruption(cancelled),
+      });
     }),
 
     /** The team's connectors: services every Bot can use. Keys never come back out. */
