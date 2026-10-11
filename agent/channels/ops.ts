@@ -16,7 +16,7 @@ import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
 import { FIELDS as MEMORY_FIELDS, forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, readFields, remember, restore as restoreMemory, revive as reviveMemory, rewrite as rewriteMemory, setField, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
 import { CATALOG } from "../lib/catalog";
-import { addConnector, completeOAuth, disconnectOAuth, getConnector, listConnectors, needsConnect, OAUTH_CALLBACK_PATH, publicConnector, recheckConnector, removeConnector, replaceKey, startOAuth, updateConnector } from "../lib/connectors";
+import { addConnector, completeOAuth, confirmGuessedReads, disconnectOAuth, getConnector, listConnectors, needsConnect, OAUTH_CALLBACK_PATH, publicConnector, recheckConnector, removeConnector, replaceKey, startOAuth, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
 import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
@@ -905,6 +905,29 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         ...(toolsPatch(body?.tools) === null ? {} : { tools: toolsPatch(body?.tools) as Record<string, boolean> }),
       });
       return updated === null ? json({ error: "no such connector" }, 404) : json({ connector: publicConnector(updated) });
+    }),
+
+    /**
+     * Confirms guessed reads in bulk, so HQ may use them: `{ tools: [...] }`
+     * for a selection, or no `tools` for every tool the Connectors page shows
+     * as "reads?". The same people who may PATCH the policy may do this; only
+     * guessed reads move, everything else comes back as `skipped`.
+     */
+    POST("/bot/v1/connectors/:connectorId/reviewed-reads", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      let tools: string[] | undefined;
+      if (body?.tools !== undefined) {
+        if (!Array.isArray(body.tools) || body.tools.length > POLICY_TOOLS || !body.tools.every((tool) => typeof tool === "string" && /^[A-Za-z0-9_.:-]{1,120}$/.test(tool))) {
+          return json({ error: "tools must be a list of tool names" }, 400);
+        }
+        tools = body.tools as string[];
+      }
+      const done = await confirmGuessedReads(gate.access.workspaceId, params.connectorId ?? "", tools);
+      return done === null
+        ? json({ error: "no such connector" }, 404)
+        : json({ connector: publicConnector(done.connector), confirmed: done.confirmed, skipped: done.skipped });
     }),
 
     /** Swaps the connector's key, once the server has accepted the new one. */

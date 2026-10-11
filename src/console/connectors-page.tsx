@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { toolEffect, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind } from "../../agent/lib/catalog";
+import { guessedReads, toolEffect, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind } from "../../agent/lib/catalog";
 
 import { api, errorMessage, isRecord, SignedOutError } from "./api";
 import { Icon, type IconName } from "./icons";
@@ -193,6 +193,13 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
           catalog={catalog.find((entry) => entry.id === selected.catalog) ?? null}
           busy={busy === selected.id}
           onPatch={(body) => patch(selected, body)}
+          onConfirmReads={(tools) =>
+            act(
+              selected.id,
+              () => api(`/bot/v1/connectors/${encodeURIComponent(selected.id)}/reviewed-reads`, { method: "POST", body: JSON.stringify({ tools }) }),
+              "Could not confirm those reads.",
+            )
+          }
           onCheck={() => act(selected.id, () => api(`/bot/v1/connectors/${encodeURIComponent(selected.id)}/check`, { method: "POST" }), "Could not reach it.")}
           onKey={(body) => act(selected.id, () => api(`/bot/v1/connectors/${encodeURIComponent(selected.id)}/key`, { method: "POST", body: JSON.stringify(body) }), "The server did not accept that key.")}
           onSignIn={async () => {
@@ -235,6 +242,7 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
                           {needsConnect(connector) ? "Sign in to finish setting it up" : connector.check.ok ? `${on} of ${connector.check.tools.length} tools on` : connector.check.error ?? "Not reachable"}
                           {" · asks "}
                           {GATE_LABEL[connector.gate].toLowerCase()}
+                          {guessedReads(connector).length > 0 ? ` · ${guessedReads(connector).length} to confirm for HQ` : ""}
                         </small>
                       </span>
                       <span className={`cpage-status ${status.tone}`}>{status.text}</span>
@@ -347,6 +355,7 @@ function ConnectorDetail({
   catalog,
   busy,
   onPatch,
+  onConfirmReads,
   onCheck,
   onKey,
   onSignIn,
@@ -357,6 +366,8 @@ function ConnectorDetail({
   catalog: CatalogEntry | null;
   busy: boolean;
   onPatch: (body: Record<string, unknown>) => Promise<boolean>;
+  /** Marks the chosen guessed reads reviewed, in one operator action. */
+  onConfirmReads: (tools: readonly string[]) => Promise<boolean>;
   onCheck: () => Promise<boolean>;
   onKey: (body: Record<string, unknown>) => Promise<boolean>;
   onSignIn: () => Promise<void>;
@@ -367,6 +378,9 @@ function ConnectorDetail({
   const [replacing, setReplacing] = useState(false);
   const [secret, setSecret] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(false);
+  /** The guessed reads ticked for confirmation while the review is open; null when it is closed. */
+  const [picked, setPicked] = useState<ReadonlySet<string> | null>(null);
+  const guessed = guessedReads(connector).sort((left, right) => humanTool(left).localeCompare(humanTool(right)));
   const status = statusOf(connector);
   const disabled = new Set(connector.disabledTools ?? []);
   const tools = [...connector.check.tools].sort((left, right) => humanTool(left).localeCompare(humanTool(right)));
@@ -477,6 +491,80 @@ function ConnectorDetail({
           )}
         </div>
       </section>
+
+      {guessed.length > 0 ? (
+        <section className="usage-section">
+          <h2>Reads to confirm</h2>
+          <div className="cpage-list cpage-review">
+            <div className="cpage-row">
+              <Icon name="alert" size={14} />
+              <span className="cpage-row-main">
+                <b>
+                  {guessed.length === 1 ? "1 tool guessed as a read needs" : `${guessed.length} tools guessed as reads need`} your confirmation before HQ can use
+                  {guessed.length === 1 ? " it" : " them"}
+                </b>
+                <span>
+                  HQ never asks before it acts, so it only uses reads a person stands behind. Bots keep using them meanwhile. Confirm only what you know does
+                  nothing but look; anything that changes something stays a change.
+                </span>
+              </span>
+              {picked === null ? (
+                <button type="button" className="btn" disabled={busy} onClick={() => setPicked(new Set(guessed))}>
+                  Review
+                </button>
+              ) : null}
+            </div>
+            {picked !== null ? (
+              <>
+                {guessed.map((tool) => (
+                  <label key={tool} className="cpage-row cpage-pick">
+                    <input
+                      type="checkbox"
+                      checked={picked.has(tool)}
+                      disabled={busy}
+                      onChange={(event) => {
+                        const next = new Set(picked);
+                        if (event.target.checked) next.add(tool);
+                        else next.delete(tool);
+                        setPicked(next);
+                      }}
+                    />
+                    <span className="cpage-row-main">
+                      <b>{humanTool(tool)}</b>
+                      <span>
+                        <code>{tool}</code>
+                      </span>
+                    </span>
+                  </label>
+                ))}
+                <div className="cpage-row cpage-review-actions">
+                  <span className="cpage-row-main">
+                    <span>
+                      {picked.size} of {guessed.length} selected
+                    </span>
+                  </span>
+                  <button type="button" className="btn" disabled={busy} onClick={() => setPicked(picked.size === guessed.length ? new Set() : new Set(guessed))}>
+                    {picked.size === guessed.length ? "Select none" : "Select all"}
+                  </button>
+                  <button type="button" className="btn" disabled={busy} onClick={() => setPicked(null)}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={busy || picked.size === 0}
+                    onClick={async () => {
+                      if (await onConfirmReads(guessed.filter((tool) => picked.has(tool)))) setPicked(null);
+                    }}
+                  >
+                    {busy ? "Confirming…" : `Confirm ${picked.size} as reads`}
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="usage-section">
         <h2>Tools</h2>

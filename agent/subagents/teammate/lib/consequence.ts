@@ -134,6 +134,29 @@ const RECORD_CHANGING = [
  */
 export const CONSEQUENTIAL_WORDS = wordList([...COMMITTING, ...RECORD_CHANGING]);
 
+/**
+ * Whole labels that only change how this page shows what it already has: a
+ * list's filters, its sort, a search box, the zoom. "Apply filters" says
+ * "apply" and "Remove filter" says "remove", but on a control that submits
+ * nothing they rearrange the screen rather than a record.
+ *
+ * Deliberately a list of whole labels, not of objects: "Apply" alone, "Add
+ * column" (a spreadsheet's column is data), "Add view" and "Save view" (a
+ * saved view is shared with the team) all stay consequential. And a label is
+ * only half of it: `uiLocal` also wants the element inspected and submitting
+ * nothing (see there), because the words are the page's to choose.
+ */
+const UI_LOCAL_LABEL = new RegExp(
+  "^(?:" +
+    [
+      "(?:apply|add|clear|reset|remove|update)(?: the| all)? (?:filters?|sort(?:ing)?|sort order)",
+      "(?:apply|clear|reset|update)(?: the)? (?:search|results|search results)",
+      "reset(?: the)? (?:view|columns?|zoom|layout)",
+      "(?:apply|reset|update)(?: the)? page size",
+    ].join("|") +
+    ")$",
+);
+
 /** The narrower set read in a link's address: /messages/42/delete. */
 const ADDRESS_WORDS = wordList(COMMITTING);
 
@@ -201,6 +224,23 @@ function implicitRole(dom: DomFacts | null): string {
   }
 }
 
+/**
+ * Whether `text` on this control is a UI-local label (`UI_LOCAL_LABEL`) on a
+ * control that can only be UI-local: a click on an element the DOM described,
+ * not a submit button of any kind, not inside a form that does not GET (a
+ * `type="button"` in a POST form is still somewhere a page's script may post
+ * from), and not on a payment or order page. Anything less certain keeps the
+ * words' verdict.
+ */
+function uiLocal(facts: ActionFacts, text: string): boolean {
+  const { dom } = facts;
+  if (facts.kind !== "click" || dom === null) return false;
+  if (dom.type === "submit" || dom.type === "image" || submitsForm(dom)) return false;
+  if (dom.form !== null && dom.form.method.toLowerCase() !== "get") return false;
+  if (MONEY_PATH.test(path(facts.url))) return false;
+  return UI_LOCAL_LABEL.test(sameLabel(text));
+}
+
 /** True when this element, clicked or pressed Enter in, submits a form. */
 export function submitsForm(dom: DomFacts | null): boolean {
   if (dom === null || dom.form === null) return false;
@@ -238,6 +278,7 @@ export function classifyAction(facts: ActionFacts): Classification {
   // Typing alone changes nothing outside the page; the Enter that follows might.
   if (kind !== "fill" && kind !== "upload") {
     const said = words(facts)
+      .filter((text) => !uiLocal(facts, text))
       .map((text) => CONSEQUENTIAL_WORDS.exec(text))
       .find((hit) => hit !== null);
     const href = addressPath(facts);

@@ -51,6 +51,39 @@ describe("classifyAction", () => {
     expect(classifyAction(click({ tree: tree("link", "Open"), dom: dom({ tag: "A", type: "", href: "https://app.example.com/records/42" }) })).verdict).toBe("safe");
   });
 
+  it("lets a click through on a control that only filters, sorts, or resets what the page shows", () => {
+    for (const name of ["Apply filters", "Add filter", "Clear filters", "Clear all filters", "Remove filter", "Reset filters", "Update sort", "Clear search", "Update results", "Reset zoom", "Reset columns", "Apply page size", "Sort", "Show more", "Expand"]) {
+      const result = classifyAction(click({ tree: tree("button", name), dom: dom({ name }) }));
+      expect(result.verdict, name).toBe("safe");
+    }
+    // In a same-site GET form (a search page's filter panel), a plain button is still only a filter.
+    const getForm = dom({ name: "Apply filters", form: { method: "get", action: "https://app.example.com/search" } });
+    expect(classifyAction(click({ tree: tree("button", "Apply filters"), dom: getForm })).verdict).toBe("safe");
+  });
+
+  it("keeps the words' verdict wherever a UI-local label could be more than that", () => {
+    // Anything that is not the whole UI-local label, or names data rather than the view of it.
+    for (const name of ["Apply", "Add member", "Save changes", "Update payment method", "Create token", "Report", "Join", "Add column", "Add view", "Save view", "Save filters", "Apply filters and send", "Delete filter"]) {
+      expect(classifyAction(click({ tree: tree("button", name), dom: dom({ name }) })).verdict, name).toBe("consequential");
+    }
+    const filters = "Apply filters";
+    // A submit button, or any button in a form that does not GET.
+    const submit = dom({ name: filters, type: "submit", form: { method: "post", action: "https://app.example.com/rules" } });
+    expect(classifyAction(click({ tree: tree("button", filters), dom: submit })).verdict).toBe("consequential");
+    const submitNoForm = dom({ name: filters, type: "submit" });
+    expect(classifyAction(click({ tree: tree("button", filters), dom: submitNoForm })).verdict).toBe("consequential");
+    const inPost = dom({ name: filters, type: "button", form: { method: "post", action: "https://app.example.com/rules" } });
+    expect(classifyAction(click({ tree: tree("button", filters), dom: inPost })).verdict).toBe("consequential");
+    // An element the DOM could not describe, on the words alone.
+    expect(classifyAction(click({ tree: tree("button", filters) })).verdict).toBe("consequential");
+    // A payment page.
+    expect(classifyAction(click({ url: "https://shop.example.com/checkout", tree: tree("button", filters), dom: dom({ name: filters }) })).verdict).toBe("consequential");
+    // The tree and the DOM disagree: the label a person might read as "Apply" still asks.
+    expect(classifyAction(click({ tree: tree("button", filters), dom: dom({ name: "Apply" }) })).verdict).toBe("consequential");
+    // Enter in a field labelled like a filter is still whatever the page makes of it.
+    expect(classifyAction({ kind: "submit", url: "https://app.example.com/inbox", tree: tree("textbox", filters), dom: dom({ tag: "INPUT", type: "text", name: filters, editable: true }) }).verdict).not.toBe("safe");
+  });
+
   it("does not read a record verb in an article's address as an action", () => {
     const article = click({ tree: tree("link", "Ten tips"), dom: dom({ tag: "A", type: "", name: "Ten tips", href: "https://blog.example.com/how-to-save-and-update" }) });
     expect(classifyAction(article).verdict).toBe("safe");
