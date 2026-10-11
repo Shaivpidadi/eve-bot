@@ -16,6 +16,8 @@ interface FakeElement {
   readonly name: string;
   readonly dom: DomFacts | null;
   value?: string;
+  /** What the page itself says about it, outside the tree: for label, placeholder and test id lookups. */
+  readonly attrs?: { readonly testid?: string; readonly placeholder?: string; readonly label?: string };
   readonly onClick?: () => void;
   readonly onEnter?: () => void;
 }
@@ -29,6 +31,10 @@ interface FakePage {
 const fake = vi.hoisted(() => ({
   page: null as unknown as FakePage,
   focused: null as string | null,
+  /** The element the gate's lookup marked, and the mark. */
+  marked: null as { mark: string; ref: string } | null,
+  /** Every eval the gate ran. */
+  evals: [] as string[],
   /** Every command that acts on the page, in order. */
   acted: [] as string[][],
 }));
@@ -63,8 +69,25 @@ vi.mock("../agent/subagents/teammate/lib/browser", async (importOriginal) => {
   };
   const fail = (error: string) => ({ ok: false, output: error, data: null, error });
   const find = (selector: string) => {
+    const mark = /^\[data-eve-gate="([0-9a-f]+)"\]$/.exec(selector)?.[1];
+    if (mark !== undefined) return fake.marked?.mark === mark ? fake.marked.ref : null;
     const ref = selector.replace(/^@/, "");
     return fake.page.elements[ref] === undefined ? null : ref;
+  };
+  /** The gate's DOM lookup, done over the fake's attributes with the same rule: exact first, then a part. */
+  const locate = (code: string) => {
+    const query = JSON.parse(/\)\((\{.*\})\)$/s.exec(code)?.[1] ?? "null") as { by: string; value: string; mark: string };
+    const norm = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
+    const entries = Object.entries(fake.page.elements);
+    const text = (attrs: FakeElement["attrs"]) => (query.by === "label" ? attrs?.label : query.by === "placeholder" ? attrs?.placeholder : undefined);
+    let found: string[];
+    if (query.by === "testid") found = entries.filter(([, element]) => element.attrs?.testid === query.value).map(([ref]) => ref);
+    else {
+      const exact = entries.filter(([, element]) => norm(text(element.attrs) ?? "\u0000") === norm(query.value)).map(([ref]) => ref);
+      found = exact.length > 0 ? exact : entries.filter(([, element]) => norm(text(element.attrs) ?? "").includes(norm(query.value)) && text(element.attrs) !== undefined).map(([ref]) => ref);
+    }
+    fake.marked = found.length === 1 ? { mark: query.mark, ref: found[0]! } : null;
+    return JSON.stringify({ count: found.length });
   };
   return {
     payload: actual.payload,
@@ -91,6 +114,8 @@ vi.mock("../agent/subagents/teammate/lib/browser", async (importOriginal) => {
           return envelope({});
         case "eval": {
           const code = rest[0] ?? "";
+          fake.evals.push(code);
+          if (code.includes("data-testid")) return envelope({ result: locate(code) });
           if (code.includes("blur()")) {
             fake.focused = null;
             return envelope({ result: true });
@@ -186,6 +211,8 @@ function mailApp(): FakePage {
 async function setup(page: FakePage = mailApp(), options: { lapsed?: boolean } = {}) {
   fake.page = page;
   fake.focused = null;
+  fake.marked = null;
+  fake.evals = [];
   fake.acted = [];
   const jobs = await import("../agent/lib/jobs");
   const tool = async (name: string) => (await import(`../agent/subagents/teammate/tools/${name}.ts`)).default as Tool;
@@ -201,6 +228,7 @@ async function setup(page: FakePage = mailApp(), options: { lapsed?: boolean } =
     pilot: await tool("page_pilot"),
     confirm: await tool("page_confirm"),
     browse: await tool("browse"),
+    snapshot: await tool("page_snapshot"),
   };
   /** Runs page_confirm as eve would: the approval policy first, then execute only once a person approved. */
   const approveAndRun = async (proposal: { proposal: string; action: string }, session = "sess_A") => {
@@ -338,6 +366,89 @@ describe("consequential browser actions", () => {
   });
 });
 
+/** An account settings page in a single-page app: fields named by labels, buttons with test ids. */
+function settingsApp(): FakePage {
+  const field = (name: string): DomFacts => ({ ...button(name), tag: "INPUT", type: "email" });
+  return {
+    url: "https://app.example.com/settings",
+    tree: `- textbox "Email address" [ref=e1]
+- textbox "Backup email" [ref=e2]
+- button "Save changes" [ref=e3]
+- button "Send" [ref=e4]
+- button "Sender" [ref=e5]`,
+    elements: {
+      e1: { role: "textbox", name: "Email address", dom: field("Email address"), attrs: { label: "Email address", placeholder: "you@example.com" } },
+      e2: { role: "textbox", name: "Backup email", dom: field("Backup email"), attrs: { label: "Backup email", placeholder: "backup@example.com" } },
+      e3: { role: "button", name: "Save changes", dom: button("Save changes"), attrs: { testid: "save-btn" } },
+      e4: { role: "button", name: "Send", dom: button("Send") },
+      e5: { role: "button", name: "Sender", dom: button("Sender") },
+    },
+  };
+}
+
+describe("semantic locators", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+  });
+
+  it("finds a control by its test id, and acts on that element once approved", async () => {
+    const saved: string[] = [];
+    const page = settingsApp();
+    page.elements.e3 = { ...page.elements.e3!, onClick: () => saved.push("saved") };
+    const { tools, approveAndRun } = await setup(page);
+    const proposed = await tools.click.execute({ target: "save-btn", by: "testid" }, ctxFor("sess_A"));
+    expect(proposed).toMatchObject({ clicked: false, needsApproval: true, verdict: "consequential" });
+    const proposal = proposed.proposal as { proposal: string; action: string };
+    expect(proposal.action).toMatch(/^Click button "Save changes" on app\.example\.com\/settings/);
+    expect(clicks()).toEqual([]);
+
+    expect(await approveAndRun(proposal)).toMatchObject({ done: true });
+    expect(saved).toEqual(["saved"]);
+    expect(clicks()).toEqual([["click", `[data-eve-gate="${fake.marked?.mark}"]`]]);
+  });
+
+  it("takes the exact name over one that only starts with it", async () => {
+    const { tools } = await setup(settingsApp());
+    const proposed = await tools.click.execute({ target: "Send", by: "text" }, ctxFor("sess_A"));
+    expect(proposed).toMatchObject({ needsApproval: true });
+    expect((proposed.proposal as { action: string }).action).toMatch(/^Click button "Send" on/);
+  });
+
+  it("finds a field by its placeholder when its accessible name comes from a label", async () => {
+    const { tools } = await setup(settingsApp());
+    const result = await tools.fill.execute({ target: "you@example.com", by: "placeholder", value: "ana@example.com", submit: true }, ctxFor("sess_A"));
+    expect(result).toMatchObject({ filled: true, submitted: false, needsApproval: true });
+    expect(fake.page.elements.e1?.value).toBe("ana@example.com");
+    expect(fake.page.elements.e2?.value).toBeUndefined();
+    expect(clicks()).toEqual([]);
+  });
+
+  it("refuses a label that could mean more than one field", async () => {
+    const { tools } = await setup(settingsApp());
+    const result = await tools.fill.execute({ target: "email", by: "label", value: "x", submit: true }, ctxFor("sess_A"));
+    expect(result).toMatchObject({ filled: false });
+    expect(String(result.error)).toMatch(/2 elements match label "email"/);
+    expect(fake.page.elements.e1?.value).toBeUndefined();
+    expect(fake.page.elements.e2?.value).toBeUndefined();
+  });
+
+  it("hands the page a locator only as data, never as code", async () => {
+    const { tools } = await setup(settingsApp());
+    const evil = `"}); window.pwned = 1; ({"`;
+    await tools.click.execute({ target: evil, by: "label" }, ctxFor("sess_A"));
+    const { locateExpression } = await import("../agent/subagents/teammate/lib/gate");
+    const code = fake.evals.find((entry) => entry.includes("data-testid")) ?? "";
+    const mark = /"mark":"([0-9a-f]+)"/.exec(code)?.[1] ?? "";
+    expect(code).toBe(locateExpression("label", evil, mark));
+    const argument = `(${JSON.stringify({ by: "label", value: evil, mark, attr: "data-eve-gate" })})`;
+    const plain = locateExpression("label", "Email", mark);
+    // The same fixed function, applied to different data.
+    expect(code.slice(0, -argument.length)).toBe(plain.slice(0, -`(${JSON.stringify({ by: "label", value: "Email", mark, attr: "data-eve-gate" })})`.length));
+    expect(clicks()).toEqual([]);
+  });
+});
+
 describe("approval bound to the action", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -396,6 +507,37 @@ describe("approval bound to the action", () => {
     expect(clicks()).toEqual([]);
   });
 
+  it("binds an approval to the record in the fragment, not just the path", async () => {
+    const page = mailApp();
+    page.url = "https://mail.google.com/mail/u/0/#inbox/A";
+    page.tree = page.tree.replace('button "Send"', 'button "Delete"');
+    page.elements.e4 = { ...page.elements.e4!, name: "Delete", dom: button("Delete") };
+    const { tools, approveAndRun } = await setup(page);
+    const proposed = await tools.click.execute({ target: "@e4" }, ctxFor("sess_A"));
+    const proposal = proposed.proposal as { proposal: string; action: string };
+    // The person sees which message the delete is for.
+    expect(proposal.action).toMatch(/^Click button "Delete" on mail\.google\.com\/mail\/u\/0\/#inbox\/A/);
+    expect(proposed.page).toBe("https://mail.google.com/mail/u/0/#inbox/A");
+
+    // The Bot moved to another message on the same path before the approval landed.
+    fake.page.url = "https://mail.google.com/mail/u/0/#inbox/B";
+    const result = await approveAndRun(proposal);
+    expect(result).toMatchObject({ done: false, reason: "changed" });
+    expect((result.changed as string[]).join(" ")).toMatch(/#inbox\/B/);
+    expect(clicks()).toEqual([]);
+  });
+
+  it("treats another query string as another page", async () => {
+    const page = mailApp();
+    page.url = "https://admin.example.com/users?id=41";
+    const { tools, approveAndRun } = await setup(page);
+    const proposal = (await tools.click.execute({ target: "@e4" }, ctxFor("sess_A"))).proposal as { proposal: string; action: string };
+    expect(proposal.action).toMatch(/on admin\.example\.com\/users\?id=41/);
+    fake.page.url = "https://admin.example.com/users?id=42";
+    expect(await approveAndRun(proposal)).toMatchObject({ done: false, reason: "changed" });
+    expect(clicks()).toEqual([]);
+  });
+
   it("refuses an approved Enter when the field's text changed", async () => {
     const { tools, approveAndRun } = await setup();
     const proposal = (await tools.fill.execute({ target: "@e3", value: "Thanks, Ana!", submit: true }, ctxFor("sess_A"))).proposal as {
@@ -431,5 +573,216 @@ describe("approval bound to the action", () => {
     expect((await jobs.cancelJob(WORKSPACE, job.id)).ok).toBe(true);
     expect(await approveAndRun(proposal)).toMatchObject({ done: false, reason: "cancelled" });
     expect(clicks()).toEqual([]);
+  });
+});
+
+/**
+ * A list of invoices, each row with its own Delete, numbered the way
+ * agent-browser numbers refs: by position in this snapshot, so a row added at
+ * the top renumbers every Delete under it. `named` gives each row its name in
+ * the tree; without it, rows are told apart only by which one they are.
+ */
+function invoices(rows: readonly string[], options: { named?: boolean; deleted?: string[] } = {}): FakePage {
+  const lines = ['- link "Inbox" [ref=e1]', "- table"];
+  const elements: Record<string, FakeElement> = {
+    e1: { role: "link", name: "Inbox", dom: { ...button("Inbox"), tag: "A", type: "", href: "/inbox" } },
+  };
+  rows.forEach((row, i) => {
+    const ref = `e${i + 2}`;
+    lines.push(options.named === false ? "  - row" : `  - row "${row}"`, `    - cell "${row}"`, `    - button "Delete" [ref=${ref}]`);
+    elements[ref] = { role: "button", name: "Delete", dom: button("Delete"), onClick: () => options.deleted?.push(row) };
+  });
+  return { url: "https://billing.example.com/invoices", tree: lines.join("\n"), elements };
+}
+
+describe("refs the page renumbered", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+  });
+
+  it("refuses a ref that now names another control than the one the Bot read", async () => {
+    const page = mailApp();
+    const { tools } = await setup(page);
+    await tools.snapshot.execute({}, ctxFor("sess_A"));
+    // The app re-renders with a banner on top, and every ref moves down one: @e5 was Inbox, and is now Send.
+    fake.page = {
+      ...page,
+      tree: `- button "Undo send" [ref=e1]
+- heading "New message" [level=1, ref=e2]
+- form
+  - textbox "To" [ref=e3]
+  - textbox "Body" [ref=e4]
+  - button "Send" [ref=e5]
+- link "Inbox" [ref=e6]`,
+      elements: {
+        e1: { role: "button", name: "Undo send", dom: button("Undo send") },
+        e2: page.elements.e1!,
+        e3: page.elements.e2!,
+        e4: page.elements.e3!,
+        e5: page.elements.e4!,
+        e6: page.elements.e5!,
+      },
+    };
+    const result = await tools.click.execute({ target: "@e5" }, ctxFor("sess_A"));
+    expect(result).toMatchObject({ clicked: false, needsApproval: false });
+    expect(String(result.error)).toMatch(/@e5 is now button "Send".*not the link "Inbox" you read/);
+    expect(String(result.hint)).toMatch(/page_snapshot/);
+    expect(clicks()).toEqual([]);
+
+    // Read again, and the ref the Bot now holds is the one it means.
+    await tools.snapshot.execute({}, ctxFor("sess_A"));
+    expect(await tools.click.execute({ target: "@e6" }, ctxFor("sess_A"))).toMatchObject({ clicked: true });
+    expect(clicks()).toEqual([["click", "@e6"]]);
+  });
+
+  it("tells one row's Delete from another's, by the row or by which one it is", async () => {
+    for (const named of [true, false]) {
+      const { tools } = await setup(invoices(["Invoice A", "Invoice B"], { named }));
+      await tools.snapshot.execute({}, ctxFor("sess_A"));
+      // @e3 is Invoice B's Delete. A new invoice lands on top, and @e3 becomes Invoice A's.
+      fake.page = invoices(["Invoice Z", "Invoice A", "Invoice B"], { named });
+      const result = await tools.click.execute({ target: "@e3" }, ctxFor("sess_A"));
+      expect(result, `named rows: ${named}`).toMatchObject({ clicked: false, needsApproval: false });
+      expect(String(result.error)).toMatch(named ? /in row "Invoice A".*not the button "Delete" in row "Invoice B"/ : /2 of 3 like it.*2 of 2 like it/);
+      expect(clicks()).toEqual([]);
+    }
+  });
+
+  it("refuses an approved click when another row's control took the ref", async () => {
+    const deleted: string[] = [];
+    const { tools, approveAndRun } = await setup(invoices(["Invoice A", "Invoice B"], { deleted }));
+    await tools.snapshot.execute({}, ctxFor("sess_A"));
+    const proposed = await tools.click.execute({ target: "@e3" }, ctxFor("sess_A"));
+    const proposal = proposed.proposal as { proposal: string; action: string };
+    expect(proposal.action).toMatch(/^Click button "Delete" on billing\.example\.com\/invoices/);
+
+    // While the person read the request, a new invoice arrived on top.
+    fake.page = invoices(["Invoice Z", "Invoice A", "Invoice B"], { deleted });
+    const result = await approveAndRun(proposal);
+    expect(result).toMatchObject({ done: false, reason: "changed" });
+    expect((result.changed as string[]).join(" ")).toMatch(/was in row "Invoice B" and is now in row "Invoice A"/);
+    expect(deleted).toEqual([]);
+    expect(clicks()).toEqual([]);
+  });
+
+  it("does not type into, or press Enter in, a field whose ref moved", async () => {
+    const page = mailApp();
+    const { tools } = await setup(page);
+    await tools.snapshot.execute({}, ctxFor("sess_A"));
+    // @e3 was Body; after a re-render it is To.
+    fake.page = { ...page, tree: page.tree.replace('textbox "To" [ref=e2]', 'textbox "Cc" [ref=e2]').replace('textbox "Body" [ref=e3]', 'textbox "To" [ref=e3]') };
+    const result = await tools.fill.execute({ target: "@e3", value: "Thanks, Ana!", submit: true }, ctxFor("sess_A"));
+    expect(result).toMatchObject({ filled: false });
+    expect(String(result.error)).toMatch(/@e3 is now textbox "To"/);
+    expect(fake.page.elements.e3?.value).toBeUndefined();
+    expect(clicks()).toEqual([]);
+  });
+
+  it("lets a ref through when the page re-rendered without moving it", async () => {
+    const { tools } = await setup();
+    await tools.snapshot.execute({}, ctxFor("sess_A"));
+    fake.page = { ...fake.page, tree: `${fake.page.tree}\n- StaticText "Draft saved"` };
+    expect(await tools.click.execute({ target: "@e5" }, ctxFor("sess_A"))).toMatchObject({ clicked: true });
+  });
+});
+
+describe("the address an approval holds for", () => {
+  it("compares the whole address, query and fragment included", async () => {
+    const { samePage } = await import("../agent/subagents/teammate/lib/gate");
+    expect(samePage("https://mail.google.com/mail/u/0/#inbox/A", "https://mail.google.com/mail/u/0/#inbox/A")).toBe(true);
+    expect(samePage("https://mail.google.com/mail/u/0/#inbox/A", "https://mail.google.com/mail/u/0/#inbox/B")).toBe(false);
+    expect(samePage("https://a.example.com/x?id=1", "https://a.example.com/x?id=2")).toBe(false);
+    expect(samePage("https://a.example.com/x?id=1", "https://a.example.com/x")).toBe(false);
+    // Written differently, the same address.
+    expect(samePage("HTTPS://A.example.com:443/x", "https://a.example.com/x")).toBe(true);
+    expect(samePage("", "")).toBe(false);
+  });
+
+  it("shows the query and fragment, shortened from the middle so the id at the end stays", async () => {
+    const { address } = await import("../agent/subagents/teammate/lib/gate");
+    expect(address("https://mail.google.com/mail/u/0/#inbox/FMfcgzQXJWDsKmn")).toBe("mail.google.com/mail/u/0/#inbox/FMfcgzQXJWDsKmn");
+    const long = address(`https://app.example.com/records?filter=${"x".repeat(200)}&id=REC-42#tab=${"y".repeat(200)}-END`);
+    expect(long.length).toBeLessThan(200);
+    expect(long).toMatch(/id=REC-42#tab=/);
+    expect(long).toMatch(/-END$/);
+  });
+});
+
+describe("the page-side lookup", () => {
+  /** Just enough of a DOM to run the real lookup expression in a sandboxed context. */
+  function dom(elements: { attrs: Record<string, string>; labels?: string[]; hidden?: boolean; id?: string; text?: string }[]) {
+    const nodes = elements.map((spec) => ({
+      attrs: { ...spec.attrs },
+      labels: spec.labels?.map((text) => ({ textContent: text })) ?? null,
+      textContent: spec.text ?? "",
+      getAttribute(name: string) {
+        return name in this.attrs ? (this.attrs as Record<string, string>)[name]! : null;
+      },
+      setAttribute(name: string, value: string) {
+        (this.attrs as Record<string, string>)[name] = value;
+      },
+      removeAttribute(name: string) {
+        delete (this.attrs as Record<string, string>)[name];
+      },
+      getBoundingClientRect: () => ({ width: spec.hidden === true ? 0 : 10, height: 10 }),
+    }));
+    const has = (selector: string) => /^\[([a-z-]+)\]$/.exec(selector)?.[1];
+    const context = {
+      window: {} as Record<string, unknown>,
+      getComputedStyle: () => ({ visibility: "visible", display: "block" }),
+      document: {
+        querySelectorAll: (selector: string) => {
+          const attr = has(selector);
+          return attr === undefined ? nodes : nodes.filter((node) => attr in node.attrs);
+        },
+        getElementById: (id: string) => nodes.find((node) => node.attrs.id === id) ?? null,
+      },
+    };
+    return { nodes, context };
+  }
+
+  const run = async (by: "label" | "placeholder" | "testid", value: string, page: ReturnType<typeof dom>) => {
+    const { runInNewContext } = await import("node:vm");
+    const { locateExpression } = await import("../agent/subagents/teammate/lib/gate");
+    return JSON.parse(runInNewContext(locateExpression(by, value, "abc123"), page.context) as string) as { count: number };
+  };
+  const marked = (page: ReturnType<typeof dom>) => page.nodes.findIndex((node) => node.attrs["data-eve-gate"] === "abc123");
+
+  it("finds a test id exactly, and marks it", async () => {
+    const page = dom([{ attrs: { "data-testid": "save-btn" } }, { attrs: { "data-testid": "save-btn-2" } }]);
+    expect(await run("testid", "save-btn", page)).toEqual({ count: 1 });
+    expect(marked(page)).toBe(0);
+    expect(await run("testid", "Save-btn", page)).toEqual({ count: 0 });
+    expect(marked(page)).toBe(-1);
+  });
+
+  it("finds a label through <label>, aria-label and aria-labelledby, exact first", async () => {
+    const page = dom([
+      { attrs: {}, labels: ["Email  "] },
+      { attrs: { "aria-label": "Backup email" } },
+      { attrs: { "aria-labelledby": "l1" } },
+      { attrs: { id: "l1" }, text: "Phone number", hidden: true },
+    ]);
+    expect(await run("label", "email", page)).toEqual({ count: 1 });
+    expect(marked(page)).toBe(0);
+    expect(await run("label", "phone", page)).toEqual({ count: 1 });
+    expect(marked(page)).toBe(2);
+    expect(await run("label", "mail", page)).toEqual({ count: 2 });
+    expect(marked(page)).toBe(-1);
+  });
+
+  it("skips what is not rendered, and finds a placeholder", async () => {
+    const page = dom([{ attrs: { placeholder: "Search" }, hidden: true }, { attrs: { placeholder: "Search" } }]);
+    expect(await run("placeholder", "search", page)).toEqual({ count: 1 });
+    expect(marked(page)).toBe(1);
+  });
+
+  it("runs a hostile locator as a string to compare, never as code", async () => {
+    const page = dom([{ attrs: { "aria-label": "x" } }]);
+    for (const evil of [`"}); window.pwned = 1; ({"`, "`); window.pwned = 1; (`", " window.pwned = 1", "</script><script>window.pwned=1</script>"]) {
+      expect(await run("label", evil, page)).toEqual({ count: 0 });
+    }
+    expect(page.context.window.pwned).toBeUndefined();
   });
 });

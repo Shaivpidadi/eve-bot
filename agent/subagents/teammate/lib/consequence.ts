@@ -44,6 +44,15 @@ export interface TreeFacts {
   readonly inForm: boolean;
   /** Under a `search` landmark in the tree. */
   readonly inSearch: boolean;
+  /**
+   * The nearest named element it sits under, `row "Invoice 1042"`, passing
+   * over wrappers that only repeat its own name (a cell around a button): what
+   * tells one row's Delete from the next row's. Absent when there is none.
+   */
+  readonly context?: string;
+  /** Which of the elements with this role and name it is, from 1 in tree order, and how many there are. */
+  readonly nth?: number;
+  readonly of?: number;
 }
 
 /** The element as the DOM describes it, read by focusing it (see `gate.ts`). */
@@ -79,34 +88,54 @@ export interface Classification {
   readonly reasons: readonly string[];
 }
 
+/** Whole words, case-insensitively, with any run of whitespace between the words of a phrase. */
+const wordList = (words: readonly string[]): RegExp =>
+  new RegExp(`\\b(${words.map((word) => word.replace(/ /g, "\\s+")).join("|")})\\b`, "i");
+
+/** Words that spend, send, publish, destroy or commit outright, on a control or in its address. */
+const COMMITTING = [
+  // Money.
+  "pay", "pays", "payment", "buy", "purchase", "checkout", "check out", "order", "place order", "subscribe",
+  "donate", "transfer", "withdraw", "wire", "refund", "charge", "upgrade", "downgrade", "renew", "book", "reserve",
+  // Sending and publishing.
+  "send", "submit", "publish", "post", "reply", "reply all", "forward", "tweet", "retweet", "repost", "share",
+  "invite", "comment", "go live", "make public", "broadcast",
+  // Destroying.
+  "delete", "remove", "discard", "erase", "destroy", "trash", "empty", "purge", "wipe", "revoke", "deactivate",
+  "close account", "unsubscribe", "reset",
+  // Committing.
+  "confirm", "approve", "accept", "agree", "authorize", "authorise", "grant", "merge", "deploy", "release",
+  "cancel", "transfer ownership",
+  // Signing a document or signing up, but not signing in: that is a takeover.
+  "sign(?!\\s*in\\b)", "e-sign", "sign up",
+] as const;
+
 /**
- * Words on a control that spend, send, publish, destroy, or commit. Matched as
- * whole words, case-insensitively. Deliberately broad: the cost of asking is
- * one approval, and the cost of missing is an email nobody meant to send.
+ * Words that save or change a record: the verbs `catalog.ts` reads as a write
+ * in a tool's name, as they appear on a button. A single-page app's Save is
+ * often `type="button"` with no form around it, so its words are the only
+ * signal. Read on what a control says, not in a link's address, where they are
+ * as likely to be an article's slug (/blog/how-to-save-money).
+ *
+ * Plain movement stays out: next, back, open, view, search, show more, close.
  */
-export const CONSEQUENTIAL_WORDS = new RegExp(
-  "\\b(" +
-    [
-      // Money.
-      "pay", "pays", "payment", "buy", "purchase", "checkout", "check out", "order", "place order", "subscribe",
-      "donate", "transfer", "withdraw", "wire", "refund", "charge", "upgrade", "downgrade", "renew", "book", "reserve",
-      // Sending and publishing.
-      "send", "submit", "publish", "post", "reply", "reply all", "forward", "tweet", "retweet", "repost", "share",
-      "invite", "comment", "go live", "make public", "broadcast",
-      // Destroying.
-      "delete", "remove", "discard", "erase", "destroy", "trash", "empty", "purge", "wipe", "revoke", "deactivate",
-      "close account", "unsubscribe", "reset",
-      // Committing.
-      "confirm", "approve", "accept", "agree", "authorize", "authorise", "grant", "merge", "deploy", "release",
-      "cancel", "transfer ownership",
-      // Signing a document or signing up, but not signing in: that is a takeover.
-      "sign(?!\\s*in\\b)", "e-sign", "sign up",
-    ]
-      .map((word) => word.replace(/ /g, "\\s+"))
-      .join("|") +
-    ")\\b",
-  "i",
-);
+const RECORD_CHANGING = [
+  "save", "create", "add", "update", "apply", "finish", "complete", "assign", "unassign", "archive",
+  "unarchive", "move to", "rename", "revert", "restore", "import", "enable", "disable", "block", "unblock",
+  "lock", "unlock", "reject", "decline", "resolve", "reopen", "mark as", "set as", "join", "leave", "follow",
+  "unfollow", "report", "generate", "regenerate", "install", "uninstall", "connect", "disconnect", "link account",
+] as const;
+
+/**
+ * Words on a control that spend, send, publish, destroy, commit, or save a
+ * change. Matched as whole words, case-insensitively. Deliberately broad: the
+ * cost of asking is one approval, and the cost of missing is an email nobody
+ * meant to send.
+ */
+export const CONSEQUENTIAL_WORDS = wordList([...COMMITTING, ...RECORD_CHANGING]);
+
+/** The narrower set read in a link's address: /messages/42/delete. */
+const ADDRESS_WORDS = wordList(COMMITTING);
 
 /** Paths where a plain-looking button is likely to spend. */
 const MONEY_PATH = /(^|[/._-])(checkout|payment|payments|pay|cart|basket|purchase|transfer|wire|donate|subscribe|upgrade)([/._-]|$)/i;
@@ -141,11 +170,13 @@ const path = (url: string): string => {
 
 /** The words a control shows, which a page chooses. */
 function words(facts: ActionFacts): string[] {
-  const shown = [facts.tree?.name, facts.dom?.name, facts.option].filter((text): text is string => typeof text === "string" && text.trim() !== "");
-  // A link's address says what it does when its text does not: /messages/42/delete.
+  return [facts.tree?.name, facts.dom?.name, facts.option].filter((text): text is string => typeof text === "string" && text.trim() !== "");
+}
+
+/** A link's address, which says what it does when its text does not: /messages/42/delete. */
+function addressPath(facts: ActionFacts): string | null {
   const href = facts.dom?.href ?? "";
-  if (href !== "" && !href.startsWith("#")) shown.push(path(href) || href);
-  return shown;
+  return href !== "" && !href.startsWith("#") ? path(href) || href : null;
 }
 
 /** The role a tag carries without a `role` attribute, for an element the tree did not describe. */
@@ -206,13 +237,13 @@ export function classifyAction(facts: ActionFacts): Classification {
 
   // Typing alone changes nothing outside the page; the Enter that follows might.
   if (kind !== "fill" && kind !== "upload") {
-    for (const text of words(facts)) {
-      const hit = CONSEQUENTIAL_WORDS.exec(text);
-      if (hit !== null) {
-        flag("consequential", `the control says "${hit[0]}"`);
-        break;
-      }
-    }
+    const said = words(facts)
+      .map((text) => CONSEQUENTIAL_WORDS.exec(text))
+      .find((hit) => hit !== null);
+    const href = addressPath(facts);
+    const linked = href === null ? null : ADDRESS_WORDS.exec(href);
+    if (said) flag("consequential", `the control says "${said[0]}"`);
+    else if (linked !== null) flag("consequential", `the control says "${linked[0]}"`);
   }
 
   if (kind === "submit") {
@@ -241,7 +272,7 @@ export function classifyAction(facts: ActionFacts): Classification {
     }
     if (tree === null && dom === null) {
       flag("unknown", "the element could not be identified on the page");
-    } else if (BUTTON_ROLES.has(role) && words(facts).length === 0) {
+    } else if (BUTTON_ROLES.has(role) && words(facts).length === 0 && addressPath(facts) === null) {
       flag("unknown", "the control has no name to check");
     } else if (!navigating && !BUTTON_ROLES.has(role) && !NAVIGATING_ROLES.has(role)) {
       flag("unknown", `a ${role} is not a control this can vouch for`);
@@ -257,58 +288,98 @@ export function classifyAction(facts: ActionFacts): Classification {
 const TREE_LINE = /^(\s*)-\s+([A-Za-z]+)(?:\s+"((?:[^"\\]|\\.)*)")?(.*)$/;
 
 /**
+ * Every ref in an accessibility tree, with what the tree says about its
+ * element: role, name, the form and search landmarks it sits under, and the
+ * nearest named element above it. Keyed `@eN`.
+ */
+export function treeIndex(tree: string): Map<string, TreeFacts> {
+  const found: { ref: string; facts: TreeFacts }[] = [];
+  const ancestors: { depth: number; role: string; name: string }[] = [];
+  const plain = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
+  for (const raw of tree.split("\n")) {
+    const match = TREE_LINE.exec(raw);
+    if (match === null) continue;
+    const [, indent = "", role = "", rawName, rest = ""] = match;
+    const depth = indent.length;
+    while (ancestors.length > 0 && ancestors[ancestors.length - 1]!.depth >= depth) ancestors.pop();
+    const name = (rawName ?? "").replace(/\\(.)/g, "$1").trim();
+    const ref = /(?:^|[\[,\s])ref=(e\d+)(?=[\],\s]|$)/.exec(rest)?.[1];
+    if (ref !== undefined) {
+      const named = [...ancestors].reverse().find((entry) => entry.name !== "" && plain(entry.name) !== plain(name));
+      found.push({
+        ref: `@${ref}`,
+        facts: {
+          role,
+          name,
+          inForm: ancestors.some((entry) => entry.role === "form"),
+          inSearch: ancestors.some((entry) => entry.role === "search"),
+          ...(named === undefined ? {} : { context: `${named.role} "${named.name.slice(0, 200)}"` }),
+        },
+      });
+    }
+    ancestors.push({ depth, role, name });
+  }
+  const key = (facts: TreeFacts) => `${facts.role}\u0000${plain(facts.name)}`;
+  const totals = new Map<string, number>();
+  for (const { facts } of found) totals.set(key(facts), (totals.get(key(facts)) ?? 0) + 1);
+  const counted = new Map<string, number>();
+  const index = new Map<string, TreeFacts>();
+  for (const { ref, facts } of found) {
+    const nth = (counted.get(key(facts)) ?? 0) + 1;
+    counted.set(key(facts), nth);
+    if (!index.has(ref)) index.set(ref, { ...facts, nth, of: totals.get(key(facts)) ?? nth });
+  }
+  return index;
+}
+
+/**
  * The element `ref` names in an accessibility tree, with the form and search
  * landmarks it sits under. Null when the tree has no such ref.
  */
 export function treeFacts(tree: string, ref: string): TreeFacts | null {
-  const id = ref.replace(/^@/, "");
-  const marker = `ref=${id}`;
-  const ancestors: { depth: number; role: string }[] = [];
-  for (const raw of tree.split("\n")) {
-    const match = TREE_LINE.exec(raw);
-    if (match === null) continue;
-    const [, indent = "", role = "", name, rest = ""] = match;
-    const depth = indent.length;
-    while (ancestors.length > 0 && ancestors[ancestors.length - 1]!.depth >= depth) ancestors.pop();
-    if (new RegExp(`[\\[,\\s]${marker}[\\],\\s]`).test(rest)) {
-      return {
-        role,
-        name: (name ?? "").replace(/\\(.)/g, "$1").trim(),
-        inForm: ancestors.some((entry) => entry.role === "form"),
-        inSearch: ancestors.some((entry) => entry.role === "search"),
-      };
-    }
-    ancestors.push({ depth, role });
-  }
-  return null;
+  return treeIndex(tree).get(`@${ref.replace(/^@/, "")}`) ?? null;
+}
+
+/** Case and runs of whitespace do not distinguish two labels a person would read as the same. */
+export const sameLabel = (text: string): string => text.replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * Which of `labels` a locator means: the ones that read exactly as `wanted`
+ * (case and spacing aside) when there are any, otherwise the ones that contain
+ * it. "Send" means the Send button, not Send later beside it; a part of a long
+ * label still finds it, but only when it is the only one, which is for the
+ * caller to check. Generic over what is matched, so the DOM lookup in `gate.ts`
+ * follows the same rule.
+ */
+export function bestMatches<T>(items: readonly T[], label: (item: T) => readonly string[], wanted: string): T[] {
+  const want = sameLabel(wanted);
+  if (want === "") return [];
+  const exact = items.filter((item) => label(item).some((text) => sameLabel(text) === want));
+  return exact.length > 0 ? exact : items.filter((item) => label(item).some((text) => sameLabel(text).includes(want)));
 }
 
 /**
- * The refs of interactive elements whose role and name fit a semantic locator,
- * so a `by` target can be checked and then acted on as the one element it
- * means. Text, label and placeholder match the accessible name, which is what
- * agent-browser's `find` matches too.
+ * The refs of interactive elements in an accessibility tree that fit a `text`
+ * or `role` locator, so the target can be checked and then acted on as the one
+ * element it means. Text is matched against the accessible name, exact first
+ * (see `bestMatches`); a role with no name means every element of that role.
+ * Label, placeholder and test id are not in the tree; `gate.ts` finds those in
+ * the page itself.
  */
-export function refsMatching(tree: string, by: "text" | "label" | "placeholder" | "role" | "testid", target: string, name?: string): string[] {
-  if (by === "testid") return [];
-  const wanted = (by === "role" ? (name ?? "") : target).trim().toLowerCase();
-  const refs: string[] = [];
+export function refsMatching(tree: string, by: "text" | "role", target: string, name?: string): string[] {
+  const entries: { ref: string; name: string }[] = [];
   for (const raw of tree.split("\n")) {
     const match = TREE_LINE.exec(raw);
     if (match === null) continue;
     const [, , role = "", rawName, rest = ""] = match;
-    const ref = /ref=(e\d+)/.exec(rest)?.[1];
+    const ref = /\bref=(e\d+)/.exec(rest)?.[1];
     if (ref === undefined) continue;
-    const label = (rawName ?? "").trim().toLowerCase();
-    if (by === "role") {
-      if (role.toLowerCase() !== target.trim().toLowerCase()) continue;
-      if (wanted !== "" && !label.includes(wanted)) continue;
-    } else if (wanted === "" || !label.includes(wanted)) {
-      continue;
-    }
-    refs.push(`@${ref}`);
+    if (by === "role" && role.toLowerCase() !== target.trim().toLowerCase()) continue;
+    entries.push({ ref: `@${ref}`, name: (rawName ?? "").replace(/\\(.)/g, "$1") });
   }
-  return refs;
+  const wanted = by === "role" ? (name ?? "") : target;
+  if (by === "role" && sameLabel(wanted) === "") return entries.map((entry) => entry.ref);
+  return bestMatches(entries, (entry) => [entry.name], wanted).map((entry) => entry.ref);
 }
 
 /**

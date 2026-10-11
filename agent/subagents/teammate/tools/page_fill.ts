@@ -6,7 +6,7 @@ import { looseBoolean } from "../../../lib/tool-input";
 import { guardSideEffect } from "../../../lib/run-guard";
 
 import { browser } from "../lib/browser";
-import { gate } from "../lib/gate";
+import { gate, inspect, staleRef, staleResult } from "../lib/gate";
 import { act } from "../lib/page";
 import { LOCATORS, missHint, targetArgs } from "../lib/target";
 
@@ -37,14 +37,31 @@ export default defineTool({
   async execute({ target, by, name, value, submit }, ctx) {
     const named = { target, ...(by === undefined ? {} : { by }), ...(name === undefined ? {} : { name }) };
     if (submit === true) {
-      const filled = await browser(ctx, targetArgs(named, "fill", value));
+      // Pinned first, the way the gate pins it, so the field typed into is the
+      // one whose Enter is checked, not whichever `find` would have picked.
+      const pinned = await inspect(ctx, named, { dom: false });
+      if (pinned.selector === null) {
+        return {
+          filled: false as const,
+          target,
+          error: `Nothing was typed: ${pinned.problem ?? "the field could not be identified"}.`,
+          hint: "Take a page_snapshot and name the field by its @ref.",
+        };
+      }
+      // A ref the page renumbered since the Bot read it would put the text, and the Enter, in another field.
+      const moved = staleRef(ctx, named, pinned);
+      if (moved !== null) return { filled: false as const, target, ...staleResult(moved) };
+      const field = pinned.selector;
+      const filled = await browser(ctx, ["fill", field, value]);
       if (!filled.ok) return { filled: false as const, target, error: filled.error, detail: filled.output, hint: missHint(named) };
       const checked = await gate(ctx, {
         kind: "submit",
-        target: named,
+        target: { target: field },
         prepare: (selector) => [["focus", selector]],
         action: () => ["press", "Enter"],
         value,
+        // Typing can re-render the page; the Enter goes only to the field just typed into.
+        ...(pinned.element.tree === null ? {} : { expect: pinned.element.tree }),
       });
       if (!checked.go) return { filled: true as const, submitted: false as const, target, ...checked.result };
       const run = await guardSideEffect(ctx);

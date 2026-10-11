@@ -4,10 +4,12 @@ import {
   type ActionFacts,
   classifyAction,
   type DomFacts,
+  bestMatches,
   refsMatching,
   scriptUrl,
   treeFacts,
   type TreeFacts,
+  treeIndex,
 } from "../agent/subagents/teammate/lib/consequence";
 
 const tree = (role: string, name: string, extra: Partial<TreeFacts> = {}): TreeFacts => ({ role, name, inForm: false, inSearch: false, ...extra });
@@ -31,6 +33,27 @@ describe("classifyAction", () => {
       expect(result.verdict, name).toBe("consequential");
       expect(result.reasons.join(" ")).toMatch(/the control says/);
     }
+  });
+
+  it("flags controls that save or change a record, even a type=button with no form", () => {
+    for (const name of ["Save changes", "Save", "Create token", "Add member", "Update payment method", "Apply", "Finish setup", "Complete purchase", "Archive", "Mark as paid", "Add to cart", "Generate new token"]) {
+      // A single-page app's button: type="button", no form, so only the words say what it does.
+      const result = classifyAction(click({ tree: tree("button", name), dom: dom({ name }) }));
+      expect(result.verdict, name).toBe("consequential");
+      expect(result.reasons.join(" "), name).toMatch(/the control says/);
+    }
+  });
+
+  it("keeps plain movement safe, and does not read record verbs into a word that only contains them", () => {
+    for (const name of ["Next", "Back", "Open", "View", "Search", "Show more", "Close", "Updates", "Saved items", "Address", "Completed tasks"]) {
+      expect(classifyAction(click({ tree: tree("button", name), dom: dom({ name }) })).verdict, name).toBe("safe");
+    }
+    expect(classifyAction(click({ tree: tree("link", "Open"), dom: dom({ tag: "A", type: "", href: "https://app.example.com/records/42" }) })).verdict).toBe("safe");
+  });
+
+  it("does not read a record verb in an article's address as an action", () => {
+    const article = click({ tree: tree("link", "Ten tips"), dom: dom({ tag: "A", type: "", name: "Ten tips", href: "https://blog.example.com/how-to-save-and-update" }) });
+    expect(classifyAction(article).verdict).toBe("safe");
   });
 
   it("lets plain navigation through", () => {
@@ -132,15 +155,38 @@ describe("treeFacts", () => {
 - button "Send feedback" [ref=e30]`;
 
   it("finds the element, its name, and the form or search it sits in", () => {
-    expect(treeFacts(TREE, "@e3")).toEqual({ role: "button", name: "Send", inForm: true, inSearch: false });
-    expect(treeFacts(TREE, "e4")).toEqual({ role: "searchbox", name: "Search mail", inForm: false, inSearch: true });
-    expect(treeFacts(TREE, "@e30")).toEqual({ role: "button", name: "Send feedback", inForm: false, inSearch: false });
+    expect(treeFacts(TREE, "@e3")).toEqual({ role: "button", name: "Send", inForm: true, inSearch: false, nth: 1, of: 1 });
+    expect(treeFacts(TREE, "e4")).toEqual({ role: "searchbox", name: "Search mail", inForm: false, inSearch: true, nth: 1, of: 1 });
+    expect(treeFacts(TREE, "@e30")).toEqual({ role: "button", name: "Send feedback", inForm: false, inSearch: false, nth: 1, of: 1 });
     expect(treeFacts(TREE, "@e1")?.role).toBe("heading");
   });
 
   it("does not confuse e3 with e30, and knows a missing ref", () => {
     expect(treeFacts(TREE, "@e3")?.name).toBe("Send");
     expect(treeFacts(TREE, "@e99")).toBeNull();
+  });
+});
+
+describe("treeIndex", () => {
+  // As agent-browser prints a table: refs are not in document order, and a cell repeats its button's name.
+  const TABLE = `- LayoutTable
+  - LayoutTableRow "Invoice A"
+    - LayoutTableCell "Invoice A"
+    - LayoutTableCell "Delete"
+      - button "Delete" [ref=e4]
+  - LayoutTableRow "Invoice B"
+    - LayoutTableCell "Invoice B"
+    - LayoutTableCell "Delete"
+      - button "Delete" [ref=e5]
+- textbox "Notes" [ref=e1]`;
+
+  it("tells one row's Delete from the next by the row, and by which one it is", () => {
+    const index = treeIndex(TABLE);
+    expect(index.get("@e4")).toMatchObject({ role: "button", name: "Delete", context: 'LayoutTableRow "Invoice A"', nth: 1, of: 2 });
+    expect(index.get("@e5")).toMatchObject({ role: "button", name: "Delete", context: 'LayoutTableRow "Invoice B"', nth: 2, of: 2 });
+    expect(index.get("@e1")).toMatchObject({ role: "textbox", name: "Notes", nth: 1, of: 1 });
+    expect(index.get("@e1")?.context).toBeUndefined();
+    expect([...index.keys()]).toEqual(["@e4", "@e5", "@e1"]);
   });
 });
 
@@ -151,8 +197,32 @@ describe("refsMatching", () => {
 
   it("resolves a semantic locator to the refs it could mean", () => {
     expect(refsMatching(TREE, "role", "link", "Inbox")).toEqual(["@e6"]);
-    expect(refsMatching(TREE, "text", "Send")).toEqual(["@e3", "@e5"]);
-    expect(refsMatching(TREE, "testid", "send")).toEqual([]);
+    expect(refsMatching(TREE, "role", "button")).toEqual(["@e3", "@e5"]);
+  });
+
+  it("prefers the exact name, case and spacing aside, over names that contain it", () => {
+    const tree = `- button "Send" [ref=e1]
+- button "Sender" [ref=e2]
+- button "Send  later" [ref=e3]
+- link "Archive \\"old\\" mail" [ref=e4]`;
+    expect(refsMatching(tree, "text", "Send")).toEqual(["@e1"]);
+    expect(refsMatching(tree, "text", "  send ")).toEqual(["@e1"]);
+    expect(refsMatching(tree, "role", "button", "SEND")).toEqual(["@e1"]);
+    expect(refsMatching(tree, "text", "send later")).toEqual(["@e3"]);
+    // A part of a name, when nothing reads exactly: one match, or several for the caller to refuse.
+    expect(refsMatching(tree, "text", "later")).toEqual(["@e3"]);
+    expect(refsMatching(tree, "text", "Sen")).toEqual(["@e1", "@e2", "@e3"]);
+    expect(refsMatching(tree, "text", 'Archive "old" mail')).toEqual(["@e4"]);
+    expect(refsMatching(tree, "text", "")).toEqual([]);
+  });
+});
+
+describe("bestMatches", () => {
+  it("takes the exact matches when there are any, and parts only otherwise", () => {
+    const labels = (item: string) => [item];
+    expect(bestMatches(["Email", "Email address", "Backup email"], labels, "email")).toEqual(["Email"]);
+    expect(bestMatches(["Email address", "Backup email"], labels, "email")).toEqual(["Email address", "Backup email"]);
+    expect(bestMatches(["Email address", "Phone"], labels, "EMAIL")).toEqual(["Email address"]);
   });
 });
 

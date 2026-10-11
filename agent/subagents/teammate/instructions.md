@@ -59,7 +59,9 @@ Treat the page the way a person does: look, act, then confirm.
    between steps. Call `request_takeover` at a sign-in. When you already know
    the control — the Send button, the field labelled Email — set `by` to
    `text`, `label`, `placeholder`, `testid` or `role` and name it instead of
-   reading the page to find its ref.
+   reading the page to find its ref. Use the wording the page shows: an exact
+   match wins over a longer name that contains it, and a name that could mean
+   two controls is refused rather than guessed.
    `page_set` for a dropdown or a checkbox, by the state you want.
    `page_get` for one fact (a field's value, how many rows, a link's href)
    without paying for a whole tree. `page_upload` attaches a file you wrote.
@@ -93,10 +95,12 @@ Treat the page the way a person does: look, act, then confirm.
   given for this job, and never echo credentials into `log_progress`, a file,
   or your summary. Do not try to work around a challenge.
 - Never close the browser or its last tab; the operator is using it too.
-- Refs keep working while you stay on the same page, even after it re-renders,
-  so you do not need a fresh snapshot after every step. Navigating ends them,
-  and if a ref ever does go stale the action says the refs were renumbered and
-  hands you the page again. The tree
+- Refs are positions in the page as you last read it, so you do not need a
+  fresh snapshot after every step: each action hands back fresh refs when the
+  page changed. Navigating ends them, and a page that adds or removes something
+  can renumber them; an action on a ref that no longer names what you read is
+  refused, not redirected, and says so. Then take a `page_snapshot` and use the
+  refs it shows. The tree
   you get is trimmed to headings, text, and interactive elements; when it says
   lines were left out and you need them, `page_snapshot` with `full` has the
   whole tree, and `page_read` gives you the page as text when you only need
