@@ -21,6 +21,16 @@ vi.mock("../agent/subagents/teammate/lib/browser", () => ({
   },
 }));
 
+// The computer is never reached from here: what a cancel asks of it is recorded instead.
+const stopped = vi.hoisted(() => ({ calls: [] as string[][] }));
+vi.mock("../agent/lib/computer/shell", async (original) => ({
+  ...(await original<typeof import("../agent/lib/computer/shell")>()),
+  stopRunCommands: vi.fn(async (sessionIds: readonly string[]) => {
+    stopped.calls.push([...sessionIds]);
+    return 2;
+  }),
+}));
+
 const WORKSPACE = "default";
 
 const ctxFor = (sessionId: string) =>
@@ -185,6 +195,32 @@ describe("cancelJobRun", () => {
     expect(cancel.sessionsToInterrupt(null, { sessionId: null })).toEqual([]);
   });
 
+  it("stops the run's shell commands when the caller can, and says how many", async () => {
+    const { cancel, job } = await running();
+    const asked: string[][] = [];
+    const outcome = await cancel.cancelJobRun(WORKSPACE, job.id, {
+      stopCommands: async (sessionIds) => {
+        asked.push([...sessionIds]);
+        return 3;
+      },
+    });
+    expect(asked).toEqual([["sess_A"]]);
+    expect(outcome).toMatchObject({ ok: true, commandsStopped: 3, interruption: "unavailable" });
+    if (!outcome.ok) throw new Error("not cancelled");
+    expect(cancel.describeInterruption(outcome)).toContain("3 of its shell processes were stopped");
+  });
+
+  it("still cancels when stopping the shell fails", async () => {
+    const { cancel, job, read } = await running();
+    const outcome = await cancel.cancelJobRun(WORKSPACE, job.id, {
+      stopCommands: async () => {
+        throw new Error("computer asleep");
+      },
+    });
+    expect(outcome).toMatchObject({ ok: true, commandsStopped: null });
+    expect((await read()).status).toBe("cancelled");
+  });
+
   it("does not interrupt a job nobody is working on", async () => {
     const jobs = await import("../agent/lib/jobs");
     const cancel = await import("../agent/lib/cancel");
@@ -291,7 +327,9 @@ describe("the cancel_job tool and the console's DELETE route", () => {
     expect(answer).toMatchObject({ cancelled: true, interruption: "unavailable" });
     expect(String(answer.note)).toContain("every action it tries is refused");
     expect(String(answer.note)).toContain("no further model call");
-    expect(String(answer.note)).toContain("next check");
+    expect(String(answer.note)).toContain("within a minute");
+    expect(String(answer.note)).toContain("2 of its shell processes were stopped");
+    expect(stopped.calls.at(-1)).toEqual(["sess_A"]);
     expect(String(answer.note)).not.toContain("may finish its current step");
     expect((await read()).status).toBe("cancelled");
     expect(await cancelJob.execute({ jobId: job.id }, ctxFor("sess_hq"))).toMatchObject({ cancelled: true, alreadyCancelled: true });

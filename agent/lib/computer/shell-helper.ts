@@ -22,10 +22,19 @@
  *   that never includes the screens' ranges. With iptables (root with
  *   CAP_NET_ADMIN, as on a Vercel Sandbox VM), `bot`'s TCP over loopback to any
  *   other port is rejected by owner, and the internet stays open. Without it (a
- *   Docker container has no CAP_NET_ADMIN), Landlock (Linux 6.7+) limits all of
- *   `bot`'s TCP connections to the allowlist. With neither, the shell refuses
- *   to run. Where the kernel has it (6.12+), Landlock also keeps `bot` off
- *   abstract unix sockets made outside its own commands, in either mode.
+ *   Docker container has no CAP_NET_ADMIN), Landlock (Linux 6.7+), which sees
+ *   ports but not addresses, closes the screens' ranges and the kernel's
+ *   ephemeral range (where agent-browser's stream and every other unnamed
+ *   listener lands) for all of `bot`'s TCP, and leaves every other port open.
+ *   With neither, the shell refuses to run. Where the kernel has it (6.12+),
+ *   Landlock also keeps `bot` off abstract unix sockets made outside its own
+ *   commands, in either mode.
+ * - Runs: every command carries the run it ran for as a supplementary group
+ *   of its own, which an unprivileged process can neither drop nor fake and
+ *   which everything it starts inherits (environment cleared, new session or
+ *   not), so a cancelled run's commands can be stopped (`kill`) without
+ *   touching another run's. The run ids and their groups are kept by the
+ *   helper itself, one group per run at a time.
  *
  * Installed root-owned in /usr/local/lib/bot-computer by `bot-computer isolate`;
  * only the computer's user may run it, through sudo. Like the other programs
@@ -41,10 +50,10 @@ export const SHELL_REFUSED_EXIT = 125;
 export const SHELL_REFUSED_MARK = "bot-shell: unavailable:";
 
 /**
- * Ports a Bot's shell may connect to on this machine, and anywhere under
- * Landlock, which can only allow: the web, DNS over TCP, ssh and git, and
- * common local development servers. `BOT_SHELL_TCP_PORTS` adds more. The
- * screens' ranges are never allowed.
+ * Ports a Bot's shell may connect to on this machine under iptables: the web,
+ * DNS over TCP, ssh and git, and common local development servers.
+ * `BOT_SHELL_TCP_PORTS` adds more, which Landlock also opens inside the
+ * ephemeral range. The screens' ranges are never allowed.
  */
 export const DEFAULT_SHELL_PORTS = [
   22, 53, 80, 443, 8080, 8443, 9418, 3000, 3001, 3002, 3003, 4173, 5000, 5173, 8000, 8888,
@@ -61,14 +70,17 @@ export const SHELL_PY = String.raw`"""bot_shell __VERSION__: runs a Bot's shell 
 Runs as root through sudo, called by the computer's own user:
   setup OWNER STATE RUN PORTS   create the user and group, fence them off, report the mode (JSON)
   check                         report the mode (JSON)
-  run CMD CWD ENV               run one command as the Bot (arguments base64; ENV is a JSON object)
+  run CMD CWD ENV RUN           run one command as the Bot for one run (arguments base64; ENV is a JSON object)
+  kill RUN                      stop every command of one run, and what they started (RUN base64)
   read PATH                     print one file, base64, read as the Bot (PATH base64)
   write PATH STAGE              write a staged file to PATH as the Bot (PATH base64)
 A refusal exits 125 with a line starting "bot-shell: unavailable:" on stderr.
 """
 import base64
 import ctypes
+import fcntl
 import grp
+import hashlib
 import json
 import os
 import pwd
@@ -91,6 +103,11 @@ REFUSED = 125
 MARK = "__MARK__"
 
 PR_SET_NO_NEW_PRIVS = 38
+# Where bind(port 0) lands when the kernel's range cannot be read: closed whole.
+EPHEMERAL_FALLBACK = (1024, 65535)
+# Supplementary groups that tag a run's processes; below 65536 so a rootless container maps them.
+RUN_GID_BASE, RUN_GID_SPAN = 50000, 10000
+RUNS_FILE = HOME + "/runs.json"
 LANDLOCK_CREATE_RULESET_VERSION = 1
 LANDLOCK_ACCESS_NET_CONNECT_TCP = 2
 LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET = 1
@@ -143,6 +160,26 @@ def landlock(ports):
     done = libc.syscall(ctypes.c_long(SYS_RESTRICT_SELF), ctypes.c_int(fd), ctypes.c_uint32(0)) == 0
     os.close(fd)
     return done or ports is None
+
+
+def ephemeral_range():
+    try:
+        with open("/proc/sys/net/ipv4/ip_local_port_range") as handle:
+            low, high = (int(part) for part in handle.read().split())
+    except (OSError, ValueError):
+        return EPHEMERAL_FALLBACK
+    return (low, high) if 0 < low <= high < 65536 else EPHEMERAL_FALLBACK
+
+
+def landlock_ports(extra):
+    """Every TCP port but the screens' ranges and the ephemeral range, plus the ports set aside for the Bot."""
+    shut = bytearray(65536)
+    for low, high in list(RESERVED) + [ephemeral_range()]:
+        shut[low:high + 1] = b"\x01" * (high - low + 1)
+    for port in extra:
+        if 0 < port < 65536 and not any(low <= port <= high for low, high in RESERVED):
+            shut[port] = 0
+    return [port for port in range(1, 65536) if not shut[port]]
 
 
 # iptables: the Bot's TCP over loopback reaches only the allowed ports; the rest is rejected by owner.
@@ -215,12 +252,43 @@ def ensure_fence(state, account):
                 refuse("the firewall that keeps the Bot shell off the browser is missing and cannot be restored (" + tool + ")")
         return None
     if state.get("mode") == "landlock":
-        return [int(port) for port in state.get("ports", [])]
+        return landlock_ports(int(port) for port in state.get("ports", []))
     refuse("this computer can keep the Bot shell off the browser with neither iptables nor Landlock")
 
 
-def drop(account, gid, ports):
-    os.setgroups([gid])
+def run_gid(run_id, create):
+    """The group that tags one run's processes: allocated on first use, never shared by two runs at once."""
+    with open(RUNS_FILE + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            with open(RUNS_FILE) as handle:
+                runs = json.load(handle)
+        except (OSError, ValueError):
+            runs = {}
+        if not isinstance(runs, dict):
+            runs = {}
+        if run_id in runs or not create:
+            return runs.get(run_id)
+        used = set(runs.values())
+        # Oldest first (insertion order): the run longest gone gives up its group.
+        while len(runs) >= RUN_GID_SPAN - 1:
+            runs.pop(next(iter(runs)))
+            used = set(runs.values())
+        start = int(hashlib.sha256(run_id.encode()).hexdigest()[:8], 16) % RUN_GID_SPAN
+        gid = next(RUN_GID_BASE + (start + step) % RUN_GID_SPAN for step in range(RUN_GID_SPAN)
+                   if RUN_GID_BASE + (start + step) % RUN_GID_SPAN not in used)
+        runs[run_id] = gid
+        with open(RUNS_FILE + ".tmp", "w") as handle:
+            json.dump(runs, handle)
+        os.replace(RUNS_FILE + ".tmp", RUNS_FILE)
+        return gid
+
+
+def drop(account, gid, ports, run=None):
+    try:
+        os.setgroups([gid] + ([run] if run is not None else []))
+    except OSError:
+        os.setgroups([gid])
     os.setgid(account.pw_gid)
     os.setuid(account.pw_uid)
     if os.getuid() == 0 or os.geteuid() == 0:
@@ -260,9 +328,9 @@ def as_bot():
 
 
 def cmd_run(argv):
-    command, cwd, extra = decode(argv[0]), decode(argv[1]), json.loads(decode(argv[2]) or "{}")
+    command, cwd, extra, run_id = decode(argv[0]), decode(argv[1]), json.loads(decode(argv[2]) or "{}"), decode(argv[3])
     account, gid, ports = as_bot()
-    drop(account, gid, ports)
+    drop(account, gid, ports, run_gid(run_id, True) if run_id else None)
     for directory in (cwd, WORKSPACE, BOT_HOME):
         try:
             if directory:
@@ -315,6 +383,42 @@ def cmd_write(argv):
     except PermissionError:
         sys.stderr.write("permission denied: " + path + "\n")
         sys.exit(13)
+
+
+def tagged(uid, run):
+    """Every process of the Bot's user that carries the run's group."""
+    found = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            with open("/proc/" + name + "/status") as handle:
+                fields = dict(line.split(":", 1) for line in handle.read().splitlines() if ":" in line)
+            if int(fields["Uid"].split()[0]) == uid and str(run) in fields.get("Groups", "").split():
+                found.append(int(name))
+        except (OSError, ValueError, KeyError, IndexError):
+            continue
+    return found
+
+
+def cmd_kill(argv):
+    """Stops every process carrying the run's group, whatever it started or cleared."""
+    run_id = decode(argv[0])
+    account, _ = bot_ids()
+    run = run_gid(run_id, False) if run_id and account is not None else None
+    killed = set()
+    for _ in range(5 if run is not None else 0):
+        found = tagged(account.pw_uid, run)
+        if not found:
+            break
+        for pid in found:
+            try:
+                os.kill(pid, 9)
+                killed.add(pid)
+            except OSError:
+                pass
+    print(json.dumps({"ok": True, "killed": len(killed)}))
+    return 0
 
 
 def run(command):
@@ -467,10 +571,10 @@ def cmd_check(argv):
 def main(argv):
     if os.geteuid() != 0:
         refuse("bot_shell.py must run through sudo")
-    commands = {"setup": (cmd_setup, 4), "check": (cmd_check, 0), "run": (cmd_run, 3), "read": (cmd_read, 1), "write": (cmd_write, 2)}
+    commands = {"setup": (cmd_setup, 4), "check": (cmd_check, 0), "run": (cmd_run, 4), "kill": (cmd_kill, 1), "read": (cmd_read, 1), "write": (cmd_write, 2)}
     name = argv[1] if len(argv) > 1 else ""
     if name not in commands or len(argv) - 2 != commands[name][1]:
-        refuse("usage: bot_shell.py setup OWNER STATE RUN PORTS | check | run CMD CWD ENV | read PATH | write PATH STAGE")
+        refuse("usage: bot_shell.py setup OWNER STATE RUN PORTS | check | run CMD CWD ENV RUN | kill RUN | read PATH | write PATH STAGE")
     if name == "setup":
         try:
             return cmd_setup(argv[2:])

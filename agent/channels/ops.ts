@@ -11,6 +11,7 @@ import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
 import { cancelJobRun, describeInterruption, interruptVia, within } from "../lib/cancel";
+import { stopRunCommands } from "../lib/computer/shell";
 import { isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
@@ -352,7 +353,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const interrupt = interruptVia(attachSession, "Room reset");
       for (const job of await listOpenJobs(workspaceId)) {
         if (job.room !== room || isRoutine(job)) continue;
-        const cancelled = await cancelJobRun(workspaceId, job.id, { interrupt });
+        const cancelled = await cancelJobRun(workspaceId, job.id, { interrupt, stopCommands: stopRunCommands });
         if (!cancelled.ok) continue;
         cancelledJobs.push(job.id);
       }
@@ -617,7 +618,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const cancelled: string[] = [];
       const interrupt = interruptVia(attachSession, `${bot.name} was removed`);
       for (const job of open) {
-        const outcome = await cancelJobRun(workspaceId, job.id, { interrupt });
+        const outcome = await cancelJobRun(workspaceId, job.id, { interrupt, stopCommands: stopRunCommands });
         if (outcome.ok) cancelled.push(job.id);
       }
       await retireBot(workspaceId, bot.id);
@@ -822,6 +823,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (!gate.ok) return denied(gate);
       const cancelled = await cancelJobRun(gate.access.workspaceId, params.jobId ?? "", {
         interrupt: interruptVia(attachSession, `Cancelled from the console by ${gate.access.user}`),
+        stopCommands: stopRunCommands,
       });
       if (!cancelled.ok) return json({ error: cancelled.reason }, 422);
       return json({

@@ -13,6 +13,10 @@ vi.mock("../agent/lib/computer-backup", () => ({
   checkpointComputer: vi.fn(async () => undefined),
 }));
 vi.mock("../agent/subagents/teammate/lib/browser", () => ({ bindScreen: vi.fn(async () => undefined) }));
+vi.mock("../agent/lib/computer/shell", async (original) => ({
+  ...(await original<typeof import("../agent/lib/computer/shell")>()),
+  stopRunCommands: vi.fn(async () => 0),
+}));
 
 const WORKSPACE = "default";
 const TOOLS = ["get_issue", "list_issues", "search_code", "create_issue", "run_query", "get_query_result"];

@@ -35,6 +35,8 @@ export type JobCancellation =
       sessions: readonly string[];
       interruption: Interruption;
       interruptError?: string;
+      /** How many of the run's shell processes were stopped; null when the caller did not ask or the computer could not be reached. */
+      commandsStopped: number | null;
     }
   | Extract<Cancel, { ok: false }>;
 
@@ -49,8 +51,12 @@ export type JobCancellation =
  * 2. The bot, for every caller: its next model call fails its turn (the
  *    teammate's `fence` hook finds the job cancelled), which ends the
  *    `run_job` run's wait; the run then stops without recording anything.
- *    A bot parked on a long tool call or a card is noticed at the run's next
- *    heartbeat (see `run-stop.ts`).
+ *    A bot parked on a card is noticed at the run's next heartbeat, within a
+ *    minute (see `run-stop.ts`).
+ * 2b. Its shell, when the caller passes `stopCommands`: every command the
+ *    run's sessions started on the computer is killed, with what it started,
+ *    so a long command neither keeps working nor keeps the bot from reaching
+ *    its next (refused) model call.
  * 3. The session, when the caller can: `interrupt` stops the job's sessions (see
  *    `sessionsToInterrupt`), so the bot stops mid-step instead of at its next
  *    step and its pending requests (an approval card, a cost-limit card, a
@@ -70,13 +76,15 @@ export type JobCancellation =
 export async function cancelJobRun(
   workspaceId: string,
   jobId: string,
-  options: { interrupt?: Interrupt } = {},
+  options: { interrupt?: Interrupt; stopCommands?: (sessionIds: readonly string[]) => Promise<number> } = {},
 ): Promise<JobCancellation> {
   const cancelled = await cancelJob(workspaceId, jobId);
   if (!cancelled.ok) return cancelled;
   // Idempotent, and a no-op for a lease that reserved nothing (a wait, a dispatch).
   if (cancelled.token !== null) await releaseRun(workspaceId, cancelled.token).catch(() => false);
   const sessions = sessionsToInterrupt(cancelled.session, cancelled.job);
+  const commandsStopped =
+    options.stopCommands === undefined || sessions.length === 0 ? null : await options.stopCommands(sessions).catch(() => null);
   const base = {
     ok: true as const,
     job: cancelled.job,
@@ -84,6 +92,7 @@ export async function cancelJobRun(
     alreadyCancelled: cancelled.alreadyCancelled,
     session: cancelled.session,
     sessions,
+    commandsStopped,
   };
   if (options.interrupt === undefined) return { ...base, interruption: "unavailable" };
   if (sessions.length === 0) return { ...base, interruption: "no-session" };
@@ -175,6 +184,6 @@ export function describeInterruption(outcome: Extract<JobCancellation, { ok: tru
       return `Stopping the bot's session failed (${outcome.interruptError ?? "unknown error"}). The job stays cancelled and every action the bot tries is refused; cancel again to retry.`;
     case "unavailable":
       if (outcome.sessions.length === 0) return "No bot session was bound to it.";
-      return "The bot makes no further model call for it and every action it tries is refused; its run ends when its current step does, or at its next check if it is waiting on something. Starting the thread over from the console ends the session at once.";
+      return `The bot makes no further model call for it and every action it tries is refused${outcome.commandsStopped ? `; ${outcome.commandsStopped} of its shell processes were stopped` : ""}. Its run ends when its current step does, or within a minute if it is waiting on something. Starting the thread over from the console ends the session at once.`;
   }
 }

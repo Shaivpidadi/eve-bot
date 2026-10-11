@@ -246,8 +246,10 @@ earlier.
 
 **Cancellation.** Stop in the console (`DELETE /bot/v1/jobs/:id`) cancels the
 job durably and stops its sessions immediately. Cancelling from a chat
-(HQ's `cancel_job`) refuses all of the Bot's actions immediately and ends the
-run. Either way nothing can mark the job done afterwards.
+(HQ's `cancel_job`) refuses all of the Bot's actions immediately, kills the
+run's shell commands, and stops the Bot before its next model call (a context
+compaction included); a run waiting on an approval card ends within a minute.
+Either way nothing can mark the job done afterwards.
 
 **Connectors.** Every tool has a recorded effect, read or change. A tool
 nobody classified, one the server grew since its last check, or one whose
@@ -413,11 +415,17 @@ the browser's profiles, the team's sign-ins or the gateway key, cannot type
 into a screen, and cannot connect to Chrome's DevTools, VNC or agent-browser's
 stream. So a Bot cannot drive the browser around the approval gate from its
 shell. The network fence is iptables where the computer allows it (Vercel
-Sandbox) and Landlock otherwise (Docker, Linux 6.7+); either way the shell may
-connect to this machine only on an allowlist of ports (web, DNS, ssh, git,
-common dev servers), and under Landlock to the internet only on those ports
-too. `BOT_SHELL_TCP_PORTS` adds ports (`5432,6379`). A computer that can have
-neither fence refuses the shell rather than run it unfenced;
+Sandbox) and Landlock otherwise (Docker, Linux 6.7+). Under iptables the shell
+may connect to this machine only on an allowlist of ports (web, DNS, ssh, git,
+common dev servers) and to the internet on any. Landlock sees ports, not
+addresses, so it closes the screens' ports and the kernel's ephemeral range
+(where agent-browser's stream and other unnamed listeners land) everywhere and
+leaves every other port open. `BOT_SHELL_TCP_PORTS` adds ports to the allowlist
+(`5432,6379`), and under Landlock reopens ports inside the ephemeral range.
+Each command carries its run as a group of its own, so cancelling a job kills
+every process its run started, including ones it left running in the
+background. A computer that can have neither fence refuses the shell rather
+than run it unfenced;
 `BOT_SHELL_ISOLATION=off` instead runs it as the browser's user with every
 command waiting for approval. `bot-computer status` reports the mode as
 `shell`.

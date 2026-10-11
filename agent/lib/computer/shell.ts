@@ -42,12 +42,51 @@ export class ShellUnavailable extends Error {
 const encode = (text: string) => Buffer.from(text, "utf8").toString("base64");
 
 /** The helper invocation for one subcommand; every argument is base64 or a fixed word, so nothing is interpreted twice. */
-export function helperCommand(subcommand: "run" | "read" | "write" | "check", args: readonly string[] = []): string {
+export function helperCommand(subcommand: "run" | "kill" | "read" | "write" | "check", args: readonly string[] = []): string {
   return ["sudo", "-n", "python3", "-I", SHELL_HELPER, subcommand, ...args].map(shellQuote).join(" ");
 }
 
-export function runCommand(command: string, options: { workingDirectory?: string; env?: Record<string, string> } = {}): string {
-  return helperCommand("run", [encode(command), encode(options.workingDirectory ?? ""), encode(JSON.stringify(options.env ?? {}))]);
+/** One command as the Bot, tagged with the session it runs for (`BOT_RUN`) so a cancel can stop it. */
+export function runCommand(
+  command: string,
+  options: { workingDirectory?: string; env?: Record<string, string>; runId?: string } = {},
+): string {
+  return helperCommand("run", [
+    encode(command),
+    encode(options.workingDirectory ?? ""),
+    encode(JSON.stringify(options.env ?? {})),
+    encode(options.runId ?? ""),
+  ]);
+}
+
+/** Stops every command tagged with one of these sessions, and what they started. */
+export function killRunCommand(runId: string): string {
+  return helperCommand("kill", [encode(runId)]);
+}
+
+/**
+ * Stops a cancelled run's shell commands on the computer, when it is up.
+ * Bounded and best effort: the cancel already stands without it, and a
+ * stopped computer runs nothing to stop. Answers how many processes ended.
+ */
+export async function stopRunCommands(sessionIds: readonly string[], timeoutMs = 15_000): Promise<number> {
+  if (sessionIds.length === 0 || shellIsolationOff()) return 0;
+  const { computerControl } = await import("./control");
+  const control = computerControl();
+  if ((await control.availability()).state !== "running") return 0;
+  const io = await control.io();
+  if (io === null) return 0;
+  let killed = 0;
+  const work = (async () => {
+    for (const id of sessionIds) {
+      const result = await io.run(killRunCommand(id));
+      const answer = JSON.parse(result.stdout.trim() || "{}") as { killed?: number };
+      killed += typeof answer.killed === "number" ? answer.killed : 0;
+    }
+  })();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([work, new Promise((resolve) => (timer = setTimeout(resolve, timeoutMs)))]).finally(() => clearTimeout(timer));
+  return killed;
 }
 
 /** The helper refused, rather than the command failing on its own. */
@@ -115,7 +154,7 @@ function sliceLines(text: string, startLine?: number, endLine?: number): string 
  * `bot` user through the helper. Anything else eve might reach for is refused
  * rather than quietly done as the computer's own user.
  */
-export function isolatedSandbox(session: RuntimeSandboxSession): RuntimeSandboxSession {
+export function isolatedSandbox(session: RuntimeSandboxSession, runId?: string): RuntimeSandboxSession {
   const readBinaryFile = async (options: { path: string; abortSignal?: AbortSignal }): Promise<Uint8Array | null> => {
     const result = await helper(session, helperCommand("read", [encode(session.resolvePath(options.path))]), options.abortSignal);
     if (result.exitCode === 44) return null;
@@ -138,7 +177,11 @@ export function isolatedSandbox(session: RuntimeSandboxSession): RuntimeSandboxS
       const { command, workingDirectory, env, abortSignal } = options;
       return helper(
         session,
-        runCommand(command, { ...(workingDirectory === undefined ? {} : { workingDirectory }), ...(env === undefined ? {} : { env }) }),
+        runCommand(command, {
+          ...(workingDirectory === undefined ? {} : { workingDirectory }),
+          ...(env === undefined ? {} : { env }),
+          ...(runId === undefined ? {} : { runId }),
+        }),
         abortSignal,
       );
     },
@@ -180,7 +223,7 @@ export function isolatedSandbox(session: RuntimeSandboxSession): RuntimeSandboxS
 export function withIsolatedShell<C extends ToolContext>(ctx: C): C {
   return new Proxy(ctx, {
     get(target, property) {
-      if (property === "getSandbox") return async () => isolatedSandbox(await target.getSandbox());
+      if (property === "getSandbox") return async () => isolatedSandbox(await target.getSandbox(), target.session.id);
       const value: unknown = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
     },

@@ -40,10 +40,16 @@ import type { JobResult, JobStatus } from "../lib/types";
 
 /**
  * Short on purpose, so a run that died is noticed within minutes. A live run
- * renews it on every heartbeat, however long the bot takes.
+ * renews it every few checks, however long the bot takes.
  */
 const LEASE_MS = 20 * 60_000;
-const HEARTBEAT = "8m";
+/**
+ * How often a run waiting on its bot looks at its job: a cancelled job's run
+ * ends within this even while the bot is parked on a card. A look is one read;
+ * the lease, a write, is renewed only every `RENEW_EVERY` looks (8 minutes).
+ */
+const CHECK_EVERY = "1m";
+const RENEW_EVERY = 8;
 const SIGNOFF_TIMEOUT = "24h";
 /** Outlives the sign-off wait, so the timeout branch always runs before it lapses. */
 const SIGNOFF_LEASE_MS = 25 * 60 * 60_000;
@@ -189,21 +195,31 @@ export default defineWorkflowTool({
             (error: unknown): Settled => ({ ok: false, error: describeError(error) }),
           );
 
-        // Heartbeat: while the bot works, keep the lease fresh so the watchdog
-        // never mistakes a long job for a dead one and starts a second copy.
-        // A cancel reaches the bot itself, not this wait: eve gives a workflow
-        // no handle on the child `ctx.agent` started, so the bot fails its
-        // turn before its next model call (the teammate's `fence` hook), which
-        // settles `working`, and every job write or guarded action it tries
-        // until then is refused. A bot parked on a long tool call or a card is
-        // noticed at the next heartbeat. (A Workflow hook resumed by the
-        // cancel was tried here and made replay diverge; see run-stop.ts.)
+        // Heartbeat: while the bot works, look at the job every minute and keep
+        // the lease fresh, so the watchdog never mistakes a long job for a dead
+        // one and starts a second copy. A cancel reaches the bot itself, not
+        // this wait: eve gives a workflow no handle on the child `ctx.agent`
+        // started, so the bot fails its turn before its next model call (the
+        // teammate's `fence` hook), which settles `working`, and every job
+        // write or guarded action it tries until then is refused. The cancel
+        // also kills the run's shell commands, so a long command does not hold
+        // the bot back from that call. A bot parked on a card is noticed at the
+        // next look. (A Workflow hook resumed by the cancel was tried here and
+        // made replay diverge; see run-stop.ts.)
         let settled: Settled | null = null;
+        let looks = 0;
         while (settled === null) {
-          const wake = await nextWake(working, sleep(HEARTBEAT));
+          const wake = await nextWake(working, sleep(CHECK_EVERY));
           if (wake.kind === "settled") {
             settled = wake.settled;
-          } else if (!(await keepLease(workspaceId, jobId, claim.token))) {
+            continue;
+          }
+          looks += 1;
+          const still =
+            looks % RENEW_EVERY === 0
+              ? await keepLease(workspaceId, jobId, claim.token)
+              : (await standing(workspaceId, jobId, claim.token)) === "owns";
+          if (!still) {
             await closeBudget(workspaceId, claim.token, "release");
             return stoppedEarly(jobId, await standing(workspaceId, jobId, claim.token));
           }

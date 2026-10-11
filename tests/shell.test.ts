@@ -91,6 +91,15 @@ describe("the helper command", () => {
     expect(shell.runCommand(nasty)).not.toContain("9301");
   });
 
+  it("tags a command with the run it is for, and stops a run by that tag", () => {
+    const [, , , , runId] = helperArgs(shell.runCommand("sleep 600", { runId: "wrun_A" }));
+    expect(decode(runId!)).toBe("wrun_A");
+    expect(decode(helperArgs(shell.runCommand("true"))[4]!)).toBe("");
+    const [subcommand, killed] = helperArgs(shell.killRunCommand("wrun_A"));
+    expect(subcommand).toBe("kill");
+    expect(decode(killed!)).toBe("wrun_A");
+  });
+
   it("tells a refusal from a command that failed on its own", () => {
     expect(shell.refusedBy({ exitCode: 125, stdout: "", stderr: `${SHELL_REFUSED_MARK} the Bot shell is not set up\n` })).toBe(
       "the Bot shell is not set up",
@@ -262,13 +271,23 @@ describe("the computer's programs", () => {
       "import importlib.util, json, sys",
       "spec = importlib.util.spec_from_file_location('bot_shell', sys.argv[1])",
       "mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)",
-      "print(json.dumps({'body': mod.rule_body(list(range(1, 18))), 'jump': mod.jump(1002), 'env': mod.environment({'A': '1', 'B=C': 'x', 'D': 3})}))",
+      "mod.ephemeral_range = lambda: (32768, 60999)",
+      "open_ = set(mod.landlock_ports([40001, 9301, 443]))",
+      "probe = {p: p in open_ for p in (22, 443, 3306, 5432, 8081, 11434, 5901, 6080, 9301, 9399, 32768, 45000, 60999, 61000, 40001)}",
+      "print(json.dumps({'body': mod.rule_body(list(range(1, 18))), 'jump': mod.jump(1002), 'env': mod.environment({'A': '1', 'B=C': 'x', 'D': 3}), 'landlock': probe}))",
     ].join("\n");
     const out = JSON.parse(execFileSync("python3", ["-I", "-c", probe, path], { encoding: "utf8" })) as {
       body: string[][];
       jump: string[];
       env: Record<string, string>;
+      landlock: Record<string, boolean>;
     };
+    // Landlock sees ports, not addresses: everything but the screens' ranges and the
+    // ephemeral range, where agent-browser's stream lands; an extra port reopens only outside the screens'.
+    expect(out.landlock).toEqual({
+      "22": true, "443": true, "3306": true, "5432": true, "8081": true, "11434": true, "61000": true, "40001": true,
+      "5901": false, "6080": false, "9301": false, "9399": false, "32768": false, "45000": false, "60999": false,
+    });
     expect(out.body).toHaveLength(3);
     expect(out.body[0]).toContain("1,2,3,4,5,6,7,8,9,10,11,12,13,14,15");
     expect(out.body[1]).toContain("16,17");

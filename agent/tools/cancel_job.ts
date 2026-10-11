@@ -2,6 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { cancelJobRun, describeInterruption } from "../lib/cancel";
+import { stopRunCommands } from "../lib/computer/shell";
 import { operator } from "../lib/session";
 
 /**
@@ -19,7 +20,7 @@ export default defineTool({
   label: { start: ({ jobId }) => `Cancel ${jobId}` },
   async execute({ jobId }, ctx) {
     const who = operator(ctx);
-    const cancelled = await cancelJobRun(who.workspaceId, jobId);
+    const cancelled = await cancelJobRun(who.workspaceId, jobId, { stopCommands: stopRunCommands });
     if (!cancelled.ok) return { cancelled: false as const, reason: cancelled.reason };
     return {
       cancelled: true as const,
