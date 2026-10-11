@@ -118,6 +118,19 @@ export interface SessionControl {
 const INTERRUPT_TIMEOUT_MS = 8_000;
 
 /**
+ * `work`, or a rejection ("timed out after …ms") once `ms` pass without it
+ * settling; the timer is cleared either way. For calls into eve that may never
+ * answer on 0.58 while a person waits. `work` itself is not cancelled.
+ */
+export function within<T>(work: Promise<T>, ms: number = INTERRUPT_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
+/**
  * An `Interrupt` from a channel route's `attachSession`, the way starting a room
  * over always stopped its jobs' sessions: cancel the turn and every task the
  * session owns, then retire the session, so nothing it left pending (an
@@ -130,20 +143,13 @@ export function interruptVia(
   reason: string,
   timeoutMs = INTERRUPT_TIMEOUT_MS,
 ): Interrupt {
-  const within = <T>(work: Promise<T>): Promise<T> => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const late = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
-    });
-    return Promise.race([work, late]).finally(() => clearTimeout(timer));
-  };
   return async (sessionId) => {
     const session = attachSession(sessionId);
     const problems: string[] = [];
-    await within(session.cancel({ tasks: true })).catch((error: unknown) => {
+    await within(session.cancel({ tasks: true }), timeoutMs).catch((error: unknown) => {
       problems.push(`cancel: ${error instanceof Error ? error.message : String(error)}`);
     });
-    await within(session.reset({ reason })).catch((error: unknown) => {
+    await within(session.reset({ reason }), timeoutMs).catch((error: unknown) => {
       problems.push(`reset: ${error instanceof Error ? error.message : String(error)}`);
     });
     if (problems.length > 0) throw new Error(problems.join("; "));
