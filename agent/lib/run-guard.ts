@@ -22,6 +22,14 @@ export type Guard = (RunCheck & { ok: true; jobId: string }) | (Exclude<RunCheck
  *
  * The job is the one `job_brief` bound this session to (see `bindScreen`), so
  * the model need not pass it; a `jobId` given explicitly is checked instead.
+ *
+ * Cancellation and approvals: a cancelled job refuses here (`cancelled`), and
+ * that is what invalidates an approval granted before or during the cancel.
+ * eve runs `execute` only once a person approves, possibly long after the
+ * request, so a tool behind an approval gate must call this inside `execute`,
+ * after the approval, never only before asking. `cancelJobRun` also retires
+ * the run's session when its caller can (see `lib/cancel.ts`), which drops the
+ * pending request outright; this check is what holds when it cannot.
  */
 export async function guardSideEffect(ctx: RunContext, jobId?: string): Promise<Guard> {
   const { workspaceId } = operator(ctx);

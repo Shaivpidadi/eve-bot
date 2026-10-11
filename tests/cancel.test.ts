@@ -132,6 +132,14 @@ describe("cancelJobRun", () => {
       logged: false,
       reason: "cancelled",
     });
+    const createBot = await tool("create_bot");
+    const hired = await createBot.execute(
+      { jobId: job.id, name: "Ava", role: "Researcher", persona: "Careful, thorough, cites every source." },
+      ctxFor("sess_A"),
+    );
+    expect(hired).toMatchObject({ created: false });
+    const { findBot } = await import("../agent/lib/bots");
+    expect(await findBot(WORKSPACE, "Ava")).toBeNull();
   });
 
   it("gives up on a session that does not answer, within the bound", async () => {
