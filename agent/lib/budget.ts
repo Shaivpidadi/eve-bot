@@ -1,6 +1,6 @@
 import { blockJob, getJob } from "./jobs";
 import { DEFAULT_EFFORT, type JobEffort } from "./models";
-import { readDoc, updateDoc } from "./store";
+import { readDoc, store, updateDoc } from "./store";
 import type { Job } from "./types";
 
 /**
@@ -523,6 +523,20 @@ export async function repairReservations(
       if (await releaseRun(workspaceId, runToken, { now })) released += 1;
     }
   }
+  return released;
+}
+
+/**
+ * `repairReservations` for every workspace that has a budget document, for the
+ * watchdog tick. The listing is only used to find workspaces, never to decide
+ * anything, so a stale or partial one costs at most a pass. Returns how many
+ * reservations were released.
+ */
+export async function repairAllReservations(now: Date = new Date()): Promise<number> {
+  const keys = await store().list("budget/");
+  const workspaces = new Set(keys.map((path) => path.slice("budget/".length).split("/")[0] ?? "").filter((id) => id !== ""));
+  let released = 0;
+  for (const workspaceId of workspaces) released += await repairReservations(workspaceId, { now }).catch(() => 0);
   return released;
 }
 

@@ -27,6 +27,16 @@ interface Report {
     readonly status: string;
     readonly at: string;
   })[];
+  /** This month's workspace budget; absent from servers older than it. */
+  readonly budget?: {
+    readonly period: string;
+    readonly limitUsd: number | null;
+    readonly spentUsd: number;
+    readonly reservedUsd: number;
+    readonly remainingUsd: number | null;
+    readonly unknownCostCount: number;
+    readonly heldRuns: number;
+  };
   readonly updatedAt: string;
 }
 
@@ -126,6 +136,26 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
                 read · {tokens(report.total.cacheWriteTokens ?? 0)} written
               </small>
             </div>
+            {report.budget === undefined ? null : (
+              <div className="usage-card">
+                <span>Budget · {report.budget.period}</span>
+                <b>
+                  {usd(report.budget.spentUsd)}
+                  {report.budget.limitUsd === null ? "" : ` of ${usd(report.budget.limitUsd)}`}
+                </b>
+                <small>
+                  {[
+                    report.budget.limitUsd === null ? "no limit set" : `${usd(report.budget.remainingUsd ?? 0)} left`,
+                    report.budget.reservedUsd > 0
+                      ? `${usd(report.budget.reservedUsd)} held by ${report.budget.heldRuns} running ${report.budget.heldRuns === 1 ? "job" : "jobs"}`
+                      : null,
+                    report.budget.unknownCostCount > 0 ? `${report.budget.unknownCostCount} unpriced ${report.budget.unknownCostCount === 1 ? "call" : "calls"}` : null,
+                  ]
+                    .filter((part) => part !== null)
+                    .join(" · ")}
+                </small>
+              </div>
+            )}
             {report.account === null ? null : (
               <div className="usage-card usage-account">
                 <span>Gateway account · every project on this key</span>

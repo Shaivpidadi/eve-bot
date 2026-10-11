@@ -199,6 +199,17 @@ thread panel repeats each member's own figures, and every finished job carries
 its line in the feed. Off AI Gateway a provider reports no price, so set
 `BOT_MODEL_PRICES` to see dollars instead of zeros.
 
+The **budget** card on the same page is the workspace's spending limit for
+the month (`BOT_BUDGET_MONTHLY_USD`, and `BOT_BUDGET_DAILY_USD` for a daily
+one). Everything that calls a model draws on it: HQ, every job run, each
+routine cycle and retry, Jev's judgements and memory. A run reserves an
+estimate for its effort before it starts and gives back what it did not spend
+when it ends; a run that would not fit is blocked with the reason, and one
+that overruns its reservation once the month is used up is stopped before its
+next model step and blocked. Calls whose provider reported no price are
+counted as unpriced rather than as free. Computer runtime is billed by Vercel
+and is not counted here.
+
 Behind Vercel Authentication the console shows who is signed in, with their
 Vercel name and picture. Elsewhere it shows the name in `X-Bot-User`, or the
 name you set by clicking the footer of the sidebar; HQ and the Bots use that
@@ -257,6 +268,7 @@ of it; these are the ones that matter.
 | `BOT_SEARCH_PROVIDER` / `BOT_SEARCH_URL` / `BOT_SEARCH_API_KEY` | web search on your own endpoint: `searxng`, `brave`, `tavily`, `exa` |
 | `BOT_MODEL_PRICES` | `model=in/out` USD per million tokens, so spend caps hold off Gateway; OpenRouter is read automatically |
 | `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`) |
+| `BOT_BUDGET_MONTHLY_USD` / `BOT_BUDGET_DAILY_USD` | workspace spend limit per UTC month / day; unset = no limit, spend still tracked |
 | `BOT_MEMORY_FLOOR` | how sure Jev must be before something is remembered (`0`–`1`; defaults to `BOT_JEV_CONFIDENCE`) |
 | `BOT_MEMORY_MODEL` | the model that reads exchanges for memories (`anthropic/claude-haiku-4-5` on Gateway; the quick model on a custom endpoint) |
 | `BOT_MEMORY_EMBEDDINGS` / `BOT_MEMORY_EMBEDDING_MODEL` | `off` ranks lessons by words only; the model that embeds them otherwise (`openai/text-embedding-3-small`, on Gateway only) |

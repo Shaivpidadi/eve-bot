@@ -368,3 +368,30 @@ describe("cancelling a running job", () => {
     expect((await budget.readBudget(WS)).reservations.lease_A?.state).toBe("released");
   });
 });
+
+describe("budget on the usage report and the watchdog", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+    vi.stubEnv("BOT_BUDGET_MONTHLY_USD", "20");
+  });
+
+  it("reports limit, spent, held and unpriced calls with the usage", async () => {
+    const budget = await import("../agent/lib/budget");
+    const { usageReport } = await import("../agent/lib/usage-report");
+    await budget.admitRun(WS, "lease_a", 1.5);
+    await budget.recordSpend(WS, null, 2, "hq");
+    await budget.recordSpend(WS, null, null, "memory");
+    const report = await usageReport(WS);
+    expect(report.budget).toMatchObject({ limitUsd: 20, spentUsd: 2, reservedUsd: 1.5, remainingUsd: 16.5, unknownCostCount: 1, heldRuns: 1 });
+  });
+
+  it("repairs dead runs' holds in every workspace", async () => {
+    const budget = await import("../agent/lib/budget");
+    const long = new Date(Date.now() - 60 * 60_000);
+    await budget.admitRun("ws_one", "lease_a", 1, { jobId: "job_gone", now: long });
+    await budget.admitRun("ws_two", "lease_b", 1, { jobId: "job_gone", now: long });
+    expect(await budget.repairAllReservations()).toBe(2);
+    expect((await budget.readBudget("ws_one")).reservedUsd).toBe(0);
+  });
+});
