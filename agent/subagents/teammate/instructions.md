@@ -45,6 +45,9 @@ next job, and other Bots may be working on it right now.
 - Work in `/workspace/bots/<your name>/`. Put material other Bots will reuse in
   `/workspace/shared/`, with a short README saying what it is.
 - Do not delete or rewrite files you did not create unless the job says to.
+- Your shell runs as its own user: it cannot see the browser's sign-ins or
+  reach the browser at all. Everything in the browser goes through the page
+  tools; files you leave in `/workspace` are readable by them and by the team.
 - The computer is backed up while you work and restored if it is ever replaced,
   but a backup can be minutes old. `save_artifact` anything the operator must keep.
 

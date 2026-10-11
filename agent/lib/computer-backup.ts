@@ -43,8 +43,15 @@ const PREFIX =
   computerMode() === "vercel" ? `computer/${COMPUTER_NAME}` : `computer/${COMPUTER_NAME}/local-${localComputer()}`;
 const MANIFEST_KEY = `${PREFIX}/manifest.json`;
 const MARKER_PATH = `${COMPUTER_PATHS.state}/generation`;
-const ARCHIVE_PATH = "/tmp/bot-computer-backup.tgz";
-const RESTORE_PATH = "/tmp/bot-computer-restore.tgz";
+/**
+ * Archives carry the sign-in jar and the gateway key, so they sit in the
+ * computer's private run folder, which a Bot's shell cannot open (see
+ * `computer/shell.ts`), never loose in /tmp.
+ */
+const PRIVATE_DIR = "/tmp/bot-computer";
+const ARCHIVE_PATH = `${PRIVATE_DIR}/backup.tgz`;
+const RESTORE_PATH = `${PRIVATE_DIR}/restore.tgz`;
+const PRIVATE_DIR_COMMAND = `mkdir -p ${PRIVATE_DIR} && chmod 700 ${PRIVATE_DIR}`;
 
 const BACKUP_EVERY_MS = Number(process.env.BOT_BACKUP_EVERY_MINUTES ?? 10) * 60_000;
 const MAX_ARCHIVE_BYTES = Number(process.env.BOT_BACKUP_MAX_MB ?? 512) * 1024 * 1024;
@@ -56,7 +63,9 @@ const FAILURE_NOTICE_EVERY_MS = 60 * 60_000;
 /**
  * Archives the computer's files. Paths are relative to `/` so the archive
  * restores onto any machine with the same layout. tar exits 1 when a file
- * changed while it was read, which still leaves a usable archive. The last line
+ * changed while it was read, which still leaves a usable archive; a file a Bot's
+ * shell left unreadable to the computer's user is skipped rather than failing
+ * the whole backup. The last line
  * of output is the archive size in bytes.
  */
 function archiveCommand(generation: string): string {
@@ -79,12 +88,14 @@ function archiveCommand(generation: string): string {
   return [
     "set -e",
     `mkdir -p ${COMPUTER_PATHS.state}`,
+    PRIVATE_DIR_COMMAND,
+    "umask 077",
     `printf '%s' '${generation}' > ${MARKER_PATH}`,
     'HOME_REL="${HOME#/}"',
     'PATHS="workspace"',
     'case "$HOME" in /|/workspace|/workspace/*) ;; *) PATHS="$PATHS $HOME_REL" ;; esac',
     `rm -f ${ARCHIVE_PATH}`,
-    `tar -czf ${ARCHIVE_PATH} ${excludes} -C / $PATHS || [ $? -eq 1 ]`,
+    `tar -czf ${ARCHIVE_PATH} --ignore-failed-read ${excludes} -C / $PATHS || [ $? -eq 1 ]`,
     `wc -c < ${ARCHIVE_PATH}`,
   ].join("\n");
 }
@@ -170,6 +181,8 @@ async function restoreIfReplaced(ctx: ToolContext): Promise<void> {
 
     const archive = await readBytes(manifest.archiveKey);
     if (archive === null) throw new Error(`the backup from ${manifest.at} is missing from storage`);
+    const prepared = await computer.run({ command: PRIVATE_DIR_COMMAND });
+    if (prepared.exitCode !== 0) throw new Error(prepared.stderr.trim() || "could not prepare the computer's private folder");
     await computer.writeBinaryFile({ path: RESTORE_PATH, content: archive });
     const result = await computer.run({ command: RESTORE_COMMAND });
     if (result.exitCode !== 0) {

@@ -405,6 +405,23 @@ request and its reply is lost, Bot cannot tell. So the relay must:
   resends those on its own and tells the Bot to report the email as possibly
   sent, so a person can check the relay's log.
 
+### The Bots' shell
+
+A Bot's `bash`, `read_file` and `write_file` (and HQ's) run on the computer as
+an unprivileged `bot` user, not the user the browser runs as: they cannot read
+the browser's profiles, the team's sign-ins or the gateway key, cannot type
+into a screen, and cannot connect to Chrome's DevTools, VNC or agent-browser's
+stream. So a Bot cannot drive the browser around the approval gate from its
+shell. The network fence is iptables where the computer allows it (Vercel
+Sandbox) and Landlock otherwise (Docker, Linux 6.7+); either way the shell may
+connect to this machine only on an allowlist of ports (web, DNS, ssh, git,
+common dev servers), and under Landlock to the internet only on those ports
+too. `BOT_SHELL_TCP_PORTS` adds ports (`5432,6379`). A computer that can have
+neither fence refuses the shell rather than run it unfenced;
+`BOT_SHELL_ISOLATION=off` instead runs it as the browser's user with every
+command waiting for approval. `bot-computer status` reports the mode as
+`shell`.
+
 ## Development
 
 ```bash
