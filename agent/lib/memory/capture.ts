@@ -4,7 +4,7 @@ import { z } from "zod";
 import { confidenceFloor, jevEnabled, judge, type Judgement, spent } from "../jev";
 import { probabilityOf, readVerdict } from "../jev-watch";
 import { customEndpoint, endpointModel, modelForEffort } from "../models";
-import { recordUsage } from "../usage";
+import { chargeUsage, reportedCost } from "../spend";
 import { nearest } from "./rank";
 import {
   acceptable,
@@ -541,9 +541,9 @@ export const modelExtract: Extract = async (input, existing, fields) => {
     maxRetries: 0,
     abortSignal: input.abortSignal ?? AbortSignal.timeout(45_000),
   });
-  void recordUsage(input.workspaceId, "memory", spent(result.usage, result.providerMetadata, extractionModelId())).catch(
-    () => undefined,
-  );
+  void chargeUsage(input.workspaceId, "memory", spent(result.usage, result.providerMetadata, extractionModelId()), {
+    costReported: reportedCost(result.providerMetadata) !== null,
+  }).catch(() => undefined);
   const changes = result.output?.changes ?? [];
   return changes.flatMap((change): Proposal[] => {
     if (change.op === "set" && change.field !== undefined && change.value !== undefined) return [{ op: "set", slot: change.slot, field: change.field, value: change.value }];

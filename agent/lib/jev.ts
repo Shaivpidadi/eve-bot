@@ -1,6 +1,7 @@
 import { experimental_evaluate as evaluate, type Experimental_EvaluationQuestion as EvaluationQuestion } from "ai";
 
-import { recordUsage, type Usage } from "./usage";
+import { chargeUsage, reportedCost } from "./spend";
+import type { Usage } from "./usage";
 
 /**
  * Jev: small decisions, for a tenth of a cent.
@@ -121,7 +122,13 @@ function confidenceFrom(metadata: unknown): Record<string, number> {
 export async function judge<const QUESTIONS extends Record<string, EvaluationQuestion>>(
   state: unknown,
   questions: QUESTIONS,
-  options: { readonly timeoutMs?: number; readonly abortSignal?: AbortSignal; readonly workspaceId?: string } = {},
+  options: {
+    readonly timeoutMs?: number;
+    readonly abortSignal?: AbortSignal;
+    readonly workspaceId?: string;
+    /** The run the judgement is for, so its cost draws on that run's budget reservation. */
+    readonly runToken?: string;
+  } = {},
 ): Promise<Judgement<QUESTIONS> | null> {
   if (!jevEnabled()) return null;
   try {
@@ -133,8 +140,11 @@ export async function judge<const QUESTIONS extends Record<string, EvaluationQue
       abortSignal: options.abortSignal ?? AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
     if (options.workspaceId !== undefined) {
-      // Jev is a Gateway call like any other; the usage page should see it. Never in the way of the answer.
-      void recordUsage(options.workspaceId, "jev", spent(result.usage, result.providerMetadata)).catch(() => undefined);
+      // Jev is a Gateway call like any other; the usage page and the budget should see it. Never in the way of the answer.
+      void chargeUsage(options.workspaceId, "jev", spent(result.usage, result.providerMetadata), {
+        runToken: options.runToken ?? null,
+        costReported: reportedCost(result.providerMetadata) !== null,
+      }).catch(() => undefined);
     }
     return {
       answers: result.answers,
