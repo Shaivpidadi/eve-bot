@@ -409,7 +409,7 @@ async function claimForRun(
   return {
     ok: true,
     token,
-    brief: renderBrief(bot, claimed.job),
+    brief: renderBrief(bot, claimed.job, { token }),
     botName: bot.name,
     title: claimed.job.title,
     requiresSignoff: claimed.job.requiresSignoff,
@@ -546,7 +546,11 @@ async function noteQuietCycle(workspaceId: string, jobId: string, botName: strin
   });
 }
 
-/** The result the Bot recorded with finish_job during this run, if it recorded one. */
+/**
+ * The result the Bot recorded with finish_job during this run, if it recorded one.
+ * finish_job stamps the run's token on the result, so a run that outlived its
+ * lease can never pass off its result as this one's.
+ */
 async function resultRecordedSince(
   workspaceId: string,
   jobId: string,
@@ -557,7 +561,7 @@ async function resultRecordedSince(
   "use step";
   const job = await getJob(workspaceId, jobId);
   if (job === null || job.lease?.token !== token || job.result === null) return null;
-  return resultIsFromRun(job.result, { startedAt, resultAtClaim: atClaim }) ? job.result : null;
+  return resultIsFromRun(job.result, { token, startedAt, resultAtClaim: atClaim }) ? job.result : null;
 }
 
 async function newWaitToken(): Promise<string> {

@@ -111,14 +111,19 @@ export async function assignJob(input: {
  *
  * A routine's cycle can record a result identical to the last cycle's — a
  * monitor that correctly reports "nothing changed" does it every time — so the
- * text of a result cannot say whether this run recorded anything. Results carry
- * the moment they were recorded, and that is the answer. Results written before
- * that was kept fall back to the old comparison against the text at claim time.
+ * text of a result cannot say whether this run recorded anything. A result
+ * names the run that recorded it, and that is the answer: a time cannot be,
+ * since a run that outlived its lease may record after the next one started.
+ * Results without that fall back to the moment they were recorded, and older
+ * ones still to the text at claim time.
  */
 export function resultIsFromRun(
   result: JobResult,
-  run: { readonly startedAt: string; readonly resultAtClaim: string | null },
+  run: { readonly token?: string; readonly startedAt: string; readonly resultAtClaim: string | null },
 ): boolean {
+  if (result.producedBy !== undefined && run.token !== undefined) {
+    return result.producedBy.token === run.token;
+  }
   if (result.recordedAt !== undefined) {
     return Date.parse(result.recordedAt) >= Date.parse(run.startedAt);
   }
@@ -487,6 +492,120 @@ export async function rescheduleJob(
   return { ok: true, job };
 }
 
+/**
+ * Whether a teammate session is the run that currently owns a job.
+ *
+ * A run's lease outlives nothing: when it lapses, the watchdog or a re-run
+ * claims the job with a fresh token, and the old bot may still be working. The
+ * lease's bound session (see `bindRun`) is what tells the two apart, so every
+ * write a teammate makes to its job is checked against it. Failure reasons:
+ *
+ * - `missing`: no such job.
+ * - `cancelled`: a person stopped the job; nothing more should happen for it.
+ * - `unbound`: a run holds the job but no session has bound it yet, so the
+ *   caller has not presented the run token to `job_brief`.
+ * - `superseded`: another run, or nobody, owns the job now; this run's work is over.
+ */
+export type RunCheck =
+  | { ok: true; job: Job }
+  | { ok: false; reason: "missing" | "superseded" | "cancelled" | "unbound" };
+
+/** `checkRun` on a record already in hand, so a CAS callback can decide with it. */
+export function runCheckOf(job: Job | null, sessionId: string): RunCheck {
+  if (job === null) return { ok: false, reason: "missing" };
+  if (job.status === "cancelled") return { ok: false, reason: "cancelled" };
+  const lease = job.lease;
+  if (lease === null || lease.kind !== "run" || CLOSED.includes(job.status)) {
+    return { ok: false, reason: "superseded" };
+  }
+  // Expiry alone is not checked: a lapsed lease nobody re-claimed still names
+  // this run, and a re-claim replaces the lease, session and all.
+  if (lease.session === undefined) return { ok: false, reason: "unbound" };
+  return lease.session === sessionId ? { ok: true, job } : { ok: false, reason: "superseded" };
+}
+
+/** Whether `sessionId` is the run that owns the job right now. A read; see `patchJobAsRun` to write. */
+export async function checkRun(workspaceId: string, jobId: string, sessionId: string): Promise<RunCheck> {
+  return runCheckOf(await getJob(workspaceId, jobId), sessionId);
+}
+
+/**
+ * Binds a teammate session to the run lease whose token it was briefed with.
+ *
+ * The parent cannot know its child's session id before the child starts, so
+ * the token rides in the brief and the child proves it here, in the same
+ * compare-and-set that records the session. A token that is no longer the
+ * lease's means a later run claimed the job: refused, nothing written. The
+ * token holder may re-bind, since the parent spawns one child per token and a
+ * second binding can only be that run started again, which is then the live one.
+ */
+export async function bindRun(
+  workspaceId: string,
+  jobId: string,
+  runToken: string,
+  sessionId: string,
+): Promise<RunCheck> {
+  const outcome: { check: RunCheck } = { check: { ok: false, reason: "missing" } };
+  const job = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
+    if (current === null) return null;
+    if (current.status === "cancelled") {
+      outcome.check = { ok: false, reason: "cancelled" };
+      return null;
+    }
+    const lease = current.lease;
+    if (lease === null || lease.kind !== "run" || lease.token !== runToken || CLOSED.includes(current.status)) {
+      outcome.check = { ok: false, reason: "superseded" };
+      return null;
+    }
+    if (lease.session === sessionId && current.sessionId === sessionId) {
+      // Already bound: nothing to write, and the record is the answer.
+      outcome.check = { ok: true, job: current };
+      return null;
+    }
+    // sessionId links the run to the job for the console; lease.session fences it.
+    return stamp({ ...current, sessionId, lease: { ...lease, session: sessionId } });
+  });
+  return job === null ? outcome.check : { ok: true, job };
+}
+
+/**
+ * A teammate's write to its job, made only while it is still the job's run.
+ *
+ * The check and the write are one compare-and-set, so a run superseded between
+ * a read and a write still writes nothing. `patch` sees the run it is writing
+ * for, which is how a result records who produced it.
+ */
+export async function patchJobAsRun(
+  workspaceId: string,
+  jobId: string,
+  sessionId: string,
+  patch: (job: Job, run: { readonly token: string; readonly session: string }) => Job,
+): Promise<RunCheck> {
+  const outcome: { check: RunCheck } = { check: { ok: false, reason: "missing" } };
+  const job = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
+    const check = runCheckOf(current, sessionId);
+    outcome.check = check;
+    if (!check.ok) return null;
+    const lease = check.job.lease!;
+    return stamp(patch(check.job, { token: lease.token, session: sessionId }));
+  });
+  return job === null ? outcome.check : { ok: true, job };
+}
+
+/** What a refused run is told, in words a model acts on. */
+export function describeRunRefusal(reason: Exclude<RunCheck, { ok: true }>["reason"], jobId: string): string {
+  switch (reason) {
+    case "missing":
+      return `No job ${jobId}.`;
+    case "cancelled":
+      return `Job ${jobId} was cancelled. Stop working on it and end your turn without further actions.`;
+    case "unbound":
+      return `Call job_brief with the jobId and runToken from your briefing message first.`;
+    case "superseded":
+      return `This run no longer owns job ${jobId}: another run took it over or it already closed. Stop working on it and end your turn without further actions; nothing you record now will count.`;
+  }
+}
+
 export async function patchJob(
   workspaceId: string,
   jobId: string,
@@ -497,12 +616,14 @@ export async function patchJob(
   );
 }
 
+/** Attaches a saved file to the job, if `sessionId` is still the job's run. */
 export async function attachArtifact(
   workspaceId: string,
   jobId: string,
   artifact: JobArtifact,
-): Promise<Job | null> {
-  return patchJob(workspaceId, jobId, (job) => ({
+  sessionId: string,
+): Promise<RunCheck> {
+  return patchJobAsRun(workspaceId, jobId, sessionId, (job) => ({
     ...job,
     artifacts: [...job.artifacts, artifact],
   }));
