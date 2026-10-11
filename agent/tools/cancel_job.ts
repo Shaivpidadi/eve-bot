@@ -6,11 +6,11 @@ import { operator } from "../lib/session";
 
 /**
  * Cancels a job from a thread, through the same `cancelJobRun` the console
- * uses. A tool has no handle on another session in eve 0.58, so this cancels
- * durably without interrupting the bot's session: the cancel lands in one
- * write, after which every job write and guarded action the bot tries is
- * refused, and its run ends at the parent's next heartbeat. The note says
- * exactly that rather than promising more.
+ * uses. The cancel lands in one write, after which every job write and guarded
+ * action the bot tries is refused; the `run_job` run takes the stop signal and
+ * ends as cancelled within seconds; and the bot's session, which a tool has no
+ * handle on in eve 0.58, makes no further model call (the teammate's `fence`
+ * hook). The note says exactly what happened rather than promising more.
  */
 export default defineTool({
   description:
@@ -26,6 +26,7 @@ export default defineTool({
       job: { id: cancelled.job.id, title: cancelled.job.title, status: cancelled.job.status },
       ...(cancelled.alreadyCancelled ? { alreadyCancelled: true as const } : {}),
       interruption: cancelled.interruption,
+      runStopped: cancelled.runStopped,
       note:
         cancelled.wasRunning || cancelled.session !== null
           ? `The job is cancelled and nothing more starts for it. ${describeInterruption(cancelled)} Do not cancel the task underneath.`

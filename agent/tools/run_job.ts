@@ -1,5 +1,5 @@
 import { defineWorkflowTool } from "eve/tools";
-import { sleep } from "workflow";
+import { createHook, sleep } from "workflow";
 import { z } from "zod";
 
 import { record, recentActivity } from "../lib/activity";
@@ -33,6 +33,7 @@ import { jevEnabled, judge } from "../lib/jev";
 import { completionQuestions, noteShadow, readVerdict, unmetCriteria } from "../lib/jev-watch";
 import { DEFAULT_EFFORT, nextEffort } from "../lib/models";
 import { ROUTINE_REPORT_PREFIX } from "../lib/rooms";
+import { nextStop, nextWake, runStopToken, wokeByStop, type RunStop } from "../lib/run-stop";
 import { operator } from "../lib/session";
 import { looseBoolean } from "../lib/tool-input";
 import type { JobResult, JobStatus } from "../lib/types";
@@ -123,6 +124,11 @@ export default defineWorkflowTool({
     const workspaceId = operator(ctx).workspaceId;
     const waitToken = await newWaitToken();
     const startedAt = await clockNow();
+    // A cancel while the job waits (for its start time, or to retry a budget
+    // check) resumes this, so the run wakes now instead of at the wait's end;
+    // the next hold or claim then finds the job cancelled (see run-stop.ts).
+    const waitStop = createHook<RunStop>({ token: runStopToken(waitToken) });
+    let waitStopped = nextStop(waitStop);
 
     for (let cycle = 1; ; cycle += 1) {
       // 1. Wait. The clock is a durable sleep, not a poller: nothing runs until
@@ -143,7 +149,7 @@ export default defineWorkflowTool({
             };
           }
           yield { phase: "scheduled", title: hold.title, runAt: hold.runAt };
-          await sleep(new Date(hold.runAt));
+          if (await wokeByStop(sleep(new Date(hold.runAt)), waitStopped)) waitStopped = nextStop(waitStop);
         }
       }
 
@@ -165,10 +171,24 @@ export default defineWorkflowTool({
             return { jobId, ran: cycle > 1, cyclesRun: cycle - 1, reason: `${claim.reason} The job is waiting; the watchdog will try it again.` };
           }
           yield { phase: "scheduled", title: claim.title, runAt: claim.retryAt };
-          await sleep(new Date(claim.retryAt));
+          if (await wokeByStop(sleep(new Date(claim.retryAt)), waitStopped)) waitStopped = nextStop(waitStop);
           claim = await claimForRun(workspaceId, jobId, { waitToken, takeOverWait: false, deferrals });
         }
         if (!claim.ok) return { jobId, ran: cycle > 1, cyclesRun: cycle - 1, reason: claim.reason };
+
+        // The stop signal for this claim: a cancel resumes it under the lease's
+        // token, so the run stops waiting on the bot at once (see run-stop.ts).
+        // A hook is registered only when the run next suspends, which
+        // getConflict forces; a cancel that landed before that found no hook,
+        // so the job is checked once the hook is in place. A conflict cannot
+        // happen with a fresh lease token; if it did, the heartbeat still holds.
+        const stop = createHook<RunStop>({ token: runStopToken(claim.token) });
+        let stopped = (await stop.getConflict()) === null ? nextStop(stop) : new Promise<undefined>(() => {});
+        const beforeWork = await standing(workspaceId, jobId, claim.token);
+        if (beforeWork !== "owns") {
+          await closeBudget(workspaceId, claim.token, "release");
+          return stoppedEarly(jobId, beforeWork);
+        }
 
         yield { phase: claim.revising ? "revising" : "working", bot: claim.botName, title: claim.title };
 
@@ -183,11 +203,24 @@ export default defineWorkflowTool({
 
         // Heartbeat: while the bot works, keep the lease fresh so the watchdog
         // never mistakes a long job for a dead one and starts a second copy.
+        // A stop ends the wait at once. The bot's session is not stopped from
+        // here: eve gives a workflow no handle on the child `ctx.agent`
+        // started, and ending this run does not end it. It stops on its own
+        // before its next model call (the teammate's `fence` hook), and every
+        // job write or guarded action it tries until then is refused.
         let settled: Settled | null = null;
         while (settled === null) {
-          const next = await Promise.race([working, sleep(HEARTBEAT).then(() => null)]);
-          if (next !== null) {
-            settled = next;
+          const wake = await nextWake(working, stopped, sleep(HEARTBEAT));
+          if (wake.kind === "settled") {
+            settled = wake.settled;
+          } else if (wake.kind === "stop") {
+            const current = await standing(workspaceId, jobId, claim.token);
+            if (current !== "owns") {
+              await closeBudget(workspaceId, claim.token, "release");
+              return stoppedEarly(jobId, current);
+            }
+            // Not this run's cancel after all: listen for the next one.
+            stopped = nextStop(stop);
           } else if (!(await keepLease(workspaceId, jobId, claim.token))) {
             await closeBudget(workspaceId, claim.token, "release");
             return stoppedEarly(jobId, await standing(workspaceId, jobId, claim.token));
@@ -228,6 +261,8 @@ export default defineWorkflowTool({
           // recorded beside what actually happened. It decides nothing yet.
           await reviewClose(workspaceId, jobId, claim, result);
           done = { result, token: claim.token, title: claim.title, botName: claim.botName, previous: claim.resultAtClaim };
+          // The claim is over; a routine's next one listens under its own token.
+          stop.dispose();
           break work;
         }
         if (cycle > 1) {
@@ -283,8 +318,16 @@ export default defineWorkflowTool({
         });
 
         // `sleep` is a durable timer, not a setTimeout: nothing is held open
-        // while the request sits on the operator's channel.
-        const answer = await Promise.race([pending, sleep(SIGNOFF_TIMEOUT).then(() => null)]);
+        // while the request sits on the operator's channel. A cancel while
+        // the card waits ends the run, which withdraws the card.
+        let answer: Awaited<typeof pending> | null | undefined;
+        for (;;) {
+          answer = await Promise.race([pending, sleep(SIGNOFF_TIMEOUT).then(() => null), stopped]);
+          if (answer !== undefined) break;
+          const current = await standing(workspaceId, jobId, claim.token);
+          if (current !== "owns") return stoppedEarly(jobId, current);
+          stopped = nextStop(stop);
+        }
 
         if (answer === null) {
           await markBlocked(workspaceId, jobId, "Sign-off timed out after 24h.", claim.token, result);
@@ -293,6 +336,8 @@ export default defineWorkflowTool({
         if (answer.optionId === "approve") {
           signedOff = true;
           done = { result, token: claim.token, title: claim.title, botName: claim.botName, previous: claim.resultAtClaim };
+          // The claim is over; a routine's next one listens under its own token.
+          stop.dispose();
           break work;
         }
 

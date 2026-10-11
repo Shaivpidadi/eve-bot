@@ -25,6 +25,9 @@ import { sessionState } from "../lib/session-state";
  * Hooks observe after the fact, so the step that crossed the line is spent:
  * the overrun is bounded by one step, plus one per other instance running the
  * same session, which learns of the halt at its own next completed step.
+ * tests/turn-stop.test.ts runs eve's own turn loop to check that the throw
+ * stops the model call. A context compaction, which eve runs just before
+ * `step.started` when the history is long, is a model call this does not stop.
  */
 const models = sessionState<string>();
 const jobs = sessionState<{ jobId: string; botId: string }>();
