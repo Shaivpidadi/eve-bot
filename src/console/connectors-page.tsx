@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import type { CatalogEntry, ConnectorGate, ConnectorKeyKind } from "../../agent/lib/catalog";
+import { toolEffect, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind } from "../../agent/lib/catalog";
 
 import { api, errorMessage, isRecord, SignedOutError } from "./api";
 import { Icon, type IconName } from "./icons";
@@ -19,6 +19,8 @@ interface ConnectorRow {
   readonly auth: { readonly kind: ConnectorKeyKind; readonly header?: string; readonly connected?: boolean; readonly connectedAt?: string | null; readonly issuer?: string };
   readonly check: { readonly ok: boolean; readonly at: string; readonly tools: readonly string[]; readonly error: string | null };
   readonly policy?: Readonly<Record<string, "read" | "write">>;
+  /** Tools whose read/write a person set here; the rest are guesses from the name. */
+  readonly reviewed?: readonly string[];
   readonly disabledTools?: readonly string[];
   readonly createdAt: string;
   readonly createdBy: string;
@@ -490,7 +492,7 @@ function ConnectorDetail({
           </button>
           {toolsOpen
             ? tools.map((tool) => {
-                const effect = connector.policy?.[tool] ?? "write";
+                const { effect, reviewed } = toolEffect(connector, tool);
                 const enabled = !disabled.has(tool);
                 return (
                   <div key={tool} className={`cpage-row cpage-tool${enabled ? "" : " off"}`}>
@@ -503,11 +505,18 @@ function ConnectorDetail({
                     <button
                       type="button"
                       className={`cpage-tag ${effect}`}
-                      title={effect === "write" ? "Counted as a change: the gate may ask first. Click if it only reads." : "Counted as a read: never asks. Click if it changes something."}
+                      title={
+                        effect === "write"
+                          ? "Counted as a change: the gate may ask first. Click if it only reads."
+                          : reviewed
+                            ? "Counted as a read: never asks, and HQ may use it. Click if it changes something."
+                            : "Guessed to read from its name: Bots use it without asking, HQ does not until you confirm. Click to confirm it only reads."
+                      }
                       disabled={busy}
-                      onClick={() => void onPatch({ policy: { [tool]: effect === "write" ? "read" : "write" } })}
+                      // Confirming a guessed read records it as reviewed; otherwise the click flips it.
+                      onClick={() => void onPatch({ policy: { [tool]: effect === "write" || !reviewed ? "read" : "write" } })}
                     >
-                      {effect === "write" ? "changes" : "reads"}
+                      {effect === "write" ? "changes" : reviewed ? "reads" : "reads?"}
                     </button>
                     <Switch checked={enabled} disabled={busy} label={`${humanTool(tool)} enabled`} onChange={(next) => void onPatch({ tools: { [tool]: next } })} />
                   </div>
