@@ -4,7 +4,8 @@ import { z } from "zod";
 
 /**
  * A Bot's turn really stops before the model call when a teammate hook throws
- * on `step.started`: the budget halt (hooks/usage.ts) relies on it.
+ * on `step.started`: the budget halt (hooks/usage.ts) and the cancel fence
+ * (hooks/fence.ts) both rely on it.
  *
  * eve documents that a throwing `step.started` hook fails the turn; this holds
  * eve to it with eve's own turn loop rather than a model of it. The harness
@@ -48,7 +49,10 @@ async function botTurn(options: {
   const { SessionKey } = await eve("context/keys.js");
   const { BundleKey } = await eve("runtime/sessions/runtime-context-keys.js");
 
-  const hooks = [((await import("../agent/subagents/teammate/hooks/usage")) as HookModule).default];
+  const hooks = [
+    ((await import("../agent/subagents/teammate/hooks/usage")) as HookModule).default,
+    ((await import("../agent/subagents/teammate/hooks/fence")) as HookModule).default,
+  ];
   const byType = new Map<string, Array<{ handler: (event: never, ctx: never) => unknown }>>();
   for (const hook of hooks) {
     for (const [type, handler] of Object.entries(hook.events)) byType.set(type, [...(byType.get(type) ?? []), { handler }]);
@@ -201,5 +205,35 @@ describe("a teammate turn stopped by a step.started hook", () => {
     expect(ran).toEqual(["look"]);
     expect(turn.modelCalls).toBe(1);
     expect(turn.settled).toEqual({ isError: true, output: BUDGET_HALT_REASON });
+  });
+
+  it("makes no model call for a job cancelled before the turn", async () => {
+    const { job } = await boundRun();
+    const { cancelJobRun } = await import("../agent/lib/cancel");
+    const { CANCELLED_STOP_REASON } = await import("../agent/lib/run-stop");
+    expect((await cancelJobRun(WS, job.id)).ok).toBe(true);
+
+    const turn = await botTurn({ script: [] });
+    expect(turn.modelCalls).toBe(0);
+    expect(turn.parked).toBe(true);
+    expect(turn.settled).toEqual({ isError: true, output: CANCELLED_STOP_REASON });
+    expect(turn.events.find((event) => event.type === "turn.failed")?.data).toMatchObject({ code: "EVENT_HANDLER_FAILED" });
+  });
+
+  it("finishes the step in flight but makes no further model call when the job is cancelled mid-turn", async () => {
+    const { jobs, job } = await boundRun();
+    const { cancelJobRun } = await import("../agent/lib/cancel");
+    const { CANCELLED_STOP_REASON } = await import("../agent/lib/run-stop");
+    const ran: string[] = [];
+    // The person cancels while the Bot's tool runs.
+    const tools = recordingTool("look", ran, async () => {
+      expect((await cancelJobRun(WS, job.id)).ok).toBe(true);
+    });
+
+    const turn = await botTurn({ script: [callTool("look"), say("Done looking.")], tools });
+    expect(ran).toEqual(["look"]);
+    expect(turn.modelCalls).toBe(1);
+    expect(turn.settled).toEqual({ isError: true, output: CANCELLED_STOP_REASON });
+    expect((await jobs.getJob(WS, job.id))?.status).toBe("cancelled");
   });
 });
