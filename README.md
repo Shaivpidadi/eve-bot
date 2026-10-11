@@ -258,8 +258,11 @@ approval under the "before changes" gate. HQ never asks, so it only gets
 reads a person confirmed (the "reads?" chips, or **Review** on the connector's
 page) or that the catalog vouches for. Every call re-reads the connector, so
 switching it or a tool off, re-marking a tool, or rotating a key bites on the
-next call. An approval is recorded with the connector's permission version and
-stops counting once any of those settings change. Approvals are structured
+next call. An approval is recorded with the permission version the person was
+asked under, only if the settings have not changed since, and stops counting
+once any of them change. An approval that lands after the job was cancelled or
+taken over, or for a tool switched off or a connector removed since the
+request, is rejected: the call never runs, and the person denies the card. Approvals are structured
 answers sent through the signed-in console (`/respond`); a plain "yes" typed
 into a chat is a new message, not an approval.
 

@@ -193,6 +193,7 @@ describe("live connector permissions", () => {
   it("does not count a denied re-ask as an approval", async () => {
     const { lib, connector } = await added("all");
     const def = lib.connectorConnection(connector, "bot")!;
+    expect(await ask(def, connector.name, "create_issue")).toBe("user-approval");
     await approve(def, connector.name, "create_issue");
     expect(await ask(def, connector.name, "create_issue")).toBe("not-applicable");
 
@@ -207,6 +208,7 @@ describe("live connector permissions", () => {
   it("asks again after a settings change, on a later turn's rebuilt connection too", async () => {
     const { lib, connector } = await added("all");
     const turn1 = lib.connectorConnection(connector, "bot")!;
+    await ask(turn1, connector.name, "get_issue");
     await approve(turn1, connector.name, "get_issue");
 
     await lib.updateConnector(WORKSPACE, connector.id, { gate: "all", tools: { list_issues: false } });
@@ -221,6 +223,7 @@ describe("live connector permissions", () => {
   it("keeps an approval under unchanged settings across turns, for that session only", async () => {
     const { lib, connector } = await added("all");
     const turn1 = lib.connectorConnection(connector, "bot")!;
+    await ask(turn1, connector.name, "get_issue", "sess_1");
     await approve(turn1, connector.name, "get_issue", "sess_1");
     const turn2 = lib.connectorConnection((await lib.getConnector(WORKSPACE, connector.id))!, "bot")!;
     expect(await ask(turn2, connector.name, "get_issue", "sess_1")).toBe("not-applicable");
@@ -229,12 +232,35 @@ describe("live connector permissions", () => {
     expect(await ask(turn2, connector.name, "get_issue", "sess_2")).toBe("user-approval");
   });
 
-  it("always allows an approval, recording nothing for a connector that is gone", async () => {
+  it("rejects an approval for a connector removed while it waited, recording nothing", async () => {
     const { lib, connector } = await added("all");
     const def = lib.connectorConnection(connector, "bot")!;
+    expect(await ask(def, connector.name, "get_issue")).toBe("user-approval");
     await lib.removeConnector(WORKSPACE, connector.id);
-    expect(await approve(def, connector.name, "get_issue")).toEqual({ status: "allowed" });
+    expect(await approve(def, connector.name, "get_issue")).toMatchObject({ status: "rejected", reason: expect.stringMatching(/removed/) });
     expect(await lib.approvedVersion("sess_1", connector.id, "get_issue")).toBeNull();
+  });
+
+  it("rejects an approval for a tool switched off while it waited, so the call never runs", async () => {
+    const { lib, connector } = await added("writes");
+    const def = lib.connectorConnection(connector, "bot")!;
+    expect(await ask(def, connector.name, "create_issue")).toBe("user-approval");
+    await lib.updateConnector(WORKSPACE, connector.id, { tools: { create_issue: false } });
+    expect(await approve(def, connector.name, "create_issue")).toMatchObject({ status: "rejected", reason: expect.stringMatching(/deny this request/) });
+  });
+
+  it("records an approval under the settings it was asked under, not the ones in force when it lands", async () => {
+    const { lib, connector } = await added("all");
+    const def = lib.connectorConnection(connector, "bot")!;
+    expect(await ask(def, connector.name, "get_issue")).toBe("user-approval");
+    // The settings change while the prompt waits; the person approves afterwards.
+    await lib.updateConnector(WORKSPACE, connector.id, { tools: { list_issues: false } });
+    expect(await approve(def, connector.name, "get_issue")).toEqual({ status: "allowed" });
+    // That call runs, but the approval does not carry over to the new settings.
+    expect(await lib.approvedVersion("sess_1", connector.id, "get_issue")).toBeNull();
+    expect(await ask(def, connector.name, "get_issue")).toBe("user-approval");
+    expect(await approve(def, connector.name, "get_issue")).toEqual({ status: "allowed" });
+    expect(await ask(def, connector.name, "get_issue")).toBe("not-applicable");
   });
 
   it("bumps the permission version on every settings change, and keeps old records loading", async () => {

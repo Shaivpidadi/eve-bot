@@ -120,6 +120,22 @@ describe("a Bot's connector calls follow its run", () => {
     expect(denied(await ask(def, "create_issue", "sess_A"))).toMatch(/cancel/i);
   });
 
+  it("rejects an approval given after the job was cancelled, so the call never runs", async () => {
+    const { def, job } = await working();
+    expect(await ask(def, "create_issue", "sess_A")).toBe("user-approval");
+    const { cancelJobRun } = await import("../agent/lib/cancel");
+    expect((await cancelJobRun(WORKSPACE, job.id)).ok).toBe(true);
+    // The card was still open; someone clicks Approve.
+    const answer = await (def as unknown as { approval: { response: (ctx: unknown) => Promise<{ status: string; reason?: string }> } }).approval.response({
+      request: { callId: "call_1", requestId: "req_1", toolName: "tracker__create_issue" },
+      response: { decision: "approve" },
+      responder: { principalId: "owner" },
+      session: { id: "sess_A", initiator: null, turn: { id: "t", sequence: 1 } },
+    });
+    expect(answer.status).toBe("rejected");
+    expect(answer.reason).toMatch(/cancel/i);
+  });
+
   it("refuses the old run once a newer run takes the job over", async () => {
     const { def, jobs, job } = await working();
     // Run A's lease lapses and run B claims the job.

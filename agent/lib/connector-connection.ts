@@ -18,10 +18,17 @@ import { readDoc, updateDoc } from "./store";
  *   decides from the live record: gone, off, tool not allowed (for HQ: not a
  *   reviewed read) is a denial with a reason the model sees; otherwise the
  *   live gate and live policy decide whether a person is asked.
- * - `approval.response` runs when a person approves (never on a denial). It
- *   records, per session, the permission version the tool was approved under,
- *   which is what the "all" gate's "first use in a job" is measured against
- *   (see `decideCall`). It only records: it always allows.
+ * - `approval.response` runs when a person approves (never on a denial),
+ *   which can be long after the request. It decides again from the live
+ *   record and the caller: an approval for a run whose job was cancelled or
+ *   taken over since, or for a tool that has been switched off or removed
+ *   since, is rejected with the reason (eve keeps the request open for the
+ *   person to deny), so the call never runs. Otherwise it records, per
+ *   session, the permission version the tool was approved under, which is
+ *   what the "all" gate's "first use in a job" is measured against (see
+ *   `decideCall`): the version the person was asked under, and only if the
+ *   settings have not changed since; an approval given across a settings
+ *   change lets that one call run and the next one asks again.
  * - `headers` and `getToken` run when eve opens the connection to the server.
  *   They read the key from the live record, so a rotated key is the one sent,
  *   and a removed or switched-off connector gets no credentials at all.
@@ -110,18 +117,52 @@ export async function recordApproval(sessionId: string, connectorId: string, too
 }
 
 /**
+ * The permission version each pending prompt was shown under, by call:
+ * `{ [callId]: version }`, one doc per session and connector. Written when a
+ * person is asked, read when they answer, so an approval is recorded against
+ * the settings it was given for, not the ones in force when the click lands.
+ */
+const promptsKey = (sessionId: string, connectorId: string) => `approvals/connectors/${sessionId}/${connectorId}.prompts.json`;
+const MAX_PROMPTS = 50;
+
+type ConnectorPrompts = Readonly<Record<string, number>>;
+
+async function notePrompt(sessionId: string, connectorId: string, callId: string, version: number): Promise<void> {
+  await updateDoc<ConnectorPrompts>(promptsKey(sessionId, connectorId), (current) => {
+    if (current !== null && current[callId] === version) return null;
+    const kept = Object.entries(current ?? {}).filter(([id]) => id !== callId).slice(-(MAX_PROMPTS - 1));
+    return { ...Object.fromEntries(kept), [callId]: version };
+  });
+}
+
+/** The version a call's prompt was shown under, or null when it was not recorded (or cannot be read). */
+export async function promptVersion(sessionId: string, connectorId: string, callId: string): Promise<number | null> {
+  try {
+    const prompts = (await readDoc<ConnectorPrompts>(promptsKey(sessionId, connectorId)))?.value;
+    const version = prompts !== undefined && Object.hasOwn(prompts, callId) ? prompts[callId] : undefined;
+    return typeof version === "number" ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * How long an approval waits for its record. eve gives a response policy 10s
  * before it fails the approval, and a failed approval leaves the person
  * stuck; a record that is late (or lost) only means the next call asks again.
  */
 const RECORD_WAIT_MS = 5_000;
 
-/** Best effort and bounded: an approval never fails, or waits long, because its record could not be written. */
-async function noteApproved(connector: Connector, sessionId: string, toolName: string): Promise<void> {
+/**
+ * Best effort and bounded: an approval never fails, or waits long, because its
+ * record could not be written. Recorded only under the settings the person was
+ * asked under: a prompt whose version is unknown or stale records nothing.
+ */
+async function noteApproved(live: Connector, sessionId: string, toolName: string, callId: string): Promise<void> {
   const work = (async () => {
-    const live = await liveConnector(connector);
-    if (live === null || !live.enabled) return;
-    await recordApproval(sessionId, live.id, bareTool(live.name, toolName), permissionVersion(live));
+    const askedUnder = await promptVersion(sessionId, live.id, callId);
+    if (askedUnder === null || askedUnder !== permissionVersion(live)) return;
+    await recordApproval(sessionId, live.id, bareTool(live.name, toolName), askedUnder);
   })().catch(() => undefined);
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([work, new Promise<void>((resolve) => (timer = setTimeout(resolve, RECORD_WAIT_MS)))]);
@@ -135,6 +176,42 @@ async function liveConnector(connector: Connector): Promise<Connector | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether an approval may still let its call run: the caller is still its
+ * job's current run, and the live record still allows the tool. The gate is
+ * not asked again (the person is answering it).
+ */
+async function responseCheck(
+  connector: Connector,
+  audience: Audience,
+  checkCaller: CallerCheck | undefined,
+  toolName: string,
+  session: ApprovalResponseContext["session"],
+): Promise<{ readonly ok: true; readonly live: Connector } | { readonly ok: false; readonly reason: string }> {
+  if (checkCaller !== undefined) {
+    // eve gives a response policy the session but not its auth; the connector says which workspace it is.
+    const caller = await checkCaller({
+      toolName,
+      session: {
+        id: session.id,
+        turn: session.turn,
+        auth: {
+          current: { principalId: "runtime", principalType: "runtime", authenticator: "approval", attributes: { workspaceId: connector.workspaceId } },
+          initiator: session.initiator,
+        },
+      },
+    } as unknown as ApprovalContext);
+    if (!caller.ok) return { ok: false, reason: `${caller.message} Deny this request.` };
+  }
+  const live = await liveConnector(connector);
+  const decision = decideCall({ audience, live, toolName, approvedAt: null });
+  if (typeof decision === "object" && decision !== null && decision.type === "denied") {
+    return { ok: false, reason: `${decision.reason ?? "This tool can no longer be used."} It changed after the request was made; deny this request.` };
+  }
+  if (live === null) return { ok: false, reason: "This connector was removed; deny this request." };
+  return { ok: true, live };
 }
 
 /**
@@ -201,11 +278,16 @@ export function connectorConnection(
         // Only the "all" gate depends on a past approval; the read is skipped otherwise.
         const approvedAt =
           audience === "bot" && live?.enabled === true && live.gate === "all" ? await approvedVersion(ctx.session.id, live.id, bareTool(live.name, ctx.toolName)) : null;
-        return decideCall({ audience, live, toolName: ctx.toolName, approvedAt });
+        const decision = decideCall({ audience, live, toolName: ctx.toolName, approvedAt });
+        // Best effort: without it the approval still lets this call run, and records nothing.
+        if (decision === "user-approval" && live !== null) await notePrompt(ctx.session.id, live.id, ctx.callId, permissionVersion(live)).catch(() => undefined);
+        return decision;
       },
-      // Runs only on an approval. It records and always allows: rejecting here would leave the request pending.
+      // Runs only on an approval, perhaps long after the request: decided again, since the call runs on it.
       response: async ({ request, session }: ApprovalResponseContext) => {
-        await noteApproved(connector, session.id, request.toolName);
+        const checked = await responseCheck(connector, audience, options.checkCaller, request.toolName, session);
+        if (!checked.ok) return { status: "rejected", reason: checked.reason };
+        await noteApproved(checked.live, session.id, request.toolName, request.callId);
         return { status: "allowed" };
       },
     },
