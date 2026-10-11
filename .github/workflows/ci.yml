@@ -1,0 +1,46 @@
+# Tests, types, and a full build on every pull request and every branch push.
+#
+# The build is the same `npm run build` a standalone server runs: `eve build`
+# for the agent, then `next build` for the console. It needs no secrets: model
+# keys, storage, and sandbox credentials are read when the app runs, not when
+# it builds. main is left to Vercel, which builds every push itself.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build

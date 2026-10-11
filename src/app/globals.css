@@ -167,6 +167,7 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .side-update { color: var(--purple); text-decoration: none; }
 .side-update .i { color: var(--purple); }
 .side-item .i { color: var(--muted); }
+.side-health, .side-health .i { color: var(--warn); cursor: default; }
 .me { display: flex; align-items: center; gap: 9px; padding: 6px 8px; font-size: 12.5px; }
 .me-avatar {
   width: 20px; height: 20px; border-radius: 50%; flex: none; display: grid; place-items: center;
