@@ -1,8 +1,5 @@
-import { resumeHook } from "workflow/api";
-
 import { releaseRun } from "./budget";
 import { cancelJob, type Cancel } from "./jobs";
-import { runStopToken, type RunStop } from "./run-stop";
 import type { Job } from "./types";
 
 /**
@@ -10,13 +7,6 @@ import type { Job } from "./types";
  * itself. Given a session id; throws when it could not.
  */
 export type Interrupt = (sessionId: string) => Promise<void>;
-
-/**
- * Wakes the `run_job` run holding the lease `leaseToken` (see `run-stop.ts`).
- * True when a run was listening and took the signal; false when none was (it
- * ended, had not started listening yet, or the runtime did not answer).
- */
-export type StopRun = (leaseToken: string) => Promise<boolean>;
 
 /**
  * What happened to the job's sessions (see `sessionsToInterrupt`):
@@ -45,13 +35,6 @@ export type JobCancellation =
       sessions: readonly string[];
       interruption: Interruption;
       interruptError?: string;
-      /**
-       * Whether the run that held the job took the stop signal: it has stopped
-       * waiting on the bot and ends as cancelled within seconds. False when
-       * no run was listening (none held the job, it ended, or it had not
-       * started listening), and the run ends at its next check instead.
-       */
-      runStopped: boolean;
     }
   | Extract<Cancel, { ok: false }>;
 
@@ -63,41 +46,36 @@ export type JobCancellation =
  *    compare-and-set. From then on the running bot's job writes and guarded
  *    side effects are refused, its parent's heartbeat fails, and nothing can
  *    close the job as done, blocked or sent back.
- * 2. The run, for every caller: `stopRun` resumes the hook the `run_job` run
- *    waits on under the cancelled lease's token, so the run stops waiting on
- *    its bot and ends as cancelled within seconds, not at its next heartbeat.
- *    The bot's own session is not stopped by this (eve gives a workflow no
- *    handle on the child it started); it stops before its next model call,
- *    when the teammate's `fence` hook finds the job cancelled.
+ * 2. The bot, for every caller: its next model call fails its turn (the
+ *    teammate's `fence` hook finds the job cancelled), which ends the
+ *    `run_job` run's wait; the run then stops without recording anything.
+ *    A bot parked on a long tool call or a card is noticed at the run's next
+ *    heartbeat (see `run-stop.ts`).
  * 3. The session, when the caller can: `interrupt` stops the job's sessions (see
  *    `sessionsToInterrupt`), so the bot stops mid-step instead of at its next
  *    step and its pending requests (an approval card, a cost-limit card, a
  *    takeover) go with it. Channel routes
  *    pass `interruptVia(attachSession)`; tools have no handle on another
  *    session in eve 0.58, so they pass nothing.
- * 4. If signalling or interrupting fails, step 1 stands as the backstop and
+ * 4. If interrupting fails, step 1 stands as the backstop and
  *    the answer says so.
  * 5. The run's budget reservation is released, so what it held but did not
  *    spend is free for other runs at once. Whatever the bot spends between
  *    the cancel and its session stopping still counts (the usage hook charges
  *    it to the released reservation, which holds nothing more).
  *
- * Idempotent: cancelling a cancelled job succeeds, signals its run again
- * (harmless: a run that ended has no hook left to resume) and interrupts its
- * sessions again, which is how a failed interruption is retried.
+ * Idempotent: cancelling a cancelled job succeeds and interrupts its sessions
+ * again, which is how a failed interruption is retried.
  */
 export async function cancelJobRun(
   workspaceId: string,
   jobId: string,
-  options: { interrupt?: Interrupt; stopRun?: StopRun } = {},
+  options: { interrupt?: Interrupt } = {},
 ): Promise<JobCancellation> {
   const cancelled = await cancelJob(workspaceId, jobId);
   if (!cancelled.ok) return cancelled;
   // Idempotent, and a no-op for a lease that reserved nothing (a wait, a dispatch).
   if (cancelled.token !== null) await releaseRun(workspaceId, cancelled.token).catch(() => false);
-  // After the durable cancel, never before: the run decides from the record.
-  const stopRun = options.stopRun ?? stopRunHook;
-  const runStopped = cancelled.token !== null && (await stopRun(cancelled.token).catch(() => false));
   const sessions = sessionsToInterrupt(cancelled.session, cancelled.job);
   const base = {
     ok: true as const,
@@ -106,7 +84,6 @@ export async function cancelJobRun(
     alreadyCancelled: cancelled.alreadyCancelled,
     session: cancelled.session,
     sessions,
-    runStopped,
   };
   if (options.interrupt === undefined) return { ...base, interruption: "unavailable" };
   if (sessions.length === 0) return { ...base, interruption: "no-session" };
@@ -136,21 +113,6 @@ export async function cancelJobRun(
  */
 export function sessionsToInterrupt(leaseSession: string | null, job: Pick<Job, "sessionId">): string[] {
   return [...new Set([leaseSession, job.sessionId].filter((id): id is string => typeof id === "string" && id !== ""))];
-}
-
-/**
- * The `StopRun` every caller gets: resumes the run's stop hook through the
- * Workflow runtime. A hook nobody is waiting on (the run ended, or has not
- * reached its first wait) is `HookNotFoundError`, which is an answer, not a
- * failure: the job is cancelled durably either way. Bounded like an interrupt,
- * since a person may be waiting on the answer.
- */
-export async function stopRunHook(leaseToken: string): Promise<boolean> {
-  const stop: RunStop = { reason: "cancelled" };
-  return within(resumeHook(runStopToken(leaseToken), stop)).then(
-    () => true,
-    () => false,
-  );
 }
 
 /** The slice of eve's `attachSession(id)` handle an interruption uses. */
@@ -213,8 +175,6 @@ export function describeInterruption(outcome: Extract<JobCancellation, { ok: tru
       return `Stopping the bot's session failed (${outcome.interruptError ?? "unknown error"}). The job stays cancelled and every action the bot tries is refused; cancel again to retry.`;
     case "unavailable":
       if (outcome.sessions.length === 0) return "No bot session was bound to it.";
-      return outcome.runStopped
-        ? "The run was stopped. The bot's session ends its current step but makes no further model call, and every action it tries is refused. Starting the thread over from the console ends the session at once."
-        : "The bot's session was not stopped from here: it makes no further model call and every action it tries is refused, and its run ends at its next check, within about 8 minutes. Starting the thread over from the console ends the session at once.";
+      return "The bot makes no further model call for it and every action it tries is refused; its run ends when its current step does, or at its next check if it is waiting on something. Starting the thread over from the console ends the session at once.";
   }
 }

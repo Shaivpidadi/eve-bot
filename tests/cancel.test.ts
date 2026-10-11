@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Job, JobResult } from "../agent/lib/types";
 
@@ -22,11 +22,6 @@ vi.mock("../agent/subagents/teammate/lib/browser", () => ({
 }));
 
 const WORKSPACE = "default";
-
-// Some tests stand in a listening run for the Workflow runtime; none leaks into the next.
-afterEach(() => {
-  vi.doUnmock("workflow/api");
-});
 
 const ctxFor = (sessionId: string) =>
   ({
@@ -273,54 +268,6 @@ describe("a cancelled job against its old run", () => {
     expect(reclaim).toEqual({ ok: false, reason: "That job was cancelled." });
   });
 
-  it("wakes the run on the cancelled lease, after the cancel is durable", async () => {
-    const { cancel, jobs, job } = await running();
-    const seen: string[] = [];
-    const stopRun = vi.fn(async (token: string) => {
-      // The run decides from the record, so the record must already say cancelled.
-      seen.push(`${token} ${(await jobs.getJob(WORKSPACE, job.id))?.status}`);
-      return true;
-    });
-    const outcome = await cancel.cancelJobRun(WORKSPACE, job.id, { stopRun });
-    expect(seen).toEqual(["lease_A cancelled"]);
-    expect(outcome).toMatchObject({ ok: true, runStopped: true, interruption: "unavailable" });
-    expect(outcome.ok && cancel.describeInterruption(outcome)).toContain("The run was stopped");
-  });
-
-  it("resumes the run's stop hook through the Workflow runtime by default", async () => {
-    const resumeHook = vi.fn(async () => ({ runId: "wrun_1" }));
-    vi.doMock("workflow/api", () => ({ resumeHook }));
-    const { cancel, job } = await running();
-    const outcome = await cancel.cancelJobRun(WORKSPACE, job.id);
-    expect(resumeHook).toHaveBeenCalledTimes(1);
-    expect(resumeHook).toHaveBeenCalledWith("bot-run-stop:lease_A", { reason: "cancelled" });
-    expect(outcome).toMatchObject({ ok: true, runStopped: true });
-  });
-
-  it("is harmless when no run is listening, and signals again on a second cancel", async () => {
-    const resumeHook = vi.fn(async (token: string): Promise<never> => {
-      throw Object.assign(new Error(`Hook not found: ${token}`), { name: "HookNotFoundError" });
-    });
-    vi.doMock("workflow/api", () => ({ resumeHook }));
-    const { cancel, job, read } = await running();
-    const outcome = await cancel.cancelJobRun(WORKSPACE, job.id);
-    expect(outcome).toMatchObject({ ok: true, runStopped: false, interruption: "unavailable" });
-    expect(outcome.ok && cancel.describeInterruption(outcome)).toContain("next check");
-    expect((await read()).status).toBe("cancelled");
-    // The retry names the same lease, from the cancellation record.
-    expect(await cancel.cancelJobRun(WORKSPACE, job.id)).toMatchObject({ ok: true, alreadyCancelled: true, runStopped: false });
-    expect(resumeHook.mock.calls.map(([token]) => token)).toEqual(["bot-run-stop:lease_A", "bot-run-stop:lease_A"]);
-  });
-
-  it("signals nobody for a job no run holds", async () => {
-    const jobs = await import("../agent/lib/jobs");
-    const cancel = await import("../agent/lib/cancel");
-    const job = await jobs.assignJob({ workspaceId: WORKSPACE, botId: "bot_1", requestedBy: "operator", title: "Later", brief: "Later." });
-    const stopRun = vi.fn(async () => true);
-    expect(await cancel.cancelJobRun(WORKSPACE, job.id, { stopRun })).toMatchObject({ ok: true, runStopped: false });
-    expect(stopRun).not.toHaveBeenCalled();
-  });
-
   it("tells the parent its run is over by standing, not just by a failed renewal", async () => {
     const { jobs, job } = await running();
     expect(await jobs.runStanding(WORKSPACE, job.id, "lease_A")).toBe("owns");
@@ -341,25 +288,13 @@ describe("the cancel_job tool and the console's DELETE route", () => {
     const { tool, job, read } = await running();
     const cancelJob = await tool("cancel_job");
     const answer = await cancelJob.execute({ jobId: job.id }, ctxFor("sess_hq"));
-    // No run is listening here (tests/stubs/workflow-api.ts), so the note promises the heartbeat, not a stop.
-    expect(answer).toMatchObject({ cancelled: true, interruption: "unavailable", runStopped: false });
+    expect(answer).toMatchObject({ cancelled: true, interruption: "unavailable" });
     expect(String(answer.note)).toContain("every action it tries is refused");
     expect(String(answer.note)).toContain("no further model call");
     expect(String(answer.note)).toContain("next check");
     expect(String(answer.note)).not.toContain("may finish its current step");
     expect((await read()).status).toBe("cancelled");
     expect(await cancelJob.execute({ jobId: job.id }, ctxFor("sess_hq"))).toMatchObject({ cancelled: true, alreadyCancelled: true });
-  });
-
-  it("cancel_job stops the run within seconds when the run takes the signal", async () => {
-    const resumeHook = vi.fn(async () => ({ runId: "wrun_1" }));
-    vi.doMock("workflow/api", () => ({ resumeHook }));
-    const { tool, job } = await running();
-    const answer = await (await tool("cancel_job")).execute({ jobId: job.id }, ctxFor("sess_hq"));
-    expect(resumeHook).toHaveBeenCalledWith("bot-run-stop:lease_A", { reason: "cancelled" });
-    expect(answer).toMatchObject({ cancelled: true, interruption: "unavailable", runStopped: true });
-    expect(String(answer.note)).toContain("The run was stopped");
-    expect(String(answer.note)).not.toContain("8 minutes");
   });
 
   /** A job in HQ's room claimed by a run that never called job_brief, its session recorded only on the job. */
