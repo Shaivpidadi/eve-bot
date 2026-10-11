@@ -8,6 +8,7 @@ import { chargeUsage } from "../../../lib/spend";
 import type { Job } from "../../../lib/types";
 import { addUsage, stepCostReported, usageOfStep } from "../../../lib/usage";
 import { sessionState } from "../lib/session-state";
+import { isHalted, markHalted } from "../lib/stops";
 
 /**
  * What a job costs, added to the job and to its Bot's ledger step by step.
@@ -27,11 +28,11 @@ import { sessionState } from "../lib/session-state";
  * same session, which learns of the halt at its own next completed step.
  * tests/turn-stop.test.ts runs eve's own turn loop to check that the throw
  * stops the model call. A context compaction, which eve runs just before
- * `step.started` when the history is long, is a model call this does not stop.
+ * `step.started` when the history is long, is stopped by the same flag in the
+ * teammate's model resolver (see `lib/stops.ts`).
  */
 const models = sessionState<string>();
 const jobs = sessionState<{ jobId: string; botId: string }>();
-const halted = sessionState<true>();
 
 /**
  * The run whose reservation a step draws on: the lease this session holds, or,
@@ -70,7 +71,7 @@ export default defineHook({
   events: {
     "step.started"(event, ctx) {
       // Outside any try: a throw here is what stops the model call.
-      if (halted.get(ctx.session.id) === true) throw new Error(BUDGET_HALT_REASON);
+      if (isHalted(ctx.session.id)) throw new Error(BUDGET_HALT_REASON);
       const modelId = (event.data as { modelId?: unknown }).modelId;
       if (typeof modelId === "string") models.set(ctx.session.id, modelId);
     },
@@ -86,7 +87,7 @@ export default defineHook({
           costReported: stepCostReported(event.data),
           id: `${ctx.session.id}:${event.meta.id}`,
         });
-        if (spend.halted) halted.set(ctx.session.id, true);
+        if (spend.halted) markHalted(ctx.session.id);
       } catch {
         // The ledger is a convenience; the job is not.
       }

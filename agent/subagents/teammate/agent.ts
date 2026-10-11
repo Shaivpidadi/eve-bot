@@ -37,6 +37,19 @@ function modelFor(ctx: Pick<DynamicResolveContext, "session" | "messages">): str
 const endpoint = customEndpoint();
 
 /**
+ * A run that was cancelled or halted by the budget makes no further model
+ * call, compaction included: eve resolves the model for a step before it
+ * compacts a long history, and a throw here fails that step (the `fence` and
+ * `usage` hooks stop the model request itself, after compaction). Loaded
+ * lazily, so the store stays out of whatever loads the agent's definition.
+ */
+async function refuseStoppedRun(event: unknown, ctx: DynamicResolveContext): Promise<void> {
+  const [{ stepOf, stopReason }, { operator }] = await Promise.all([import("./lib/stops"), import("../../lib/session")]);
+  const reason = await stopReason(ctx.session.id, () => operator(ctx).workspaceId, stepOf((event as { data?: unknown } | null)?.data));
+  if (reason !== null) throw new Error(reason);
+}
+
+/**
  * A teammate: one bot doing one job on the team's computer.
  *
  * It never sees HQ's conversation — everything it needs arrives in the brief,
@@ -50,12 +63,18 @@ export default defineAgent({
   model: defineDynamic({
     events:
       endpoint === null
-        ? { "turn.started": (_event, ctx) => modelFor(ctx) }
+        ? {
+            "turn.started": (_event, ctx) => modelFor(ctx),
+            "step.started": async (event, ctx) => {
+              await refuseStoppedRun(event, ctx);
+              return modelFor(ctx);
+            },
+          }
         : {
-            "step.started": (_event, ctx) => ({
-              model: endpointModel(endpoint, modelFor(ctx)),
-              modelContextWindowTokens: endpoint.contextWindowTokens,
-            }),
+            "step.started": async (event, ctx) => {
+              await refuseStoppedRun(event, ctx);
+              return { model: endpointModel(endpoint, modelFor(ctx)), modelContextWindowTokens: endpoint.contextWindowTokens };
+            },
           },
   }),
   ...reasoningFor(process.env.BOT_TEAMMATE_REASONING, "medium"),

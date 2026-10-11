@@ -1,10 +1,7 @@
 import { defineHook } from "eve/hooks";
 
-import { sessionBinding } from "../../../lib/computer/screens";
-import { getJob } from "../../../lib/jobs";
-import { CANCELLED_STOP_REASON } from "../../../lib/run-stop";
 import { operator } from "../../../lib/session";
-import { sessionState } from "../lib/session-state";
+import { stepOf, stopReason } from "../lib/stops";
 
 /**
  * Stops a Bot whose job was cancelled, before its next model call.
@@ -22,38 +19,18 @@ import { sessionState } from "../lib/session-state";
  * eve turn to hold eve to that.
  *
  * The step in flight when the cancel lands still finishes, with its tool
- * calls refused, and a context compaction eve runs just before `step.started`
- * is not stopped. A session that never called `job_brief` is bound to no job
+ * calls refused. A context compaction eve runs just before `step.started` is
+ * stopped earlier, by the same check in the teammate's model resolver (see
+ * `lib/stops.ts`). A session that never called `job_brief` is bound to no job
  * and is not fenced here; `job_brief` refuses it once the job is cancelled.
  * A read that fails lets the step through: the refusals still hold.
  */
-const jobs = sessionState<string>();
-const cancelled = sessionState<true>();
-
 export default defineHook({
   events: {
-    async "step.started"(_event, ctx) {
+    async "step.started"(event, ctx) {
       // Outside any try: a throw here is what stops the model call.
-      if (cancelled.get(ctx.session.id) === true) throw new Error(CANCELLED_STOP_REASON);
-      if (!(await jobIsCancelled(ctx.session.id, () => operator(ctx).workspaceId))) return;
-      cancelled.set(ctx.session.id, true);
-      throw new Error(CANCELLED_STOP_REASON);
+      const reason = await stopReason(ctx.session.id, () => operator(ctx).workspaceId, stepOf(event.data));
+      if (reason !== null) throw new Error(reason);
     },
   },
 });
-
-async function jobIsCancelled(sessionId: string, workspace: () => string): Promise<boolean> {
-  try {
-    const workspaceId = workspace();
-    let jobId = jobs.get(sessionId);
-    if (jobId === undefined) {
-      const binding = await sessionBinding(workspaceId, sessionId);
-      if (binding === null) return false;
-      jobId = binding.jobId;
-      jobs.set(sessionId, jobId);
-    }
-    return (await getJob(workspaceId, jobId))?.status === "cancelled";
-  } catch {
-    return false;
-  }
-}
