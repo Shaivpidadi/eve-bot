@@ -4,7 +4,7 @@ import { z } from "zod";
 import { recentActivity } from "../../../lib/activity";
 import { ensureComputerRestored } from "../../../lib/computer-backup";
 import { getBot } from "../../../lib/bots";
-import { getJob, patchJob } from "../../../lib/jobs";
+import { bindRun, describeRunRefusal } from "../../../lib/jobs";
 import { operator } from "../../../lib/session";
 import { bindScreen } from "../lib/browser";
 
@@ -13,23 +13,29 @@ export default defineTool({
     "Read the authoritative record for the job you were given: the brief, the success criteria, your own persona and playbook, and what has already been logged. Call this first, every time.",
   inputSchema: z.object({
     jobId: z.string().describe("The job id from your briefing message."),
+    runToken: z.string().describe("The run token from your briefing message. It proves this session is the job's current run."),
   }),
   label: { start: ({ jobId }) => `Read job ${jobId}` },
-  async execute({ jobId }, ctx) {
+  async execute({ jobId, runToken }, ctx) {
     const who = operator(ctx);
-    // Every job starts here, so this is where a replaced computer gets its files back.
-    await ensureComputerRestored(ctx);
-    const job = await getJob(who.workspaceId, jobId);
-    if (job === null) {
+    // Binds this session to the run lease it was briefed with, in one step with
+    // the check: from here on only this session may write to the job, and the
+    // console follows the run through it. A later run's claim undoes it, and a
+    // run that was already superseded touches nothing, the computer included.
+    const bound = await bindRun(who.workspaceId, jobId, runToken, ctx.session.id);
+    if (!bound.ok) {
       return {
         found: false as const,
-        reason: `No job ${jobId}. Work from the briefing message and say so in your summary.`,
+        reason: bound.reason,
+        message:
+          bound.reason === "missing"
+            ? `No job ${jobId}. Work from the briefing message and say so in your summary.`
+            : describeRunRefusal(bound.reason, jobId),
       };
     }
-    if (job.sessionId !== ctx.session.id) {
-      // Links this run's session to the job, which is how the console follows the run.
-      await patchJob(who.workspaceId, jobId, (current) => ({ ...current, sessionId: ctx.session.id }));
-    }
+    // Every job starts here, so this is where a replaced computer gets its files back.
+    await ensureComputerRestored(ctx);
+    const job = bound.job;
     // Every browser action this run takes happens on the Bot's own screen.
     await bindScreen(ctx, job.botId, jobId);
     const [bot, timeline] = await Promise.all([

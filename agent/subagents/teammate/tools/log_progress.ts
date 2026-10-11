@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { record } from "../../../lib/activity";
 import { checkpointComputer } from "../../../lib/computer-backup";
-import { getJob } from "../../../lib/jobs";
+import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
 
 export default defineTool({
@@ -20,12 +20,16 @@ export default defineTool({
   label: { start: ({ note }) => note.slice(0, 80) },
   async execute({ jobId, note, detail }, ctx) {
     const who = operator(ctx);
-    const job = await getJob(who.workspaceId, jobId);
+    // A superseded run's notes would read as the live run's in the job's feed.
+    const run = await guardSideEffect(ctx, jobId);
+    if (!run.ok) {
+      return { logged: false as const, reason: run.reason, message: run.message };
+    }
     await record({
       workspaceId: who.workspaceId,
       kind: "job.progress",
       jobId,
-      botId: job?.botId ?? null,
+      botId: run.job.botId,
       text: note,
       ...(detail ? { data: detail } : {}),
     });

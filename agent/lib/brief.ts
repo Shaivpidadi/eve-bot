@@ -7,9 +7,11 @@ import type { Bot, Job } from "./types";
  *
  * A subagent never sees the parent's conversation, so the brief is the whole
  * contract: who the bot is, what it learned last time, what was asked for, and
- * what counts as done.
+ * what counts as done. It also carries the run's lease token, which the bot
+ * hands back to `job_brief` to prove it is the run that owns the job (see
+ * `bindRun` in `jobs.ts`); the parent cannot know its child's session in advance.
  */
-export function renderBrief(bot: Bot, job: Job): string {
+export function renderBrief(bot: Bot, job: Job, run: { readonly token: string }): string {
   const sections = [
     `You are ${bot.name} ${bot.emoji}, ${bot.role}.`,
     bot.persona.trim(),
@@ -19,6 +21,7 @@ export function renderBrief(bot: Bot, job: Job): string {
     [
       "## Job",
       `id: ${job.id}`,
+      `run token: ${run.token}`,
       `title: ${job.title}`,
       `requested by: ${job.requestedBy}`,
       job.schedule != null
@@ -48,7 +51,8 @@ export function renderBrief(bot: Bot, job: Job): string {
       : null,
     [
       "## Working agreement",
-      `Call job_brief("${job.id}") first — it is the authoritative copy of this job.`,
+      `Call job_brief with jobId "${job.id}" and runToken "${run.token}" first — it is the authoritative copy of this job, and it makes this session the job's run.`,
+      "If a tool says this run no longer owns the job, stop: another run has it, and nothing more you do will count.",
       "Log each meaningful step with log_progress so the operator can follow along.",
       "Save anything worth keeping with save_artifact before you finish.",
       "If you are blocked on a decision only a human can make, ask_question instead of guessing.",

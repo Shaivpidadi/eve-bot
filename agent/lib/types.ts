@@ -52,6 +52,13 @@ export type JobStatus =
 
 export type JobLeaseKind = "dispatch" | "run" | "signoff" | "wait";
 
+export interface JobLease {
+  token: string;
+  until: string;
+  kind: JobLeaseKind;
+  session?: string;
+}
+
 export interface JobArtifact {
   readonly id: string;
   readonly name: string;
@@ -103,8 +110,14 @@ export interface Job {
    * waiting on a person. A run may take over a dispatch lease, and its own or
    * (when started early on purpose) another run's wait lease, never the other
    * way round.
+   *
+   * `session` is the teammate session that proved it holds a `run` lease by
+   * presenting its token to `job_brief`. Only that session may write to the
+   * job (see `checkRun` in `jobs.ts`); a fresh claim drops it, which is what
+   * fences off a run that outlived its lease. Absent until the run binds, and
+   * on leases written before runs were fenced.
    */
-  lease: { token: string; until: string; kind: JobLeaseKind } | null;
+  lease: JobLease | null;
   sessionId: string | null;
   agentId: string | null;
   result: JobResult | null;
@@ -142,6 +155,13 @@ export interface JobResult {
    * anything. Absent on older results.
    */
   readonly recordedAt?: string;
+  /**
+   * The run that recorded it: its lease token and teammate session. This, not
+   * the time, is what says which run a result belongs to — a run that outlived
+   * its lease can record after the next run started. Absent on results not
+   * recorded through `finish_job`, and on older ones.
+   */
+  readonly producedBy?: { readonly token: string; readonly session: string };
 }
 
 export type ActivityKind =

@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { record } from "../../../lib/activity";
 import { checkpointComputer } from "../../../lib/computer-backup";
-import { getJob, patchJob } from "../../../lib/jobs";
+import { describeRunRefusal, patchJobAsRun } from "../../../lib/jobs";
 import { operator } from "../../../lib/session";
 import { looseBoolean } from "../../../lib/tool-input";
 import type { JobResult } from "../../../lib/types";
@@ -30,13 +30,11 @@ export default defineTool({
   label: { start: ({ summary }) => `Finish: ${summary.slice(0, 60)}` },
   async execute(input, ctx) {
     const who = operator(ctx);
-    const job = await getJob(who.workspaceId, input.jobId);
-    if (job === null) return { recorded: false as const, reason: `No job ${input.jobId}.` };
 
     // `verified` is the bot's own claim about its work, so it is kept with the
     // result rather than only said in the feed: everything downstream — HQ's
     // report, the operator, a later grader — needs to know which it was.
-    const result: JobResult = {
+    const draft: JobResult = {
       summary: input.summary,
       deliverable: input.deliverable,
       openQuestions: input.openQuestions ?? [],
@@ -45,7 +43,26 @@ export default defineTool({
       recordedAt: new Date().toISOString(),
     };
 
-    await patchJob(who.workspaceId, input.jobId, (current) => ({ ...current, result }));
+    // Only the job's current run may record its result, and the result names
+    // that run, so run_job never takes a superseded run's words for its own.
+    const written = await patchJobAsRun(who.workspaceId, input.jobId, ctx.session.id, (current, run) =>
+      // Already there: a retried write that had landed (see patchJobAsRun).
+      current.result?.producedBy?.session === run.session &&
+      current.result.producedBy.token === run.token &&
+      current.result.recordedAt === draft.recordedAt
+        ? null
+        : { ...current, result: { ...draft, producedBy: run } },
+    );
+    if (!written.ok) {
+      return {
+        recorded: false as const,
+        reason: written.reason,
+        message: describeRunRefusal(written.reason, input.jobId),
+      };
+    }
+    const job = written.job;
+    const result = job.result ?? draft;
+
     await record({
       workspaceId: who.workspaceId,
       kind: "job.progress",

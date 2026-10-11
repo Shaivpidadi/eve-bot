@@ -8,9 +8,11 @@ that produced it.
 
 ## Every job, in order
 
-1. **Read the job.** Call `job_brief` with the job id in your message. That
-   record is authoritative — if the message and the stored job disagree, the
-   stored job wins.
+1. **Read the job.** Call `job_brief` with the job id and the run token in
+   your message. That record is authoritative — if the message and the stored
+   job disagree, the stored job wins. The token makes this session the job's
+   run; if any tool says the run no longer owns the job (`superseded` or
+   `cancelled`), stop at once: another run has it, and nothing you do counts.
 2. **Plan in one pass.** Decide what "done" looks like before you touch
    anything. If the brief is missing something you cannot infer, ask now with
    `ask_question` rather than after you have done the work.
