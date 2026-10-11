@@ -79,8 +79,24 @@ async function liveConnector(connector: Connector): Promise<Connector | null> {
   }
 }
 
-/** The connection eve gets for one stored connector, or null when it offers nothing to this audience. */
-export function connectorConnection(connector: Connector, audience: Audience): McpClientConnectionDefinition | null {
+/**
+ * A check on the calling session itself, made before the connector's own
+ * rules: for a Bot at work, whether it is still its job's current run (see
+ * `guardSideEffect`). A denial carries the reason the model sees.
+ */
+export type CallerCheck = (ctx: ApprovalContext) => Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }>;
+
+/**
+ * The connection eve gets for one stored connector, or null when it offers
+ * nothing to this audience. `checkCaller`, when given, runs before every call:
+ * a Bot whose job was cancelled or taken over by a newer run gets no further
+ * connector calls, reads included, the same as its other tools.
+ */
+export function connectorConnection(
+  connector: Connector,
+  audience: Audience,
+  options: { readonly checkCaller?: CallerCheck } = {},
+): McpClientConnectionDefinition | null {
   if (!connector.enabled) return null;
   const allow = allowedTools(connector, { readsOnly: audience === "hq" });
   if (allow.length === 0) return null;
@@ -119,7 +135,13 @@ export function connectorConnection(connector: Connector, audience: Audience): M
       return live.auth.kind === "oauth" ? {} : connectorHeaders(live);
     },
     tools: { allow },
-    approval: async ({ toolName, approvedTools }: ApprovalContext) =>
-      decideCall({ audience, live: await liveConnector(connector), version, toolName, approvedTools, reapproved }),
+    approval: async (ctx: ApprovalContext) => {
+      if (options.checkCaller !== undefined) {
+        const caller = await options.checkCaller(ctx);
+        if (!caller.ok) return deny(caller.message);
+      }
+      const { toolName, approvedTools } = ctx;
+      return decideCall({ audience, live: await liveConnector(connector), version, toolName, approvedTools, reapproved });
+    },
   });
 }
