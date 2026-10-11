@@ -1,8 +1,7 @@
-import { ConnectionAuthorizationRequiredError, defineDynamic, defineMcpClientConnection } from "eve/connections";
-import { once } from "eve/tools/approval";
+import { defineDynamic } from "eve/connections";
 
-import { effectOf } from "../../../lib/catalog";
-import { allowedTools, connectorHeaders, connectorToken, getConnector, listConnectors } from "../../../lib/connectors";
+import { connectorConnection } from "../../../lib/connector-connection";
+import { listConnectors } from "../../../lib/connectors";
 import { operator } from "../../../lib/session";
 
 /**
@@ -10,66 +9,27 @@ import { operator } from "../../../lib/session";
  *
  * Connectors are account-wide: whatever the workspace connected on the
  * Connectors page is available to each job's Bot, under the connector's name
- * (`<name>__<tool>`, found with `connection_search`). Keys are unsealed here,
- * held only in memory for the session, and never shown to the model.
+ * (`<name>__<tool>`, found with `connection_search`). Keys are unsealed only
+ * when eve connects to the server, read from the stored connector each time,
+ * and never shown to the model.
  *
- * The gate decides when a person is asked: never, before any tool that
- * changes something (by the verb in its name), or before every tool's first
- * use in a job. Reads under a "writes" gate flow without a prompt.
+ * The gate decides when a person is asked: never, before any tool recorded
+ * as a change (a name nobody anticipated counts as one), or before every
+ * tool's first use in a job. Reads under a "writes" gate flow without a
+ * prompt. The gate, the policy, and the tool switches are read live on every
+ * call, and the set is resolved again each turn (see `connector-connection.ts`).
  */
+async function resolve(ctx: Parameters<typeof operator>[0]) {
+  const { workspaceId } = operator(ctx);
+  const entries = (await listConnectors(workspaceId))
+    .map((connector) => [connector.name, connectorConnection(connector, "bot")] as const)
+    .filter((entry): entry is readonly [string, NonNullable<(typeof entry)[1]>] => entry[1] !== null);
+  return entries.length === 0 ? null : Object.fromEntries(entries);
+}
+
 export default defineDynamic({
   events: {
-    "session.started": async (_event, ctx) => {
-      const { workspaceId } = operator(ctx);
-      const connectors = (await listConnectors(workspaceId)).filter((connector) => connector.enabled);
-      if (connectors.length === 0) return null;
-
-      const entries = await Promise.all(
-        connectors.map(async (connector) => {
-          const allow = allowedTools(connector);
-          if (allow.length === 0) return null;
-          const headers = connector.auth.kind === "oauth" ? {} : await connectorHeaders(connector);
-          // An OAuth connector's token is fetched per call and refreshed as needed; without a sign-in, eve is told to ask for one.
-          const auth =
-            connector.auth.kind !== "oauth"
-              ? {}
-              : {
-                  auth: {
-                    displayName: connector.label,
-                    getToken: async () => {
-                      const live = (await getConnector(connector.workspaceId, connector.id)) ?? connector;
-                      const token = await connectorToken(live);
-                      if (token === null) throw new ConnectionAuthorizationRequiredError(connector.name);
-                      return token;
-                    },
-                  },
-                };
-          return [
-            connector.name,
-            defineMcpClientConnection({
-              url: connector.url,
-              description: connector.description,
-              instanceKey: connector.id,
-              ...auth,
-              // Only the tools the operator left on; a server that grew new tools offers them after the next check.
-              ...((connector.disabledTools ?? []).length === 0 ? {} : { tools: { allow } }),
-              ...(Object.keys(headers).length === 0
-                ? {}
-                : { headers: Object.fromEntries(Object.entries(headers).map(([name, value]) => [name, () => value])) }),
-              ...(connector.gate === "all"
-                ? { approval: once() }
-                : connector.gate === "writes"
-                  ? {
-                      approval: ({ toolName }: { toolName: string }) =>
-                        effectOf(connector.policy, toolName) === "write" ? "user-approval" : "not-applicable",
-                    }
-                  : {}),
-            }),
-          ] as const;
-        }),
-      );
-      const present = entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-      return present.length === 0 ? null : Object.fromEntries(present);
-    },
+    "session.started": (_event, ctx) => resolve(ctx),
+    "turn.started": (_event, ctx) => resolve(ctx),
   },
 });
