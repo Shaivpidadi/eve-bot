@@ -3,14 +3,15 @@ import { z } from "zod";
 
 import { guardSideEffect } from "../../../lib/run-guard";
 
-import { gate } from "../lib/gate";
-import { act } from "../lib/page";
+import { actChecked, gate } from "../lib/gate";
 import { LOCATORS, missHint } from "../lib/target";
 
 /**
  * One click, checked first. The element is read off the page and classified
  * (see `lib/consequence.ts`): a click that could send, spend, publish, delete
- * or commit is not made, and comes back as a proposal for `page_confirm`.
+ * or commit is not made, and comes back as a proposal for `page_confirm`. One
+ * that passes is made with the network guard on, and becomes a proposal too if
+ * it tries to send anything but a read (see `actChecked`).
  */
 export default defineTool({
   description:
@@ -30,7 +31,8 @@ export default defineTool({
     if (!checked.go) return { clicked: false as const, target, ...checked.result };
     const run = await guardSideEffect(ctx);
     if (!run.ok) return { clicked: false as const, target, reason: run.reason, error: run.message };
-    const result = await act(ctx, checked.action);
+    const result = await actChecked(ctx, checked);
+    if ("held" in result) return { clicked: false as const, target, ...result.held };
     if (!result.ok) {
       return {
         clicked: false as const,

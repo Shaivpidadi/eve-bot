@@ -1,5 +1,7 @@
 import type { ToolContext } from "eve/tools";
 
+import type { Stopped } from "../../../lib/computer/netguard";
+
 import { browser, refreshScreen, textOf } from "./browser";
 import { treeIndex, type TreeFacts } from "./consequence";
 import { sessionState } from "./session-state";
@@ -356,27 +358,37 @@ export interface Acted {
   readonly page: string | null;
   readonly shown: Look["shown"] | null;
   readonly note: string;
+  /** With `guard`: what the network guard stopped the action from sending. */
+  readonly stopped?: readonly Stopped[];
+  /** With `guard`: the action ran, but what it sent could not be accounted for. */
+  readonly unwatched?: string;
 }
+
+export type ActFailed = { readonly ok: false; readonly error: string; readonly detail: string; readonly unwatched?: string };
 
 /**
  * Runs one action and reports what it did to the page. The page comes back
  * only when it changed: an action that changed nothing says so, which is the
  * signal a Bot needs to stop retrying the same click.
  */
-export async function act(ctx: ToolContext, args: readonly string[]): Promise<Acted | { readonly ok: false; readonly error: string; readonly detail: string }> {
+export async function act(ctx: ToolContext, args: readonly string[], options: { readonly guard?: boolean } = {}): Promise<Acted | ActFailed> {
   const before = lastLook.get(ctx.session.id);
-  const result = await browser(ctx, args);
-  if (!result.ok) return { ok: false, error: result.error ?? "The action failed.", detail: result.output };
+  const result = await browser(ctx, args, options);
+  if (!result.ok) {
+    return { ok: false, error: result.error ?? "The action failed.", detail: result.output, ...(result.unwatched === undefined ? {} : { unwatched: result.unwatched }) };
+  }
+  const guard = { ...(result.stopped === undefined ? {} : { stopped: result.stopped }), ...(result.unwatched === undefined ? {} : { unwatched: result.unwatched }) };
   await refreshScreen(ctx);
   const after = await look(ctx);
   if (!isLook(after)) return { ok: false, error: after.error, detail: after.detail };
   if (before === undefined) {
-    return { ok: true, url: after.url, changed: "page", page: after.page, shown: after.shown, note: "Read the page to see where you are." };
+    return { ok: true, url: after.url, changed: "page", page: after.page, shown: after.shown, note: "Read the page to see where you are.", ...guard };
   }
   const change = compareTrees(before, after);
   if (change.kind === "none") {
     const stale = change.refsMoved;
     return {
+      ...guard,
       ok: true,
       url: after.url,
       changed: "none",
@@ -390,6 +402,7 @@ export async function act(ctx: ToolContext, args: readonly string[]): Promise<Ac
     };
   }
   return {
+    ...guard,
     ok: true,
     url: after.url,
     changed: change.kind,

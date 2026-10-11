@@ -20,6 +20,8 @@ interface FakeElement {
   readonly attrs?: { readonly testid?: string; readonly placeholder?: string; readonly label?: string };
   readonly onClick?: () => void;
   readonly onEnter?: () => void;
+  /** What the page's own script sends when the element is clicked, which no label or form shows. */
+  readonly sends?: readonly { readonly method: string; readonly url: string }[];
 }
 
 interface FakePage {
@@ -37,6 +39,10 @@ const fake = vi.hoisted(() => ({
   evals: [] as string[],
   /** Every command that acts on the page, in order. */
   acted: [] as string[][],
+  /** What left the browser: requests a click sent that no guard stopped. */
+  sent: [] as string[],
+  /** When set, the network guard cannot be armed, for this reason. */
+  unwatched: null as string | null,
 }));
 
 const button = (name: string, extra: Partial<DomFacts> = {}): DomFacts => ({
@@ -98,8 +104,19 @@ vi.mock("../agent/subagents/teammate/lib/browser", async (importOriginal) => {
       const { operator } = await import("../agent/lib/session");
       return bindSession({ sessionId: ctx.session.id, workspaceId: operator(ctx).workspaceId, botId, jobId, n: 1 });
     },
-    browser: async (_ctx: unknown, args: readonly string[]) => {
+    browser: async (_ctx: unknown, args: readonly string[], options: { guard?: boolean } = {}) => {
       const [command, ...rest] = args;
+      // The network guard, as netguard.ts behaves: reads go on, anything else is stopped and reported.
+      if (options.guard === true && fake.unwatched !== null) return { ...fail("unwatched"), unwatched: fake.unwatched };
+      const stopped: { method: string; url: string }[] = [];
+      if (command === "click") {
+        const ref = find(rest[0] ?? "");
+        for (const request of (ref === null ? undefined : fake.page.elements[ref]?.sends) ?? []) {
+          if (options.guard === true && request.method !== "GET") stopped.push(request);
+          else fake.sent.push(`${request.method} ${request.url}`);
+        }
+      }
+      const guarded = <T extends object>(result: T) => (options.guard === true ? { ...result, stopped } : result);
       switch (command) {
         case "snapshot":
           return envelope({ snapshot: fake.page.tree, refs: {} });
@@ -146,7 +163,7 @@ vi.mock("../agent/subagents/teammate/lib/browser", async (importOriginal) => {
           if (command === "press" && rest[0] === "Enter" && fake.focused !== null) {
             fake.page.elements[fake.focused]?.onEnter?.();
           }
-          return envelope({});
+          return guarded(envelope({}));
         }
       }
     },
@@ -214,6 +231,8 @@ async function setup(page: FakePage = mailApp(), options: { lapsed?: boolean } =
   fake.marked = null;
   fake.evals = [];
   fake.acted = [];
+  fake.sent = [];
+  fake.unwatched = null;
   const jobs = await import("../agent/lib/jobs");
   const tool = async (name: string) => (await import(`../agent/subagents/teammate/tools/${name}.ts`)).default as Tool;
   const job = await jobs.assignJob({ workspaceId: WORKSPACE, botId: "bot_1", requestedBy: "operator", title: "Reply to Ana", brief: "Draft a reply." });
@@ -385,6 +404,67 @@ function settingsApp(): FakePage {
     },
   };
 }
+
+describe("what a click sends", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+  });
+
+  /** A product page whose "Continue" places the order from script: no form, no telling words, no checkout address. */
+  function scriptedShop(): FakePage {
+    return {
+      url: "https://shop.example.com/catalog/item-42",
+      tree: `- heading "Item 42" [level=1, ref=e1]
+- button "Continue" [ref=e2]
+- button "Show details" [ref=e3]`,
+      elements: {
+        e1: { role: "heading", name: "Item 42", dom: null },
+        e2: { role: "button", name: "Continue", dom: button("Continue"), sends: [{ method: "POST", url: "https://shop.example.com/api/orders" }] },
+        e3: { role: "button", name: "Show details", dom: button("Show details"), sends: [{ method: "GET", url: "https://shop.example.com/api/cart" }] },
+      },
+    };
+  }
+
+  it("lets a script button that only reads through", async () => {
+    const { tools } = await setup(scriptedShop());
+    expect(await tools.click.execute({ target: "@e3" }, ctxFor("sess_A"))).toMatchObject({ clicked: true });
+    expect(fake.sent).toEqual(["GET https://shop.example.com/api/cart"]);
+  });
+
+  it("holds an innocuously named button whose script posts, and sends nothing until a person approves", async () => {
+    const { tools, approveAndRun } = await setup(scriptedShop());
+    const held = await tools.click.execute({ target: "@e2" }, ctxFor("sess_A"));
+    expect(held).toMatchObject({ clicked: false, needsApproval: true, verdict: "consequential" });
+    const proposal = held.proposal as { proposal: string; action: string };
+    expect(proposal.action).toMatch(/Click button "Continue".*it sent POST https:\/\/shop\.example\.com\/api\/orders, which the guard stopped/);
+    expect(String(held.note)).toMatch(/nothing was sent/);
+    expect(fake.sent).toEqual([]);
+
+    // Approved: page_confirm clicks again with nothing held back, once.
+    expect(await approveAndRun(proposal)).toMatchObject({ done: true });
+    expect(fake.sent).toEqual(["POST https://shop.example.com/api/orders"]);
+  });
+
+  it("asks rather than click when what the click sends cannot be watched", async () => {
+    const { tools } = await setup(scriptedShop());
+    fake.unwatched = "the guard did not start in time";
+    const held = await tools.click.execute({ target: "@e3" }, ctxFor("sess_A"));
+    expect(held).toMatchObject({ clicked: false, needsApproval: true });
+    expect((held.proposal as { action: string }).action).toMatch(/could not be watched \(the guard did not start in time\)/);
+    expect(clicks()).toEqual([]);
+    expect(fake.sent).toEqual([]);
+  });
+
+  it("holds the pilot at a scripted button the same way", async () => {
+    const { tools } = await setup(scriptedShop());
+    const { judge } = await import("../agent/lib/jev");
+    vi.mocked(judge).mockResolvedValue({ answers: { next: { type: "choice", choice: "a1" } }, confidence: { next: 0.95 }, inputTokens: 1 } as never);
+    const result = await tools.pilot.execute({ goal: "go on to the next step" }, ctxFor("sess_A"));
+    expect(result).toMatchObject({ stopped: "consequential", needsApproval: true });
+    expect(fake.sent).toEqual([]);
+  });
+});
 
 describe("semantic locators", () => {
   beforeEach(() => {

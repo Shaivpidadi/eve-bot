@@ -5,8 +5,7 @@ import { looseBoolean } from "../../../lib/tool-input";
 
 import { guardSideEffect } from "../../../lib/run-guard";
 
-import { gate } from "../lib/gate";
-import { act } from "../lib/page";
+import { actChecked, gate } from "../lib/gate";
 
 /**
  * Dropdowns and checkboxes, which clicking does not reliably set.
@@ -43,7 +42,8 @@ export default defineTool({
     if (!checkedGate.go) return { set: false as const, target, ...checkedGate.result };
     const run = await guardSideEffect(ctx);
     if (!run.ok) return { set: false as const, target, reason: run.reason, error: run.message };
-    const result = await act(ctx, checkedGate.action);
+    const result = await actChecked(ctx, checkedGate);
+    if ("held" in result) return { set: false as const, target, ...result.held };
     if (!result.ok) {
       return {
         set: false as const,

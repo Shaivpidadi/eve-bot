@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { NETGUARD_FILE, NETGUARD_JS } from "./netguard";
 import {
   RESERVED_PORTS,
   SHELL_GROUP,
@@ -112,6 +113,7 @@ export function computerRuntime(options: { chromeFlags?: string; aptMirror?: str
     { path: COMPUTER_SCRIPT, content: fill(BASH), mode: 0o755 },
     { path: `${COMPUTER_BIN}/bot_computer.py`, content: fill(PYTHON), mode: 0o644 },
     { path: `${COMPUTER_BIN}/bot-computer-cdp.mjs`, content: fill(CDP), mode: 0o644 },
+    { path: `${COMPUTER_BIN}/${NETGUARD_FILE}`, content: fill(NETGUARD_JS), mode: 0o644 },
     { path: `${COMPUTER_BIN}/bot_shell.py`, content: fill(SHELL_PY), mode: 0o644 },
     { path: `${COMPUTER_DESKTOP}/openbox.xml`, content: fill(OPENBOX), mode: 0o644 },
     { path: `${COMPUTER_DESKTOP}/tint2rc`, content: fill(TINT2), mode: 0o644 },

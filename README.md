@@ -276,9 +276,18 @@ navigation, and whole labels that only rearrange the page ("Apply filters",
 approval is bound to the exact page address (query and fragment included) and
 the element as it looked: its role, name, form target, its row and position
 among same-named elements, and the field's value for an Enter. If any of that
-changed, or the page renumbered the ref, it asks again. Residual risk: a
-consequential button with an innocuous label ("Continue", "Done") that runs
-page script without a form is not caught by words or structure. Use an egress
+changed, or the page renumbered the ref, it asks again. Words and structure
+cannot see a button labelled "Continue" or "Done" whose page script posts an
+order, so every click the gate lets through runs with a network guard on the
+Bot's tab: reads (GET, HEAD, OPTIONS) go on, and anything else the click sends
+(a POST, PUT, PATCH or DELETE, a JSON call, a form posted from script) is
+stopped inside the browser and turns the click into an approval request; once
+approved, the click is made again with nothing held back. The new page a link
+opens loads freely, and beacons and well-known analytics are dropped quietly
+rather than asked about. A click whose sending cannot be watched asks first.
+Not seen: requests a page's service worker makes on its own, WebSocket
+messages, a GET with side effects, and what a page sends more than a moment
+after the click (`BOT_BROWSER_GUARD_MS`, default 1200). Use an egress
 allow-list for anything sensitive.
 
 **Email.** Each send is recorded in an action ledger before it goes out, with

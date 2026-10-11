@@ -6,7 +6,7 @@ import { looseBoolean } from "../../../lib/tool-input";
 import { guardSideEffect } from "../../../lib/run-guard";
 
 import { browser } from "../lib/browser";
-import { gate, inspect, staleRef, staleResult } from "../lib/gate";
+import { actChecked, gate, inspect, staleRef, staleResult } from "../lib/gate";
 import { act } from "../lib/page";
 import { LOCATORS, missHint, targetArgs } from "../lib/target";
 
@@ -67,7 +67,8 @@ export default defineTool({
       const run = await guardSideEffect(ctx);
       if (!run.ok) return { filled: true as const, submitted: false as const, target, reason: run.reason, error: run.message };
       for (const step of checked.prepare) await browser(ctx, step);
-      const pressed = await act(ctx, checked.action);
+      const pressed = await actChecked(ctx, checked);
+      if ("held" in pressed) return { filled: true as const, submitted: false as const, target, ...pressed.held };
       if (!pressed.ok) return { filled: true as const, submitted: false as const, target, error: pressed.error, detail: pressed.detail };
       const { ok: _ok, ...seen } = pressed;
       return { filled: true as const, submitted: true as const, target, ...seen };

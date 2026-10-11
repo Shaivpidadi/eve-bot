@@ -5,6 +5,7 @@ import type { ToolContext } from "eve/tools";
 import { newId } from "../../../lib/ids";
 import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
+import type { Stopped } from "../../../lib/computer/netguard";
 import { deleteDoc, readDoc, updateDoc, writeDoc } from "../../../lib/store";
 
 import { browser, payload, textOf } from "./browser";
@@ -17,7 +18,7 @@ import {
   treeFacts,
   type TreeFacts,
 } from "./consequence";
-import { act, refsSeen } from "./page";
+import { act, type ActFailed, type Acted, refsSeen } from "./page";
 import type { Target } from "./target";
 
 /**
@@ -388,7 +389,18 @@ export interface GateRequest {
 }
 
 export type Gated =
-  | { readonly go: true; readonly selector: string; readonly action: string[]; readonly prepare: string[][] }
+  | {
+      readonly go: true;
+      readonly selector: string;
+      readonly action: string[];
+      readonly prepare: string[][];
+      /**
+       * Turns this action into a proposal after the fact, for `actChecked`: the
+       * network guard stopped what it sent, or could not watch it. Built from
+       * the page and element as the gate read them, before the action.
+       */
+      readonly escalate: (why: { readonly stopped: readonly Stopped[] } | { readonly unwatched: string }) => Promise<Record<string, unknown>>;
+    }
   | { readonly go: false; readonly result: Record<string, unknown> };
 
 const said = (facts: TreeFacts): string =>
@@ -476,19 +488,66 @@ export async function gate(ctx: ToolContext, request: GateRequest): Promise<Gate
   });
   const action = request.action(seen.selector);
   const prepare = request.prepare?.(seen.selector) ?? [];
-  if (classification.verdict === "safe") return { go: true, selector: seen.selector, action, prepare };
+  const selector = seen.selector;
+  if (classification.verdict === "safe") {
+    // Read before the action, so a proposal made after it names the field's value as it was.
+    const valueAtGate = request.kind === "submit" ? await fieldValue(ctx, selector) : undefined;
+    const escalate = async (why: { readonly stopped: readonly Stopped[] } | { readonly unwatched: string }) => {
+      const reasons =
+        "stopped" in why
+          ? why.stopped.slice(0, 3).map((sent) => `it sent ${sent.method} ${clip(sent.url, 160)}, which the guard stopped before it left the browser`)
+          : [`what it sends could not be watched (${why.unwatched})`];
+      const proposal = await propose(ctx, request, seen, selector, action, prepare, { verdict: "consequential", reasons }, valueAtGate);
+      return { ...proposalResult(proposal), note: "stopped" in why ? STOPPED_NOTE : UNWATCHED_NOTE };
+    };
+    return { go: true, selector, action, prepare, escalate };
+  }
 
+  const proposal = await propose(ctx, request, seen, selector, action, prepare, classification);
+  return { go: false, result: proposalResult(proposal) };
+}
+
+const STOPPED_NOTE =
+  "The click was made, but what it tried to send was stopped before it left the browser, so nothing was sent; the page may show an error for it. Words alone did not show it, so a person approves it first. If the brief calls for it, call page_confirm with proposal and action exactly as given here, and the click is made again with nothing held back; otherwise take another route.";
+const UNWATCHED_NOTE =
+  "Nothing was done: every click is watched for what it sends, and this one could not be. If the brief calls for it, call page_confirm with proposal and action exactly as given here; otherwise take another route.";
+
+/**
+ * Runs an action the gate let through, with the network guard armed. When the
+ * guard stopped what it sent, or could not watch it, the answer is a proposal
+ * instead (`held`), the same as for an action the gate held back up front.
+ */
+export async function actChecked(
+  ctx: ToolContext,
+  checked: Extract<Gated, { go: true }>,
+): Promise<Acted | ActFailed | { readonly ok: false; readonly held: Record<string, unknown> }> {
+  const result = await act(ctx, checked.action, { guard: true });
+  if (result.ok && result.stopped !== undefined && result.stopped.length > 0) return { ok: false, held: await checked.escalate({ stopped: result.stopped }) };
+  if (!result.ok && result.unwatched !== undefined) return { ok: false, held: await checked.escalate({ unwatched: result.unwatched }) };
+  return result;
+}
+
+async function propose(
+  ctx: ToolContext,
+  request: GateRequest,
+  seen: Inspected,
+  selector: string,
+  action: string[],
+  prepare: string[][],
+  classification: Pick<Classification, "verdict" | "reasons">,
+  valueAtGate?: string,
+): Promise<Proposal> {
   const { workspaceId } = operator(ctx);
   const now = Date.now();
   const valueHash =
-    request.kind === "submit" ? hashValue(await fieldValue(ctx, seen.selector)) : undefined;
+    request.kind === "submit" ? hashValue(valueAtGate ?? (await fieldValue(ctx, selector))) : undefined;
   const proposal: Proposal = {
     id: newId("act"),
     workspaceId,
     sessionId: ctx.session.id,
     kind: request.kind,
     url: seen.url,
-    selector: seen.selector,
+    selector,
     prepare,
     action,
     element: seen.element,
@@ -498,7 +557,7 @@ export async function gate(ctx: ToolContext, request: GateRequest): Promise<Gate
     description: describeProposal({
       kind: request.kind,
       url: seen.url,
-      selector: seen.selector,
+      selector,
       element: seen.element,
       ...(seen.located === undefined ? {} : { located: seen.located }),
       reasons: classification.reasons,
@@ -510,7 +569,7 @@ export async function gate(ctx: ToolContext, request: GateRequest): Promise<Gate
     expiresAt: new Date(now + PROPOSAL_TTL_MS).toISOString(),
   };
   await writeDoc(proposalKey(workspaceId, ctx.session.id, proposal.id), proposal);
-  return { go: false, result: proposalResult(proposal) };
+  return proposal;
 }
 
 /** What the model is handed for a proposal: enough to ask, and a plain statement that nothing happened. */

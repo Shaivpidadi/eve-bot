@@ -5,7 +5,7 @@ import { jevEnabled, judge } from "../../../lib/jev";
 import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
 
-import { gate } from "../lib/gate";
+import { actChecked, gate } from "../lib/gate";
 import { act, isLook, look } from "../lib/page";
 import {
   candidateActions,
@@ -102,6 +102,7 @@ export default defineTool({
 
       const pick = choice.pick as NonNullable<typeof choice.pick>;
       let args: string[];
+      let clicking: Extract<Awaited<ReturnType<typeof gate>>, { go: true }> | null = null;
       if (pick.action === "fill") {
         // Typing into a field, with no Enter, changes nothing outside the page.
         args = ["fill", pick.ref, type ?? ""];
@@ -116,6 +117,7 @@ export default defineTool({
           break;
         }
         args = checked.action;
+        clicking = checked;
       }
 
       const run = await guardSideEffect(ctx);
@@ -124,7 +126,13 @@ export default defineTool({
         held = { reason: run.reason, error: run.message };
         break;
       }
-      const result = await act(ctx, args);
+      const result = clicking === null ? await act(ctx, args) : await actChecked(ctx, clicking);
+      if ("held" in result) {
+        stop = "consequential";
+        held = result.held;
+        actions.push({ action: "stopped at", target: `${pick.role} "${pick.name}"`, changed: "held back" });
+        break;
+      }
       if (!result.ok) {
         // One failed action ends the run: retrying blind is how a half-submitted
         // form becomes two of whatever it was about to create.
