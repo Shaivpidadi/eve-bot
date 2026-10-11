@@ -2,7 +2,7 @@ import { embed, embedMany } from "ai";
 
 import { gatewayReachable } from "../jev";
 import { readDoc, updateDoc } from "../store";
-import { recordUsage } from "../usage";
+import { chargeUsage, reportedCost } from "../spend";
 import { type MemoryEntry, type MemorySlot, normalize } from "./store";
 
 /**
@@ -84,16 +84,21 @@ export function gatewayEmbedder(workspaceId: string, model: string = embeddingMo
     if (texts.length === 0) return [];
     const options = { model, providerOptions: { openai: { dimensions: DIMENSIONS } }, maxRetries: 1, abortSignal: AbortSignal.timeout(15_000) };
     const result = texts.length === 1 ? await embed({ ...options, value: texts[0]! }).then((one) => ({ embeddings: [one.embedding], usage: one.usage, providerMetadata: one.providerMetadata })) : await embedMany({ ...options, values: [...texts] });
-    const cost = (result.providerMetadata as { gateway?: { cost?: unknown } } | undefined)?.gateway?.cost;
-    void recordUsage(workspaceId, "memory", {
-      inputTokens: result.usage.tokens,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      cacheWriteTokens: 0,
-      costUsd: typeof cost === "string" || typeof cost === "number" ? Number(cost) || 0 : 0,
-      steps: 1,
-      models: { [model]: 1 },
-    }).catch(() => undefined);
+    const cost = reportedCost(result.providerMetadata);
+    void chargeUsage(
+      workspaceId,
+      "memory",
+      {
+        inputTokens: result.usage.tokens,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: Math.max(0, cost ?? 0),
+        steps: 1,
+        models: { [model]: 1 },
+      },
+      { costReported: cost !== null },
+    ).catch(() => undefined);
     return result.embeddings;
   };
 }

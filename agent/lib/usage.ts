@@ -42,6 +42,16 @@ export function usageOfStep(data: unknown, modelId: string | null): Usage {
   };
 }
 
+/**
+ * Whether a `step.completed` event's usage carries a cost. eve copies it from
+ * the provider (AI Gateway, or `pricing.ts` on a custom endpoint); a step with
+ * none is unpriced, which the budget counts as unknown rather than as free.
+ */
+export function stepCostReported(data: unknown): boolean {
+  const cost = (data as { usage?: { costUsd?: unknown } } | null)?.usage?.costUsd;
+  return typeof cost === "number" && Number.isFinite(cost);
+}
+
 export function addUsage(left: Usage | undefined, right: Usage): Usage {
   // Records written before cache writes were kept read as zero there.
   const base = { ...NO_USAGE, ...left };

@@ -252,3 +252,88 @@ describe("budget admission on a claimed job", () => {
     expect((await readBudget(WS)).reservations.lease_dead?.state).toBe("released");
   });
 });
+
+describe("model spend on the budget", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+    vi.stubEnv("BOT_BUDGET_MONTHLY_USD", "1");
+  });
+
+  const ctxFor = (sessionId: string) =>
+    ({
+      session: {
+        id: sessionId,
+        auth: {
+          current: {
+            principalId: "runtime",
+            principalType: "runtime",
+            authenticator: "test",
+            attributes: { workspaceId: WS, room: "desk" },
+          },
+          initiator: null,
+        },
+        turn: { id: "t", sequence: 1 },
+      },
+      agent: { name: "teammate" },
+      channel: {},
+    }) as never;
+
+  const step = (id: string, costUsd?: number) =>
+    ({ type: "step.completed", meta: { id }, data: { usage: { inputTokens: 1000, outputTokens: 100, ...(costUsd === undefined ? {} : { costUsd }) } } }) as never;
+
+  type Hook = { events: Record<string, (event: never, ctx: never) => Promise<void> | void> };
+
+  /** A quick job claimed and admitted under `lease_A`, with teammate session `sess_A` bound to it. */
+  async function admittedRun() {
+    const jobs = await import("../agent/lib/jobs");
+    const budget = await import("../agent/lib/budget");
+    const job = await jobs.assignJob({ workspaceId: WS, botId: "bot_1", requestedBy: "op", title: "Watch", brief: "Watch it.", effort: "quick" });
+    const claimed = await jobs.claimJob(WS, job.id, { token: "lease_A", forMs: 20 * 60_000, status: "running", kind: "run", countAttempt: true });
+    if (!claimed.ok) throw new Error(claimed.reason);
+    expect(await budget.admitClaimedRun(WS, claimed.job, "lease_A")).toBeNull();
+    expect((await jobs.bindRun(WS, job.id, "lease_A", "sess_A")).ok).toBe(true);
+    const hook = (await import("../agent/subagents/teammate/hooks/usage")).default as unknown as Hook;
+    return { jobs, budget, job, hook };
+  }
+
+  it("charges a Bot's steps to its run's reservation, once per event", async () => {
+    const { budget, hook } = await admittedRun();
+    await hook.events["step.completed"]!(step("evt_1", 0.1), ctxFor("sess_A"));
+    await hook.events["step.completed"]!(step("evt_1", 0.1), ctxFor("sess_A"));
+    const doc = await budget.readBudget(WS);
+    expect(doc.reservations.lease_A).toMatchObject({ spentUsd: 0.1, state: "held" });
+    expect(doc.byCategory.job?.spentUsd).toBe(0.1);
+  });
+
+  it("flags a Bot's unpriced step as unknown cost", async () => {
+    const { budget, hook } = await admittedRun();
+    await hook.events["step.completed"]!(step("evt_1"), ctxFor("sess_A"));
+    const doc = await budget.readBudget(WS);
+    expect(doc.reservations.lease_A?.unknownCostCount).toBe(1);
+    expect(doc.unknownCostCount).toBe(1);
+  });
+
+  it("refuses the next model step of a run that overspent with no headroom", async () => {
+    const { budget, hook } = await admittedRun();
+    await hook.events["step.started"]!({ type: "step.started", data: { modelId: "m" } } as never, ctxFor("sess_A"));
+    await hook.events["step.completed"]!(step("evt_1", 1.2), ctxFor("sess_A"));
+    expect(await budget.runHalted(WS, "lease_A")).toBe(true);
+    expect(() => hook.events["step.started"]!({ type: "step.started", data: { modelId: "m" } } as never, ctxFor("sess_A"))).toThrow(
+      /workspace budget/,
+    );
+  });
+
+  it("charges auxiliary calls to the workspace, flagging unpriced ones", async () => {
+    const { chargeUsage, reportedCost } = await import("../agent/lib/spend");
+    const { readBudget } = await import("../agent/lib/budget");
+    const { readLedger } = await import("../agent/lib/usage");
+    const usage = { inputTokens: 10, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.02, steps: 1, models: { judge: 1 } };
+    await chargeUsage(WS, "jev", usage, { costReported: reportedCost({ gateway: { cost: "0.02" } }) !== null });
+    await chargeUsage(WS, "memory", { ...usage, costUsd: 0 }, { costReported: reportedCost({}) !== null });
+    const doc = await readBudget(WS);
+    expect(doc.byCategory.jev).toEqual({ spentUsd: 0.02, unknownCostCount: 0 });
+    expect(doc.byCategory.memory).toEqual({ spentUsd: 0, unknownCostCount: 1 });
+    expect((await readLedger(WS)).jev?.costUsd).toBe(0.02);
+  });
+});
