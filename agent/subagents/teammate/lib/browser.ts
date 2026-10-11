@@ -323,6 +323,26 @@ export async function refreshScreen(ctx: ToolContext): Promise<void> {
   }
 }
 
+/**
+ * The `data` of agent-browser's JSON envelope, `{ success, data, error }`.
+ *
+ * `runAgentBrowser` passes `--json` to every command, so `output` is that
+ * envelope rather than the plain text the CLI prints by hand. Null when the
+ * command printed something else, so callers fall back to `output`.
+ */
+export function payload(result: Pick<BrowserResult, "data">): Record<string, unknown> | null {
+  const envelope = result.data as { data?: unknown } | null;
+  const data = envelope?.data;
+  return data !== null && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : null;
+}
+
+/** One string field of the envelope's data, or the plain output when there is no envelope. */
+export function textOf(result: BrowserResult, field: string): string {
+  const value = payload(result)?.[field];
+  if (typeof value === "string") return value;
+  return payload(result) === null ? result.output : "";
+}
+
 function shape(result: { json: unknown; stdout: string; stderr: string }): BrowserResult {
   return {
     ok: true,

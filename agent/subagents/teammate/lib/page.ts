@@ -1,6 +1,6 @@
 import type { ToolContext } from "eve/tools";
 
-import { browser, refreshScreen } from "./browser";
+import { browser, refreshScreen, textOf } from "./browser";
 import { sessionState } from "./session-state";
 
 /**
@@ -291,17 +291,19 @@ export async function look(ctx: ToolContext, options: { readonly full?: boolean 
   if (settle > 0) await browser(ctx, ["wait", String(settle)]);
   const snapshot = await browser(ctx, ["snapshot", "-c"]);
   if (!snapshot.ok) return { error: snapshot.error ?? "The page could not be read.", detail: snapshot.output };
+  // The tree itself, not agent-browser's JSON envelope around it (see `payload`).
+  const tree = textOf(snapshot, "snapshot");
   const at = await browser(ctx, ["get", "url"]);
-  const url = at.ok ? at.output.trim().slice(0, 500) : "";
-  const trimmed = options.full === true ? null : trimTree(snapshot.output, pageBudget());
+  const url = at.ok ? textOf(at, "url").trim().slice(0, 500) : "";
+  const trimmed = options.full === true ? null : trimTree(tree, pageBudget());
   const result: Look = {
     url,
-    page: trimmed === null ? snapshot.output : trimmed.text,
+    page: trimmed === null ? tree : trimmed.text,
     shown:
       trimmed === null
-        ? { lines: snapshot.output.split("\n").length, of: snapshot.output.split("\n").length, interactive: 0, trimmed: false }
+        ? { lines: tree.split("\n").length, of: tree.split("\n").length, interactive: 0, trimmed: false }
         : { lines: trimmed.shown, of: trimmed.of, interactive: trimmed.interactive, trimmed: trimmed.level > 0 },
-    tree: snapshot.output,
+    tree,
   };
   lastLook.set(ctx.session.id, result);
   return result;

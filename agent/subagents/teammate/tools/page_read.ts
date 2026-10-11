@@ -2,6 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { browser, refreshScreen } from "../lib/browser";
+import { scriptUrl } from "../lib/consequence";
 import { forgetLook } from "../lib/page";
 
 /**
@@ -23,6 +24,9 @@ export default defineTool({
   }),
   label: { start: ({ url }) => `Read ${url ?? "current page"}` },
   async execute({ url, filter }, ctx) {
+    if (url !== undefined && scriptUrl(url)) {
+      return { text: null, source: url, error: "Script and data addresses are not opened: they act on the page instead of opening one." };
+    }
     if (url !== undefined) {
       const opened = await browser(ctx, ["open", url]);
       if (!opened.ok) return { text: null, source: url, error: opened.error, detail: opened.output };
