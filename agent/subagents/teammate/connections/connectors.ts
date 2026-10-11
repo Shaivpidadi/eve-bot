@@ -2,6 +2,7 @@ import { defineDynamic } from "eve/connections";
 
 import { connectorConnection } from "../../../lib/connector-connection";
 import { listConnectors } from "../../../lib/connectors";
+import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
 
 /**
@@ -18,11 +19,14 @@ import { operator } from "../../../lib/session";
  * tool's first use in a job. Reads under a "writes" gate flow without a
  * prompt. The gate, the policy, and the tool switches are read live on every
  * call, and the set is resolved again each turn (see `connector-connection.ts`).
+ * Before any of that, the Bot must still be its job's current run: once the
+ * job is cancelled or a newer run takes it over, every connector call is
+ * refused, the same as its other tools (see `guardSideEffect`).
  */
 async function resolve(ctx: Parameters<typeof operator>[0]) {
   const { workspaceId } = operator(ctx);
   const entries = (await listConnectors(workspaceId))
-    .map((connector) => [connector.name, connectorConnection(connector, "bot")] as const)
+    .map((connector) => [connector.name, connectorConnection(connector, "bot", { checkCaller: guardSideEffect })] as const)
     .filter((entry): entry is readonly [string, NonNullable<(typeof entry)[1]>] => entry[1] !== null);
   return entries.length === 0 ? null : Object.fromEntries(entries);
 }
