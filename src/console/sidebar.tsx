@@ -9,7 +9,7 @@ import { Icon, type IconName } from "./icons";
 import { PromptDialog, type Prompt } from "./prompt-dialog";
 import { roomStore } from "./room-store";
 import { useTheme } from "./theme";
-import type { Hover, Member, Profile } from "./types";
+import type { Board, Hover, Member, Profile } from "./types";
 
 /** Where a row's menu is anchored, and for whom. */
 interface Menu {
@@ -52,6 +52,7 @@ export function Sidebar({
   onUnread,
   onChanged,
   onEditProfile,
+  health,
 }: {
   members: readonly Member[];
   selectedId: string;
@@ -71,6 +72,8 @@ export function Sidebar({
   onChanged: () => Promise<void>;
   /** Open this Bot's profile for editing in the details panel. */
   onEditProfile: (id: string) => void;
+  /** Overdue work and dead runs; absent from a server that does not report them. */
+  health?: Board["health"];
 }) {
   const [editingName, setEditingName] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -230,6 +233,7 @@ export function Sidebar({
           <Icon name="chart" size={15} />
           Usage
         </button>
+        <HealthNote health={health} members={members} />
         <UpdateNote />
         <div className="me">
           {profile?.avatarUrl ? (
@@ -540,6 +544,28 @@ function RowMenu({
       {bot ? <hr /> : null}
       {bot ? item("eyeoff", member.hidden ? "Show in sidebar" : "Hide from sidebar", () => onHide(member)) : null}
       {bot ? item("trash", "Delete", () => onDelete(member), { danger: true }) : null}
+    </div>
+  );
+}
+
+/**
+ * A line in the footer when work that should be moving is not: a job past its
+ * start time with nothing holding it, or a run whose worker stopped. The
+ * watchdog picks both up on its next pass; this says so before then.
+ */
+function HealthNote({ health, members }: { health: Board["health"] | undefined; members: readonly Member[] }) {
+  if (health === undefined) return null;
+  const count = health.overdue.length + health.staleRuns.length;
+  if (count === 0) return null;
+  const name = (botId: string) => members.find((member) => member.id === botId)?.name ?? botId;
+  const lines = [
+    ...health.overdue.map((job) => `${name(job.botId)}: "${job.title}" is ${job.lateMinutes} min overdue`),
+    ...health.staleRuns.map((job) => `${name(job.botId)}: "${job.title}" stopped mid-run`),
+  ];
+  return (
+    <div className="side-item side-health" title={`${lines.join("\n")}\nThe watchdog retries these on its next pass.`}>
+      <Icon name="alert" size={15} />
+      {count === 1 ? "1 job is stuck" : `${count} jobs are stuck`}
     </div>
   );
 }

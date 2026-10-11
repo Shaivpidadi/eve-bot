@@ -202,6 +202,7 @@ export function Console() {
           user={board.user}
           profile={board.profile}
           workspaceId={board.workspaceId}
+          health={board.health}
           onSelect={select}
           onHire={() => setHiring(true)}
           onConnectors={() => openPage("connectors")}
