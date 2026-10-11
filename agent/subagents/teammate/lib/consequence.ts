@@ -44,6 +44,15 @@ export interface TreeFacts {
   readonly inForm: boolean;
   /** Under a `search` landmark in the tree. */
   readonly inSearch: boolean;
+  /**
+   * The nearest named element it sits under, `row "Invoice 1042"`, passing
+   * over wrappers that only repeat its own name (a cell around a button): what
+   * tells one row's Delete from the next row's. Absent when there is none.
+   */
+  readonly context?: string;
+  /** Which of the elements with this role and name it is, from 1 in tree order, and how many there are. */
+  readonly nth?: number;
+  readonly of?: number;
 }
 
 /** The element as the DOM describes it, read by focusing it (see `gate.ts`). */
@@ -279,30 +288,56 @@ export function classifyAction(facts: ActionFacts): Classification {
 const TREE_LINE = /^(\s*)-\s+([A-Za-z]+)(?:\s+"((?:[^"\\]|\\.)*)")?(.*)$/;
 
 /**
+ * Every ref in an accessibility tree, with what the tree says about its
+ * element: role, name, the form and search landmarks it sits under, and the
+ * nearest named element above it. Keyed `@eN`.
+ */
+export function treeIndex(tree: string): Map<string, TreeFacts> {
+  const found: { ref: string; facts: TreeFacts }[] = [];
+  const ancestors: { depth: number; role: string; name: string }[] = [];
+  const plain = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
+  for (const raw of tree.split("\n")) {
+    const match = TREE_LINE.exec(raw);
+    if (match === null) continue;
+    const [, indent = "", role = "", rawName, rest = ""] = match;
+    const depth = indent.length;
+    while (ancestors.length > 0 && ancestors[ancestors.length - 1]!.depth >= depth) ancestors.pop();
+    const name = (rawName ?? "").replace(/\\(.)/g, "$1").trim();
+    const ref = /(?:^|[\[,\s])ref=(e\d+)(?=[\],\s]|$)/.exec(rest)?.[1];
+    if (ref !== undefined) {
+      const named = [...ancestors].reverse().find((entry) => entry.name !== "" && plain(entry.name) !== plain(name));
+      found.push({
+        ref: `@${ref}`,
+        facts: {
+          role,
+          name,
+          inForm: ancestors.some((entry) => entry.role === "form"),
+          inSearch: ancestors.some((entry) => entry.role === "search"),
+          ...(named === undefined ? {} : { context: `${named.role} "${named.name.slice(0, 200)}"` }),
+        },
+      });
+    }
+    ancestors.push({ depth, role, name });
+  }
+  const key = (facts: TreeFacts) => `${facts.role}\u0000${plain(facts.name)}`;
+  const totals = new Map<string, number>();
+  for (const { facts } of found) totals.set(key(facts), (totals.get(key(facts)) ?? 0) + 1);
+  const counted = new Map<string, number>();
+  const index = new Map<string, TreeFacts>();
+  for (const { ref, facts } of found) {
+    const nth = (counted.get(key(facts)) ?? 0) + 1;
+    counted.set(key(facts), nth);
+    if (!index.has(ref)) index.set(ref, { ...facts, nth, of: totals.get(key(facts)) ?? nth });
+  }
+  return index;
+}
+
+/**
  * The element `ref` names in an accessibility tree, with the form and search
  * landmarks it sits under. Null when the tree has no such ref.
  */
 export function treeFacts(tree: string, ref: string): TreeFacts | null {
-  const id = ref.replace(/^@/, "");
-  const marker = `ref=${id}`;
-  const ancestors: { depth: number; role: string }[] = [];
-  for (const raw of tree.split("\n")) {
-    const match = TREE_LINE.exec(raw);
-    if (match === null) continue;
-    const [, indent = "", role = "", name, rest = ""] = match;
-    const depth = indent.length;
-    while (ancestors.length > 0 && ancestors[ancestors.length - 1]!.depth >= depth) ancestors.pop();
-    if (new RegExp(`[\\[,\\s]${marker}[\\],\\s]`).test(rest)) {
-      return {
-        role,
-        name: (name ?? "").replace(/\\(.)/g, "$1").trim(),
-        inForm: ancestors.some((entry) => entry.role === "form"),
-        inSearch: ancestors.some((entry) => entry.role === "search"),
-      };
-    }
-    ancestors.push({ depth, role });
-  }
-  return null;
+  return treeIndex(tree).get(`@${ref.replace(/^@/, "")}`) ?? null;
 }
 
 /** Case and runs of whitespace do not distinguish two labels a person would read as the same. */

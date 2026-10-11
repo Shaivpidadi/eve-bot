@@ -9,6 +9,7 @@ import {
   scriptUrl,
   treeFacts,
   type TreeFacts,
+  treeIndex,
 } from "../agent/subagents/teammate/lib/consequence";
 
 const tree = (role: string, name: string, extra: Partial<TreeFacts> = {}): TreeFacts => ({ role, name, inForm: false, inSearch: false, ...extra });
@@ -154,15 +155,38 @@ describe("treeFacts", () => {
 - button "Send feedback" [ref=e30]`;
 
   it("finds the element, its name, and the form or search it sits in", () => {
-    expect(treeFacts(TREE, "@e3")).toEqual({ role: "button", name: "Send", inForm: true, inSearch: false });
-    expect(treeFacts(TREE, "e4")).toEqual({ role: "searchbox", name: "Search mail", inForm: false, inSearch: true });
-    expect(treeFacts(TREE, "@e30")).toEqual({ role: "button", name: "Send feedback", inForm: false, inSearch: false });
+    expect(treeFacts(TREE, "@e3")).toEqual({ role: "button", name: "Send", inForm: true, inSearch: false, nth: 1, of: 1 });
+    expect(treeFacts(TREE, "e4")).toEqual({ role: "searchbox", name: "Search mail", inForm: false, inSearch: true, nth: 1, of: 1 });
+    expect(treeFacts(TREE, "@e30")).toEqual({ role: "button", name: "Send feedback", inForm: false, inSearch: false, nth: 1, of: 1 });
     expect(treeFacts(TREE, "@e1")?.role).toBe("heading");
   });
 
   it("does not confuse e3 with e30, and knows a missing ref", () => {
     expect(treeFacts(TREE, "@e3")?.name).toBe("Send");
     expect(treeFacts(TREE, "@e99")).toBeNull();
+  });
+});
+
+describe("treeIndex", () => {
+  // As agent-browser prints a table: refs are not in document order, and a cell repeats its button's name.
+  const TABLE = `- LayoutTable
+  - LayoutTableRow "Invoice A"
+    - LayoutTableCell "Invoice A"
+    - LayoutTableCell "Delete"
+      - button "Delete" [ref=e4]
+  - LayoutTableRow "Invoice B"
+    - LayoutTableCell "Invoice B"
+    - LayoutTableCell "Delete"
+      - button "Delete" [ref=e5]
+- textbox "Notes" [ref=e1]`;
+
+  it("tells one row's Delete from the next by the row, and by which one it is", () => {
+    const index = treeIndex(TABLE);
+    expect(index.get("@e4")).toMatchObject({ role: "button", name: "Delete", context: 'LayoutTableRow "Invoice A"', nth: 1, of: 2 });
+    expect(index.get("@e5")).toMatchObject({ role: "button", name: "Delete", context: 'LayoutTableRow "Invoice B"', nth: 2, of: 2 });
+    expect(index.get("@e1")).toMatchObject({ role: "textbox", name: "Notes", nth: 1, of: 1 });
+    expect(index.get("@e1")?.context).toBeUndefined();
+    expect([...index.keys()]).toEqual(["@e4", "@e5", "@e1"]);
   });
 });
 

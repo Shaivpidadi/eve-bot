@@ -1,6 +1,7 @@
 import type { ToolContext } from "eve/tools";
 
 import { browser, refreshScreen, textOf } from "./browser";
+import { treeIndex, type TreeFacts } from "./consequence";
 import { sessionState } from "./session-state";
 
 /**
@@ -281,6 +282,24 @@ export interface Look {
 const lastLook = sessionState<Look>();
 
 /**
+ * What each ref named in the last tree this session handed the Bot.
+ *
+ * agent-browser numbers refs by position in each snapshot, so a page that
+ * inserts or removes an element above a control renumbers it: the `@e6` the Bot
+ * read as Send can be Save changes in the next snapshot. The gate takes a fresh
+ * snapshot before acting and checks the Bot's ref against this, so the element
+ * classified and acted on is the one the Bot meant (see `gate.ts`).
+ *
+ * Kept apart from `lastLook`, which is dropped when the page moves without a
+ * read: these are still the refs the Bot holds then, and acting on one of them
+ * must still be checked against what it meant.
+ */
+const seenRefs = sessionState<ReadonlyMap<string, TreeFacts>>();
+
+/** What each ref meant in the last tree the Bot was shown; undefined when this process has not shown it one. */
+export const refsSeen = (ctx: ToolContext): ReadonlyMap<string, TreeFacts> | undefined => seenRefs.get(ctx.session.id);
+
+/**
  * Reads the page after it has settled: the load event, then a moment for the
  * app to re-render. `full` asks for agent-browser's whole tree instead of the
  * trimmed one.
@@ -306,6 +325,7 @@ export async function look(ctx: ToolContext, options: { readonly full?: boolean 
     tree,
   };
   lastLook.set(ctx.session.id, result);
+  seenRefs.set(ctx.session.id, treeIndex(tree));
   return result;
 }
 

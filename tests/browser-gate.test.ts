@@ -228,6 +228,7 @@ async function setup(page: FakePage = mailApp(), options: { lapsed?: boolean } =
     pilot: await tool("page_pilot"),
     confirm: await tool("page_confirm"),
     browse: await tool("browse"),
+    snapshot: await tool("page_snapshot"),
   };
   /** Runs page_confirm as eve would: the approval policy first, then execute only once a person approved. */
   const approveAndRun = async (proposal: { proposal: string; action: string }, session = "sess_A") => {
@@ -572,6 +573,117 @@ describe("approval bound to the action", () => {
     expect((await jobs.cancelJob(WORKSPACE, job.id)).ok).toBe(true);
     expect(await approveAndRun(proposal)).toMatchObject({ done: false, reason: "cancelled" });
     expect(clicks()).toEqual([]);
+  });
+});
+
+/**
+ * A list of invoices, each row with its own Delete, numbered the way
+ * agent-browser numbers refs: by position in this snapshot, so a row added at
+ * the top renumbers every Delete under it. `named` gives each row its name in
+ * the tree; without it, rows are told apart only by which one they are.
+ */
+function invoices(rows: readonly string[], options: { named?: boolean; deleted?: string[] } = {}): FakePage {
+  const lines = ['- link "Inbox" [ref=e1]', "- table"];
+  const elements: Record<string, FakeElement> = {
+    e1: { role: "link", name: "Inbox", dom: { ...button("Inbox"), tag: "A", type: "", href: "/inbox" } },
+  };
+  rows.forEach((row, i) => {
+    const ref = `e${i + 2}`;
+    lines.push(options.named === false ? "  - row" : `  - row "${row}"`, `    - cell "${row}"`, `    - button "Delete" [ref=${ref}]`);
+    elements[ref] = { role: "button", name: "Delete", dom: button("Delete"), onClick: () => options.deleted?.push(row) };
+  });
+  return { url: "https://billing.example.com/invoices", tree: lines.join("\n"), elements };
+}
+
+describe("refs the page renumbered", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+  });
+
+  it("refuses a ref that now names another control than the one the Bot read", async () => {
+    const page = mailApp();
+    const { tools } = await setup(page);
+    await tools.snapshot.execute({}, ctxFor("sess_A"));
+    // The app re-renders with a banner on top, and every ref moves down one: @e5 was Inbox, and is now Send.
+    fake.page = {
+      ...page,
+      tree: `- button "Undo send" [ref=e1]
+- heading "New message" [level=1, ref=e2]
+- form
+  - textbox "To" [ref=e3]
+  - textbox "Body" [ref=e4]
+  - button "Send" [ref=e5]
+- link "Inbox" [ref=e6]`,
+      elements: {
+        e1: { role: "button", name: "Undo send", dom: button("Undo send") },
+        e2: page.elements.e1!,
+        e3: page.elements.e2!,
+        e4: page.elements.e3!,
+        e5: page.elements.e4!,
+        e6: page.elements.e5!,
+      },
+    };
+    const result = await tools.click.execute({ target: "@e5" }, ctxFor("sess_A"));
+    expect(result).toMatchObject({ clicked: false, needsApproval: false });
+    expect(String(result.error)).toMatch(/@e5 is now button "Send".*not the link "Inbox" you read/);
+    expect(String(result.hint)).toMatch(/page_snapshot/);
+    expect(clicks()).toEqual([]);
+
+    // Read again, and the ref the Bot now holds is the one it means.
+    await tools.snapshot.execute({}, ctxFor("sess_A"));
+    expect(await tools.click.execute({ target: "@e6" }, ctxFor("sess_A"))).toMatchObject({ clicked: true });
+    expect(clicks()).toEqual([["click", "@e6"]]);
+  });
+
+  it("tells one row's Delete from another's, by the row or by which one it is", async () => {
+    for (const named of [true, false]) {
+      const { tools } = await setup(invoices(["Invoice A", "Invoice B"], { named }));
+      await tools.snapshot.execute({}, ctxFor("sess_A"));
+      // @e3 is Invoice B's Delete. A new invoice lands on top, and @e3 becomes Invoice A's.
+      fake.page = invoices(["Invoice Z", "Invoice A", "Invoice B"], { named });
+      const result = await tools.click.execute({ target: "@e3" }, ctxFor("sess_A"));
+      expect(result, `named rows: ${named}`).toMatchObject({ clicked: false, needsApproval: false });
+      expect(String(result.error)).toMatch(named ? /in row "Invoice A".*not the button "Delete" in row "Invoice B"/ : /2 of 3 like it.*2 of 2 like it/);
+      expect(clicks()).toEqual([]);
+    }
+  });
+
+  it("refuses an approved click when another row's control took the ref", async () => {
+    const deleted: string[] = [];
+    const { tools, approveAndRun } = await setup(invoices(["Invoice A", "Invoice B"], { deleted }));
+    await tools.snapshot.execute({}, ctxFor("sess_A"));
+    const proposed = await tools.click.execute({ target: "@e3" }, ctxFor("sess_A"));
+    const proposal = proposed.proposal as { proposal: string; action: string };
+    expect(proposal.action).toMatch(/^Click button "Delete" on billing\.example\.com\/invoices/);
+
+    // While the person read the request, a new invoice arrived on top.
+    fake.page = invoices(["Invoice Z", "Invoice A", "Invoice B"], { deleted });
+    const result = await approveAndRun(proposal);
+    expect(result).toMatchObject({ done: false, reason: "changed" });
+    expect((result.changed as string[]).join(" ")).toMatch(/was in row "Invoice B" and is now in row "Invoice A"/);
+    expect(deleted).toEqual([]);
+    expect(clicks()).toEqual([]);
+  });
+
+  it("does not type into, or press Enter in, a field whose ref moved", async () => {
+    const page = mailApp();
+    const { tools } = await setup(page);
+    await tools.snapshot.execute({}, ctxFor("sess_A"));
+    // @e3 was Body; after a re-render it is To.
+    fake.page = { ...page, tree: page.tree.replace('textbox "To" [ref=e2]', 'textbox "Cc" [ref=e2]').replace('textbox "Body" [ref=e3]', 'textbox "To" [ref=e3]') };
+    const result = await tools.fill.execute({ target: "@e3", value: "Thanks, Ana!", submit: true }, ctxFor("sess_A"));
+    expect(result).toMatchObject({ filled: false });
+    expect(String(result.error)).toMatch(/@e3 is now textbox "To"/);
+    expect(fake.page.elements.e3?.value).toBeUndefined();
+    expect(clicks()).toEqual([]);
+  });
+
+  it("lets a ref through when the page re-rendered without moving it", async () => {
+    const { tools } = await setup();
+    await tools.snapshot.execute({}, ctxFor("sess_A"));
+    fake.page = { ...fake.page, tree: `${fake.page.tree}\n- StaticText "Draft saved"` };
+    expect(await tools.click.execute({ target: "@e5" }, ctxFor("sess_A"))).toMatchObject({ clicked: true });
   });
 });
 
