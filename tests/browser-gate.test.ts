@@ -396,6 +396,37 @@ describe("approval bound to the action", () => {
     expect(clicks()).toEqual([]);
   });
 
+  it("binds an approval to the record in the fragment, not just the path", async () => {
+    const page = mailApp();
+    page.url = "https://mail.google.com/mail/u/0/#inbox/A";
+    page.tree = page.tree.replace('button "Send"', 'button "Delete"');
+    page.elements.e4 = { ...page.elements.e4!, name: "Delete", dom: button("Delete") };
+    const { tools, approveAndRun } = await setup(page);
+    const proposed = await tools.click.execute({ target: "@e4" }, ctxFor("sess_A"));
+    const proposal = proposed.proposal as { proposal: string; action: string };
+    // The person sees which message the delete is for.
+    expect(proposal.action).toMatch(/^Click button "Delete" on mail\.google\.com\/mail\/u\/0\/#inbox\/A/);
+    expect(proposed.page).toBe("https://mail.google.com/mail/u/0/#inbox/A");
+
+    // The Bot moved to another message on the same path before the approval landed.
+    fake.page.url = "https://mail.google.com/mail/u/0/#inbox/B";
+    const result = await approveAndRun(proposal);
+    expect(result).toMatchObject({ done: false, reason: "changed" });
+    expect((result.changed as string[]).join(" ")).toMatch(/#inbox\/B/);
+    expect(clicks()).toEqual([]);
+  });
+
+  it("treats another query string as another page", async () => {
+    const page = mailApp();
+    page.url = "https://admin.example.com/users?id=41";
+    const { tools, approveAndRun } = await setup(page);
+    const proposal = (await tools.click.execute({ target: "@e4" }, ctxFor("sess_A"))).proposal as { proposal: string; action: string };
+    expect(proposal.action).toMatch(/on admin\.example\.com\/users\?id=41/);
+    fake.page.url = "https://admin.example.com/users?id=42";
+    expect(await approveAndRun(proposal)).toMatchObject({ done: false, reason: "changed" });
+    expect(clicks()).toEqual([]);
+  });
+
   it("refuses an approved Enter when the field's text changed", async () => {
     const { tools, approveAndRun } = await setup();
     const proposal = (await tools.fill.execute({ target: "@e3", value: "Thanks, Ana!", submit: true }, ctxFor("sess_A"))).proposal as {
@@ -431,5 +462,27 @@ describe("approval bound to the action", () => {
     expect((await jobs.cancelJob(WORKSPACE, job.id)).ok).toBe(true);
     expect(await approveAndRun(proposal)).toMatchObject({ done: false, reason: "cancelled" });
     expect(clicks()).toEqual([]);
+  });
+});
+
+describe("the address an approval holds for", () => {
+  it("compares the whole address, query and fragment included", async () => {
+    const { samePage } = await import("../agent/subagents/teammate/lib/gate");
+    expect(samePage("https://mail.google.com/mail/u/0/#inbox/A", "https://mail.google.com/mail/u/0/#inbox/A")).toBe(true);
+    expect(samePage("https://mail.google.com/mail/u/0/#inbox/A", "https://mail.google.com/mail/u/0/#inbox/B")).toBe(false);
+    expect(samePage("https://a.example.com/x?id=1", "https://a.example.com/x?id=2")).toBe(false);
+    expect(samePage("https://a.example.com/x?id=1", "https://a.example.com/x")).toBe(false);
+    // Written differently, the same address.
+    expect(samePage("HTTPS://A.example.com:443/x", "https://a.example.com/x")).toBe(true);
+    expect(samePage("", "")).toBe(false);
+  });
+
+  it("shows the query and fragment, shortened from the middle so the id at the end stays", async () => {
+    const { address } = await import("../agent/subagents/teammate/lib/gate");
+    expect(address("https://mail.google.com/mail/u/0/#inbox/FMfcgzQXJWDsKmn")).toBe("mail.google.com/mail/u/0/#inbox/FMfcgzQXJWDsKmn");
+    const long = address(`https://app.example.com/records?filter=${"x".repeat(200)}&id=REC-42#tab=${"y".repeat(200)}-END`);
+    expect(long.length).toBeLessThan(200);
+    expect(long).toMatch(/id=REC-42#tab=/);
+    expect(long).toMatch(/-END$/);
   });
 });

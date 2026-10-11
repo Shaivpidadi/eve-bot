@@ -58,7 +58,12 @@ export interface Proposal {
   readonly workspaceId: string;
   readonly sessionId: string;
   readonly kind: ActionKind;
-  /** The page it was proposed on; approval holds for this origin and path only. */
+  /**
+   * The page it was proposed on, whole: origin, path, query and fragment. An
+   * approval holds for this exact address, since in a web app the query or the
+   * fragment is often what names the record (`#inbox/A` and `#inbox/B` are two
+   * different emails on one path).
+   */
   readonly url: string;
   /** The ref or CSS selector the action runs against. */
   readonly selector: string;
@@ -83,12 +88,14 @@ const proposalKey = (workspaceId: string, sessionId: string, id: string) =>
 
 export const hashValue = (value: string): string => createHash("sha256").update(value, "utf8").digest("hex");
 
-/** Origin and path: the page an approval holds for, whatever its query or fragment. */
+/**
+ * The same address, query and fragment included: the page an approval holds
+ * for. Compared as the browser would write it, so only a real difference
+ * counts; any difference at all means another page, and another approval.
+ */
 export function samePage(a: string, b: string): boolean {
   try {
-    const left = new URL(a);
-    const right = new URL(b);
-    return left.origin === right.origin && left.pathname === right.pathname;
+    return new URL(a).href === new URL(b).href;
   } catch {
     return a !== "" && a === b;
   }
@@ -196,16 +203,29 @@ export async function inspect(ctx: ToolContext, target: Target, options: { reado
   return { url, selector, element: { tree: treeFact, dom }, ...(problem === undefined ? {} : { problem }) };
 }
 
-const host = (url: string): string => {
-  try {
-    const parsed = new URL(url);
-    return `${parsed.host}${parsed.pathname}`;
-  } catch {
-    return url || "this page";
-  }
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
+/** Shortened from the middle: the end of a path, query or fragment is usually the id that tells two records apart. */
+const middle = (text: string, max: number): string => {
+  if (text.length <= max) return text;
+  const head = Math.ceil((max - 1) / 3);
+  return `${text.slice(0, head)}…${text.slice(text.length - (max - 1 - head))}`;
 };
 
-const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+/**
+ * The page, as the person approving reads it: host, path, query and fragment.
+ * The query and fragment stay in, shortened if long, because they are often
+ * what says which record the action is on. The approval itself is bound to the
+ * full address stored with the proposal, not to this text.
+ */
+export const address = (url: string): string => {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.host}${middle(parsed.pathname, 100)}${middle(parsed.search, 80)}${middle(parsed.hash, 80)}`;
+  } catch {
+    return url === "" ? "this page" : middle(url, 200);
+  }
+};
 
 function elementWords(element: ElementPrint, selector: string): string {
   const role = element.tree?.role || element.dom?.role || element.dom?.tag.toLowerCase() || "element";
@@ -240,7 +260,7 @@ export function describeProposal(input: {
                 ? `Attach ${(input.files ?? []).join(", ")} to ${what}`
                 : `Type into ${what}`;
   const why = input.reasons.length === 0 ? "" : ` (flagged: ${input.reasons.join("; ")})`;
-  return `${verb} on ${host(input.url)}${why}`;
+  return `${verb} on ${address(input.url)}${why}`;
 }
 
 /** Collapses whitespace, so a description copied with a different line wrap still matches. */
