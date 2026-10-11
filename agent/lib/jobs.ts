@@ -558,7 +558,8 @@ export async function bindRun(
       return null;
     }
     if (lease.session === sessionId && current.sessionId === sessionId) {
-      // Already bound: nothing to write, and the record is the answer.
+      // Already bound — or a retried write that had landed: nothing to write,
+    // and the record is the answer.
       outcome.check = { ok: true, job: current };
       return null;
     }
@@ -574,12 +575,17 @@ export async function bindRun(
  * The check and the write are one compare-and-set, so a run superseded between
  * a read and a write still writes nothing. `patch` sees the run it is writing
  * for, which is how a result records who produced it.
+ *
+ * `patch` must be idempotent and return `null` when its change is already on
+ * the record: a store may report a write that landed as a conflict (the Blob
+ * SDK retries), and the compare-and-set then runs `patch` again on the record
+ * that already has it. `null` there is success, with nothing written twice.
  */
 export async function patchJobAsRun(
   workspaceId: string,
   jobId: string,
   sessionId: string,
-  patch: (job: Job, run: { readonly token: string; readonly session: string }) => Job,
+  patch: (job: Job, run: { readonly token: string; readonly session: string }) => Job | null,
 ): Promise<RunCheck> {
   const outcome: { check: RunCheck } = { check: { ok: false, reason: "missing" } };
   const job = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
@@ -587,7 +593,8 @@ export async function patchJobAsRun(
     outcome.check = check;
     if (!check.ok) return null;
     const lease = check.job.lease!;
-    return stamp(patch(check.job, { token: lease.token, session: sessionId }));
+    const next = patch(check.job, { token: lease.token, session: sessionId });
+    return next === null ? null : stamp(next);
   });
   return job === null ? outcome.check : { ok: true, job };
 }
@@ -623,10 +630,12 @@ export async function attachArtifact(
   artifact: JobArtifact,
   sessionId: string,
 ): Promise<RunCheck> {
-  return patchJobAsRun(workspaceId, jobId, sessionId, (job) => ({
-    ...job,
-    artifacts: [...job.artifacts, artifact],
-  }));
+  return patchJobAsRun(workspaceId, jobId, sessionId, (job) =>
+    // Already attached: a retried write that had landed.
+    job.artifacts.some((existing) => existing.id === artifact.id)
+      ? null
+      : { ...job, artifacts: [...job.artifacts, artifact] },
+  );
 }
 
 /**
