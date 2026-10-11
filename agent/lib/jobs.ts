@@ -599,6 +599,22 @@ export async function patchJobAsRun(
   return job === null ? outcome.check : { ok: true, job };
 }
 
+/**
+ * Where a run stands by its lease token, for the parent workflow: whether it
+ * still owns the job, a person cancelled it, or another run (or nobody) holds it.
+ */
+export type Standing = "owns" | "cancelled" | "superseded" | "missing";
+
+export function standingOf(job: Job | null, token: string): Standing {
+  if (job === null) return "missing";
+  if (job.status === "cancelled") return "cancelled";
+  return job.lease !== null && job.lease.token === token && !CLOSED.includes(job.status) ? "owns" : "superseded";
+}
+
+export async function runStanding(workspaceId: string, jobId: string, token: string): Promise<Standing> {
+  return standingOf(await getJob(workspaceId, jobId), token);
+}
+
 /** What a refused run is told, in words a model acts on. */
 export function describeRunRefusal(reason: Exclude<RunCheck, { ok: true }>["reason"], jobId: string): string {
   switch (reason) {
@@ -651,7 +667,9 @@ type CloseOutcome = "closed" | "cancelled" | "superseded";
 
 /**
  * Closes a run. Repeating jobs go back to `scheduled` with their next start
- * time. A job cancelled mid-run stays cancelled; its result is still kept.
+ * time. A job cancelled mid-run stays cancelled, untouched: the run that was
+ * stopped does not get to put its result on it. The cancelled record comes
+ * back, so the caller can tell.
  */
 export async function completeJob(
   workspaceId: string,
@@ -659,12 +677,13 @@ export async function completeJob(
   result: JobResult,
   options: { token?: string } = {},
 ): Promise<Job | null> {
-  const state: { outcome: CloseOutcome } = { outcome: "superseded" };
-  const job = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
+  const state: { outcome: CloseOutcome; cancelled: Job | null } = { outcome: "superseded", cancelled: null };
+  const written = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
     if (current === null) return null;
     if (current.status === "cancelled") {
       state.outcome = "cancelled";
-      return stamp({ ...current, result });
+      state.cancelled = current;
+      return null;
     }
     if (!owns(current, options.token)) {
       state.outcome = "superseded";
@@ -682,8 +701,9 @@ export async function completeJob(
       error: null,
     });
   });
+  const job = written ?? state.cancelled;
 
-  if (job !== null && state.outcome === "closed") {
+  if (job !== null && written !== null && state.outcome === "closed") {
     if (job.status === "done") await markClosed(workspaceId, jobId);
     await patchBot(workspaceId, job.botId, (bot) => ({
       ...bot,
@@ -815,29 +835,75 @@ export async function sendBack(
   return job;
 }
 
-export type Cancel = { ok: true; job: Job; wasRunning: boolean } | { ok: false; reason: string };
+/**
+ * A cancel that held. `session` is the teammate session bound to the run that
+ * held the job when it was cancelled, the one to interrupt (null when no run
+ * had bound one). `alreadyCancelled` is a job somebody else cancelled before
+ * this call; it is still a success, so cancelling twice is harmless and the
+ * second call can retry interrupting the run.
+ */
+export type Cancel =
+  | { ok: true; job: Job; wasRunning: boolean; alreadyCancelled: boolean; session: string | null }
+  | { ok: false; reason: string };
 
-/** Stops a job and its repetition. Finished work is left as it was. */
+/**
+ * Durably stops a job and its repetition, in one compare-and-set. Finished
+ * work is left as it was; a done job cannot be cancelled.
+ *
+ * The lease goes with it, and with the lease every claim the running bot had:
+ * its job writes (`patchJobAsRun`), its side effects (`guardSideEffect`) and
+ * its parent's heartbeat (`renewLease`) are refused from the moment this
+ * lands, and no close (`completeJob`, `holdForSignoff`, `blockJob`,
+ * `sendBack`, `failJob`) can move the job off `cancelled` afterwards. Stopping
+ * the bot's session itself is the caller's half; see `cancelJobRun`.
+ *
+ * Idempotent: a job already cancelled is a success, and the call's own mark on
+ * the record tells a retried write that had landed (the Blob SDK can report one
+ * as a conflict) from a cancel made by someone else.
+ */
 export async function cancelJob(workspaceId: string, jobId: string): Promise<Cancel> {
-  const outcome = { reason: `No job ${jobId} in this workspace.`, wasRunning: false };
-  const job = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
+  const mark = { id: newId("cancel"), at: new Date().toISOString() };
+  const outcome = { reason: `No job ${jobId} in this workspace.`, wasRunning: false, already: false, session: null as string | null };
+  const found: { job: Job | null } = { job: null };
+  const read = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
     if (current === null) return null;
-    if (current.status === "done" || current.status === "cancelled") {
+    if (current.status === "cancelled") {
+      // Ours, if a write that landed was reported as a conflict; else an earlier cancel.
+      const mine = current.cancellation?.id === mark.id;
+      outcome.already = !mine;
+      if (!mine) outcome.session = current.cancellation?.session ?? null;
+      found.job = current;
+      return null;
+    }
+    if (current.status === "done") {
       outcome.reason = unavailable(current);
       return null;
     }
     outcome.wasRunning = current.status === "running";
-    return stamp({ ...current, status: "cancelled", lease: null, everyMinutes: null, schedule: null });
+    // Only a live run's bound session is worth stopping; sessionId may name a past run.
+    const lease = current.lease;
+    outcome.session = lease !== null && lease.kind === "run" ? (lease.session ?? null) : null;
+    return stamp({
+      ...current,
+      status: "cancelled",
+      lease: null,
+      everyMinutes: null,
+      schedule: null,
+      cancellation: { ...mark, session: outcome.session },
+    });
   });
+  const job = read ?? found.job;
   if (job === null) return { ok: false, reason: outcome.reason };
 
   await markClosed(workspaceId, jobId);
-  await record({
-    workspaceId,
-    kind: "job.cancelled",
-    botId: job.botId,
-    jobId,
-    text: `Cancelled "${job.title}".`,
-  });
-  return { ok: true, job, wasRunning: outcome.wasRunning };
+  if (!outcome.already) {
+    await record({
+      workspaceId,
+      kind: "job.cancelled",
+      botId: job.botId,
+      jobId,
+      text: `Cancelled "${job.title}".`,
+    });
+  }
+  return { ok: true, job, wasRunning: outcome.wasRunning, alreadyCancelled: outcome.already, session: outcome.session };
 }

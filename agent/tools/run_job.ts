@@ -21,8 +21,10 @@ import {
   releaseJob,
   renewLease,
   resultIsFromRun,
+  runStanding,
   sendBack,
   type Hold,
+  type Standing,
 } from "../lib/jobs";
 import { learnFromFeedback } from "../lib/memory/outcomes";
 import { sameFindings } from "../lib/findings";
@@ -172,14 +174,15 @@ export default defineWorkflowTool({
           if (next !== null) {
             settled = next;
           } else if (!(await keepLease(workspaceId, jobId, claim.token))) {
-            return {
-              jobId,
-              ran: true as const,
-              status: "superseded" as const,
-              reason: "The job was cancelled or taken over while the bot worked.",
-            };
+            return stoppedEarly(jobId, await standing(workspaceId, jobId, claim.token));
           }
         }
+
+        // A cancel can land while the bot works, and stopping its session is
+        // one way the child returns at all: whatever it left is not this
+        // job's result any more, so nothing is salvaged, failed, or closed.
+        const afterWork = await standing(workspaceId, jobId, claim.token);
+        if (afterWork !== "owns") return stoppedEarly(jobId, afterWork);
 
         // What the run left behind, in order of trust: the result finish_job
         // recorded, a structured final answer, or the final answer as text with
@@ -296,6 +299,8 @@ export default defineWorkflowTool({
 
       // 3. Close.
       const closed = await markDone(workspaceId, jobId, done.result, done.token);
+      // Cancelled after the work (during sign-off, say): completeJob left it cancelled.
+      if (closed.status === "cancelled") return stoppedEarly(jobId, "cancelled");
       if (closed.nextRunAt === null) {
         return {
           jobId,
@@ -330,6 +335,18 @@ export default defineWorkflowTool({
     }
   },
 });
+
+/** The run's answer when it finds the job is no longer its own: nothing recorded. */
+function stoppedEarly(jobId: string, standing: Standing) {
+  return standing === "cancelled"
+    ? { jobId, ran: true as const, status: "cancelled" as const, reason: "The job was cancelled; this run recorded nothing for it." }
+    : {
+        jobId,
+        ran: true as const,
+        status: "superseded" as const,
+        reason: "The job was taken over or closed while the bot worked; this run recorded nothing.",
+      };
+}
 
 type Claim =
   | { ok: false; reason: string }
@@ -577,6 +594,11 @@ async function clockNow(): Promise<number> {
 async function holdForStart(workspaceId: string, jobId: string, token: string): Promise<Hold> {
   "use step";
   return holdUntilDue(workspaceId, jobId, token);
+}
+
+async function standing(workspaceId: string, jobId: string, token: string): Promise<Standing> {
+  "use step";
+  return runStanding(workspaceId, jobId, token);
 }
 
 async function keepLease(workspaceId: string, jobId: string, token: string): Promise<boolean> {

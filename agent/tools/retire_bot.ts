@@ -5,7 +5,8 @@ import { z } from "zod";
 import { record } from "../lib/activity";
 import { findBot, retireBot } from "../lib/bots";
 import { forgetBot } from "../lib/computer/screens";
-import { cancelJob, listJobs } from "../lib/jobs";
+import { cancelJobRun } from "../lib/cancel";
+import { listJobs } from "../lib/jobs";
 import { operator } from "../lib/session";
 
 export default defineTool({
@@ -26,7 +27,8 @@ export default defineTool({
       botId: found.id,
       status: ["scheduled", "queued", "dispatched", "running", "blocked"],
     });
-    for (const job of open) await cancelJob(who.workspaceId, job.id);
+    // Durably, as cancel_job does: a tool cannot stop the bots' sessions, but they are fenced.
+    for (const job of open) await cancelJobRun(who.workspaceId, job.id);
     await retireBot(who.workspaceId, found.id);
     // The team's browser stays as it is; a handover it was waiting on is over.
     await forgetBot(who.workspaceId, found.id);
