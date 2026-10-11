@@ -9,6 +9,7 @@ import {
   type ScreenAllocation,
   type ServiceState,
 } from "./computer/screens";
+import { jobHealth, type Health } from "./health";
 import { isRoutine, listOpenJobs } from "./jobs";
 import { describeSchedule } from "./schedule";
 import { ledgerTotal, NO_USAGE, readLedger, type Usage } from "./usage";
@@ -121,6 +122,8 @@ export interface Board {
   };
   /** What the workspace has spent on models, all time: HQ's own turns and every Bot's jobs. */
   readonly usage: { readonly total: Usage; readonly hq: Usage; readonly bots: Readonly<Record<string, Usage>> };
+  /** Work that should have started and has not, and runs whose worker stopped (see `health.ts`). */
+  readonly health: Health;
 }
 
 export const HQ_MEMBER_ID = "hq";
@@ -214,6 +217,10 @@ export async function buildBoard(
       hq: ledger.hq,
       bots: ledger.bots,
     },
+    health: jobHealth(open, {
+      now,
+      pausedBotIds: new Set(bots.filter((bot) => bot.status !== "active").map((bot) => bot.id)),
+    }),
   };
 }
 
