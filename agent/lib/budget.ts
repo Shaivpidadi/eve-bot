@@ -361,15 +361,30 @@ export async function readBudget(workspaceId: string, period: string = periodOf(
 }
 
 /**
- * The period whose document holds a run's reservation: this month's, or, for a
- * run admitted before midnight UTC on the last day of the month, last month's.
- * A run's spend stays with the month that admitted it.
+ * Applies `mutate` to the document that holds a run's reservation: this
+ * month's, or, for a run admitted before midnight UTC on the last day of the
+ * month, last month's. A run's spend stays with the month that admitted it.
+ *
+ * This month's is tried in the compare-and-set that writes it, and last
+ * month's is read only when the reservation is not there, so the common path
+ * reads the budget once. `period` is null when neither holds it; `written`
+ * says whether `mutate` changed anything.
  */
-async function periodHolding(workspaceId: string, runToken: string, at: Date): Promise<string> {
-  const now = periodOf(at);
-  if ((await readBudget(workspaceId, now)).reservations[runToken] !== undefined) return now;
-  const before = previousPeriod(at);
-  return (await readBudget(workspaceId, before)).reservations[runToken] !== undefined ? before : now;
+async function updateHolding(
+  workspaceId: string,
+  runToken: string,
+  at: Date,
+  mutate: (current: BudgetDoc) => BudgetDoc | null,
+): Promise<{ period: string | null; written: boolean }> {
+  for (const period of [periodOf(at), previousPeriod(at)]) {
+    const seen = { found: false };
+    const written = await updateDoc<BudgetDoc>(key(workspaceId, period), (current) => {
+      seen.found = current !== null && current.reservations[runToken] !== undefined;
+      return current !== null && seen.found ? mutate(current) : null;
+    });
+    if (seen.found) return { period, written: written !== null };
+  }
+  return { period: null, written: false };
 }
 
 /**
@@ -440,13 +455,18 @@ export async function recordSpend(
   const limits = options.limits ?? budgetLimits();
   const id = options.id ?? `spend_${crypto.randomUUID()}`;
   const outcome: { value: SpendOutcome } = { value: { counted: false, halted: false } };
+  const apply = (current: BudgetDoc | null, period: string): BudgetDoc | null => {
+    const result = applySpend(current ?? emptyBudget(workspaceId, period), { runToken, usd, category, id, limits, at });
+    outcome.value = result.outcome;
+    return result.next;
+  };
   try {
-    const period = runToken === null ? periodOf(at) : await periodHolding(workspaceId, runToken, at);
-    await updateDoc<BudgetDoc>(key(workspaceId, period), (current) => {
-      const result = applySpend(current ?? emptyBudget(workspaceId, period), { runToken, usd, category, id, limits, at });
-      outcome.value = result.outcome;
-      return result.next;
-    });
+    const held = runToken === null ? { period: null } : await updateHolding(workspaceId, runToken, at, (current) => apply(current, current.period));
+    if (held.period === null) {
+      // Workspace-level spend, or a run whose reservation no month holds (pruned): this month's.
+      const period = periodOf(at);
+      await updateDoc<BudgetDoc>(key(workspaceId, period), (current) => apply(current, period));
+    }
   } catch (error) {
     console.warn(`[bot] Could not record spend on the workspace budget: ${error instanceof Error ? error.message : String(error)}`);
     return { counted: false, halted: false };
@@ -457,11 +477,7 @@ export async function recordSpend(
 async function close(workspaceId: string, runToken: string, state: "settled" | "released", now?: Date): Promise<boolean> {
   const at = now ?? new Date();
   const limits = budgetLimits();
-  const period = await periodHolding(workspaceId, runToken, at);
-  const closed = await updateDoc<BudgetDoc>(key(workspaceId, period), (current) =>
-    current === null ? null : applyClose(current, { runToken, state, limits, at }),
-  );
-  return closed !== null;
+  return (await updateHolding(workspaceId, runToken, at, (current) => applyClose(current, { runToken, state, limits, at }))).written;
 }
 
 /**
@@ -481,8 +497,11 @@ export function releaseRun(workspaceId: string, runToken: string, options: { rea
 
 /** Whether a run went past its reservation with the workspace out of headroom. */
 export async function runHalted(workspaceId: string, runToken: string, now: Date = new Date()): Promise<boolean> {
-  const period = await periodHolding(workspaceId, runToken, now);
-  return (await readBudget(workspaceId, period)).reservations[runToken]?.halted === true;
+  for (const period of [periodOf(now), previousPeriod(now)]) {
+    const reservation = (await readBudget(workspaceId, period)).reservations[runToken];
+    if (reservation !== undefined) return reservation.halted === true;
+  }
+  return false;
 }
 
 /**

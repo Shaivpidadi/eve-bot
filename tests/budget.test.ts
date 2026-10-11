@@ -154,6 +154,65 @@ describe.each(backends)("workspace budget on the %s store", (backend) => {
     expect((await readBudget(WS, "2026-11")).spentUsd).toBe(0);
   });
 
+  /**
+   * The budget documents read, in order, not counting the read the fs store
+   * makes inside its own compare-and-set write.
+   */
+  async function watchReads() {
+    const { store } = await import("../agent/lib/store");
+    const kv = store();
+    const get = kv.get.bind(kv);
+    const put = kv.put.bind(kv);
+    const reads: string[] = [];
+    let writing = 0;
+    const spies = [
+      vi.spyOn(kv, "put").mockImplementation(async (...args) => {
+        writing += 1;
+        try {
+          return await put(...args);
+        } finally {
+          writing -= 1;
+        }
+      }),
+      vi.spyOn(kv, "get").mockImplementation(async (path) => {
+        if (writing === 0 && path.startsWith("budget/")) reads.push(path);
+        return get(path);
+      }),
+    ];
+    return { reads, restore: () => spies.forEach((spy) => spy.mockRestore()) };
+  }
+
+  it("reads the budget once per spend, settle and release in the common path", async () => {
+    const { admitRun, recordSpend, settleRun, releaseRun } = await load();
+    await admitRun(WS, "lease_a", 2);
+    await admitRun(WS, "lease_b", 2);
+    const { reads, restore } = await watchReads();
+    const budgetReads = () => reads.length;
+
+    expect(await recordSpend(WS, "lease_a", 0.5, "job")).toEqual({ counted: true, halted: false });
+    expect(budgetReads()).toBe(1);
+    expect(await settleRun(WS, "lease_a")).toBe(true);
+    expect(budgetReads()).toBe(2);
+    expect(await releaseRun(WS, "lease_b")).toBe(true);
+    expect(budgetReads()).toBe(3);
+    restore();
+  });
+
+  it("finds last month's reservation only after this month's document misses it", async () => {
+    const { admitRun, recordSpend, runHalted, readBudget } = await load();
+    const lastDay = new Date("2026-10-31T23:59:00Z");
+    const nextDay = new Date("2026-11-01T00:05:00Z");
+    await admitRun(WS, "lease_a", 2, { now: lastDay });
+    await recordSpend(WS, null, 0.1, "hq", { now: nextDay });
+    const { reads, restore } = await watchReads();
+    await recordSpend(WS, "lease_a", 1, "job", { now: nextDay });
+    expect(reads).toEqual([`budget/${WS}/2026-11.json`, `budget/${WS}/2026-10.json`]);
+    restore();
+    expect((await readBudget(WS, "2026-10")).reservations.lease_a?.spentUsd).toBe(1);
+    expect((await readBudget(WS, "2026-11")).spentUsd).toBe(0.1);
+    expect(await runHalted(WS, "lease_a", nextDay)).toBe(false);
+  });
+
   it("applies the daily limit too", async () => {
     vi.stubEnv("BOT_BUDGET_DAILY_USD", "2");
     const { admitRun, recordSpend } = await load();
