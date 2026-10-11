@@ -38,14 +38,14 @@ const sessionFor = (sessionId: string) => ({
 });
 
 type Exec = { execute: (input: unknown, ctx: never) => Promise<Record<string, unknown>> };
-type Def = { approval: (ctx: ApprovalContext) => Promise<ApprovalStatus> };
+type Def = { approval: { request: (ctx: ApprovalContext) => Promise<ApprovalStatus> } };
 
 const denied = (status: ApprovalStatus): string | null =>
   typeof status === "object" && status !== null && status.type === "denied" ? (status.reason ?? "") : null;
 
 /** Asks the connection's approval policy about one call from `sessionId`, as eve does before running it. */
 const ask = (def: Def, tool: string, sessionId: string) =>
-  def.approval({
+  def.approval.request({
     toolName: `tracker__${tool}`,
     approvedTools: new Set(),
     callId: "call_1",
