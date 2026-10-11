@@ -269,7 +269,43 @@ of it; these are the ones that matter.
 | `BOT_STANDUP_CRON` / `BOT_STANDUP_ROOM` | when the daily standup runs (`0 13 * * 1-5`, in UTC) and where it posts: HQ's `desk` by default, or a Bot's room (`bot-<id>`) |
 | `BOT_SANDBOX_ALLOW_DOMAINS` / `BOT_BROWSER_ALLOWED_DOMAINS` | fence the computer and the browser |
 | `BOT_BROWSER_PAGE_CHARS` / `BOT_BROWSER_SETTLE_MS` | how much of a page a Bot reads per look (`8000`) and how long it lets the page settle first (`300`) |
-| `BOT_EMAIL_WEBHOOK` | where approved email goes; unset returns drafts |
+| `BOT_EMAIL_WEBHOOK` | where approved email goes; unset returns drafts. The relay must follow the contract below |
+
+### Outbound email relay
+
+`send_email` POSTs each approved email to `BOT_EMAIL_WEBHOOK` (with
+`Authorization: Bearer $BOT_EMAIL_WEBHOOK_TOKEN` when set):
+
+```
+POST $BOT_EMAIL_WEBHOOK
+Idempotency-Key: action_<32 hex>
+Content-Type: application/json
+
+{"actionId":"action_<32 hex>","to":["…"],"cc":[],"subject":"…","text":"…","jobId":"job_…"}
+```
+
+Every send is first recorded in an action ledger (`agent/lib/actions.ts`,
+`actions/<workspace>/<actionId>.json`). The action id is derived from the job,
+the run, and a hash of exactly this payload, so a replayed step finds the first
+attempt's record and returns its receipt instead of sending again, and any
+change to the email is a new action that needs its own approval.
+
+Bot still delivers **at least once** toward the relay: if the relay accepts a
+request and its reply is lost, Bot cannot tell. So the relay must:
+
+- **Dedupe on `Idempotency-Key`.** A repeated key must not send a second email;
+  answer it with the original result. Keep keys at least as long as a job can
+  run (a day is plenty).
+- **Answer 2xx only once the email is accepted**, with a JSON body carrying its
+  receipt: `{"id": "<provider message id>", "status": "queued"}` (`messageId` or
+  `receiptId` are read too). Bot stores it on the action.
+- **Answer 4xx only when nothing was sent and nothing will be**: Bot records the
+  action as failed and does not retry it (`429` is the exception: retried under
+  the same key on the next call).
+- Expect a `5xx`, `408`, `409`, a timeout (`BOT_EMAIL_WEBHOOK_TIMEOUT_MS`,
+  30s) or a dropped connection to be read as **delivery unknown**: Bot never
+  resends those on its own and tells the Bot to report the email as possibly
+  sent, so a person can check the relay's log.
 
 ## Development
 
