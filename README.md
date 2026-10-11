@@ -428,10 +428,13 @@ an unprivileged `bot` user, not the user the browser runs as: they cannot read
 the browser's profiles, the team's sign-ins or the gateway key, cannot type
 into a screen, and cannot connect to Chrome's DevTools, VNC or agent-browser's
 stream. So a Bot cannot drive the browser around the approval gate from its
-shell. The network fence is iptables where the computer allows it (Vercel
-Sandbox) and Landlock otherwise (Docker, Linux 6.7+). Under iptables the shell
-may connect to this machine only on an allowlist of ports (web, DNS, ssh, git,
-common dev servers) and to the internet on any. Landlock sees ports, not
+shell. The network fence is iptables where the computer allows it (a
+container with `NET_ADMIN`), nftables where the kernel lacks iptables' owner
+match (Vercel Sandbox, which also lacks Landlock and IPv6 filtering, so IPv6 is
+switched off there), and Landlock otherwise (Docker, Linux 6.7+). Under
+iptables and nftables the shell may connect to this machine only on an
+allowlist of ports (web, DNS, ssh, git, common dev servers) and to the internet
+on any. Landlock sees ports, not
 addresses, so it closes the screens' ports and the kernel's ephemeral range
 (where agent-browser's stream and other unnamed listeners land) everywhere and
 leaves every other port open. `BOT_SHELL_TCP_PORTS` adds ports to the allowlist

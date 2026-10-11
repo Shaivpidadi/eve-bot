@@ -23,7 +23,7 @@ import { SHELL_HELPER, SHELL_REFUSED_EXIT, SHELL_REFUSED_MARK } from "./shell-he
  * the console, backups and the operator's terminal keep the computer's own user.
  *
  * Fail closed: when the computer cannot have the fence (no sudo, neither
- * iptables nor Landlock), every command is refused with the reason, never run
+ * iptables, nftables nor Landlock), every command is refused with the reason, never run
  * unfenced. `BOT_SHELL_ISOLATION=off` is the explicit way out, for a computer
  * that has no browser worth guarding: the shell then runs as the computer's
  * user and every command waits for a person's approval.

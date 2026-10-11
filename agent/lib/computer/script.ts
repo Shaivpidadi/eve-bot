@@ -293,7 +293,7 @@ export XAUTHORITY="$STATE/xauthority"
 PORT=__PORT__
 WIDTH=__WIDTH__
 HEIGHT=__HEIGHT__
-PACKAGES="tigervnc-standalone-server websockify xdotool x11-utils x11-xserver-utils xauth iptables fonts-noto-core fonts-noto-color-emoji fonts-liberation ca-certificates curl openbox tint2 pcmanfm xfce4-terminal dbus-x11"
+PACKAGES="tigervnc-standalone-server websockify xdotool x11-utils x11-xserver-utils xauth iptables nftables fonts-noto-core fonts-noto-color-emoji fonts-liberation ca-certificates curl openbox tint2 pcmanfm xfce4-terminal dbus-x11"
 DESK="__DESKTOP__"
 CHROME_FLAGS="--remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --password-store=basic --disable-dev-shm-usage --window-position=0,0 --start-maximized --restore-last-session --hide-crash-restore-bubble --noerrdialogs --test-type --disable-features=Translate,MediaRouter __EXTRA_CHROME_FLAGS__"
 
@@ -398,7 +398,7 @@ installed() {
     command -v xdotool >/dev/null && command -v xdpyinfo >/dev/null &&
     command -v openbox >/dev/null && command -v tint2 >/dev/null && command -v pcmanfm >/dev/null &&
     command -v xfce4-terminal >/dev/null && command -v dbus-daemon >/dev/null && command -v xsetroot >/dev/null &&
-    command -v xauth >/dev/null && command -v iptables >/dev/null
+    command -v xauth >/dev/null && command -v iptables >/dev/null && command -v nft >/dev/null
 }
 
 # Some sandbox networks cannot reach Ubuntu's plain-HTTP archive at all, and apt
@@ -583,11 +583,11 @@ cmd_status() {
     "$VERSION" "$software" "$gateway" "$(shell_mode)" "$screens"
 }
 
-# shell_mode: how a Bot's shell is kept off the browser: iptables, landlock, none, or unset.
+# shell_mode: how a Bot's shell is kept off the browser: iptables, nftables, landlock, none, or unset.
 shell_mode() {
   local mode
   mode=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("mode", "unset"))' "__HELPER_DIR__/state.json" 2>/dev/null)
-  case "$mode" in iptables | landlock | none) printf '%s' "$mode" ;; *) printf unset ;; esac
+  case "$mode" in iptables | nftables | landlock | none) printf '%s' "$mode" ;; *) printf unset ;; esac
 }
 
 # isolate PORTS: installs the Bot shell's helper root-owned and fences the bot user off

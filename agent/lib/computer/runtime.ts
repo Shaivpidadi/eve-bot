@@ -165,11 +165,11 @@ export function shellPorts(): string {
   return [...ports].sort((left, right) => left - right).join(",");
 }
 
-export type ShellMode = "iptables" | "landlock";
+export type ShellMode = "iptables" | "nftables" | "landlock";
 
 export interface ShellIsolation {
   readonly mode: ShellMode;
-  /** What the shell may connect to on this machine (iptables), or anywhere (Landlock). */
+  /** What the shell may connect to on this machine (iptables, nftables), or anywhere (Landlock, beyond its closed ranges). */
   readonly ports: readonly number[];
 }
 

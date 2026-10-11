@@ -20,9 +20,13 @@
  *   gateway, and agent-browser's live stream on a random port, which takes
  *   input too), so `bot` may reach this machine only on an allowlist of ports
  *   that never includes the screens' ranges. With iptables (root with
- *   CAP_NET_ADMIN, as on a Vercel Sandbox VM), `bot`'s TCP over loopback to any
- *   other port is rejected by owner, and the internet stays open. Without it (a
- *   Docker container has no CAP_NET_ADMIN), Landlock (Linux 6.7+), which sees
+ *   CAP_NET_ADMIN and the kernel's owner match), `bot`'s TCP over loopback to
+ *   any other port is rejected by owner, and the internet stays open. A kernel
+ *   without the owner match but with nftables (a Vercel Sandbox VM, which has
+ *   neither the match nor Landlock nor IPv6 filtering) gets the same rule as an
+ *   nftables table matching the socket's owner, which drops rather than
+ *   rejects, with IPv6 switched off so ::1 is no way around it. Without either
+ *   (a Docker container has no CAP_NET_ADMIN), Landlock (Linux 6.7+), which sees
  *   ports but not addresses, closes the screens' ranges and the kernel's
  *   ephemeral range (where agent-browser's stream and every other unnamed
  *   listener lands) for all of `bot`'s TCP, and leaves every other port open.
@@ -106,7 +110,7 @@ PR_SET_NO_NEW_PRIVS = 38
 # Where bind(port 0) lands when the kernel's range cannot be read: closed whole.
 EPHEMERAL_FALLBACK = (1024, 65535)
 # Supplementary groups that tag a run's processes; below 65536 so a rootless container maps them.
-RUN_GID_BASE, RUN_GID_SPAN = 50000, 10000
+RUN_GID_BASE, RUN_GID_SPAN = 50000, 1000
 RUNS_FILE = HOME + "/runs.json"
 LANDLOCK_CREATE_RULESET_VERSION = 1
 LANDLOCK_ACCESS_NET_CONNECT_TCP = 2
@@ -225,6 +229,57 @@ def fence(tool, uid, ports, expected=None):
     return listing(tool)
 
 
+# nftables: the same fence, for a kernel without the iptables owner match. IPv4 only, so IPv6 goes off.
+NFT_TABLE = "bot_shell"
+
+
+def nft_rules(uid, ports):
+    owner = 'oif "lo" meta skuid ' + str(uid)
+    allow = ("    " + owner + " tcp dport { " + ", ".join(str(port) for port in ports) + " } accept\n") if ports else ""
+    return ("table ip " + NFT_TABLE + " {\n  chain out {\n    type filter hook output priority 0; policy accept;\n" + allow +
+            "    " + owner + " meta l4proto tcp ct state new drop\n  }\n}\n")
+
+
+def nft_listing():
+    try:
+        result = subprocess.run(["nft", "list", "table", "ip", NFT_TABLE], capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.decode() if result.returncode == 0 else None
+
+
+def ipv6_off():
+    """Switches IPv6 off, which the nftables fence cannot see; true once it is off or absent."""
+    base = "/proc/sys/net/ipv6/conf/"
+    if not os.path.isdir(base):
+        return True
+    for name in ("all", "default", "lo"):
+        try:
+            with open(base + name + "/disable_ipv6", "w") as handle:
+                handle.write("1")
+        except OSError:
+            pass
+    try:
+        with open(base + "lo/disable_ipv6") as handle:
+            return handle.read().strip() == "1"
+    except OSError:
+        return False
+
+
+def nft_fence(uid, ports, expected=None):
+    """The table's listing once the rules are in place, rebuilding them if they are not; None when they cannot be."""
+    if expected is not None and nft_listing() == expected and ipv6_off():
+        return expected
+    try:
+        subprocess.run(["nft", "delete", "table", "ip", NFT_TABLE], capture_output=True, timeout=20)
+        added = subprocess.run(["nft", "-f", "-"], input=nft_rules(uid, ports).encode(), capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if added.returncode != 0 or not ipv6_off():
+        return None
+    return nft_listing()
+
+
 def load_state():
     try:
         with open(STATE_FILE) as handle:
@@ -251,9 +306,13 @@ def ensure_fence(state, account):
             if fence(tool, account.pw_uid, ports, expected) is None:
                 refuse("the firewall that keeps the Bot shell off the browser is missing and cannot be restored (" + tool + ")")
         return None
+    if state.get("mode") == "nftables":
+        if nft_fence(account.pw_uid, [int(port) for port in state.get("ports", [])], state.get("rules", {}).get("nft")) is None:
+            refuse("the firewall that keeps the Bot shell off the browser is missing and cannot be restored (nftables)")
+        return None
     if state.get("mode") == "landlock":
         return landlock_ports(int(port) for port in state.get("ports", []))
-    refuse("this computer can keep the Bot shell off the browser with neither iptables nor Landlock")
+    refuse("this computer can keep the Bot shell off the browser with neither iptables, nftables nor Landlock")
 
 
 def run_gid(run_id, create):
@@ -278,6 +337,11 @@ def run_gid(run_id, create):
         gid = next(RUN_GID_BASE + (start + step) % RUN_GID_SPAN for step in range(RUN_GID_SPAN)
                    if RUN_GID_BASE + (start + step) % RUN_GID_SPAN not in used)
         runs[run_id] = gid
+        try:
+            grp.getgrgid(gid)
+        except KeyError:
+            # Named, so the Bot's id command and anything that lists its groups still work.
+            run(["groupadd", "--gid", str(gid), "bot-run-" + str(gid - RUN_GID_BASE)])
         with open(RUNS_FILE + ".tmp", "w") as handle:
             json.dump(runs, handle)
         os.replace(RUNS_FILE + ".tmp", RUNS_FILE)
@@ -531,7 +595,10 @@ def cmd_setup(argv):
     # The team's work: group-shared, new files and folders included.
     shared = [os.path.join(WORKSPACE, name) for name in LAYOUT]
     for path in shared:
-        os.makedirs(path, exist_ok=True)
+        if not os.path.lexists(path):
+            # Normally made by the computer's user at bootstrap; made here for it, never left to root.
+            os.makedirs(path)
+            os.chown(path, account.pw_uid, account.pw_gid)
         share_dir(path, account.pw_uid, gid)
     normalized = previous.get("normalized") is True or normalize(owner, gid, shared)
 
@@ -542,8 +609,11 @@ def cmd_setup(argv):
         listed = fence(tool, bot.pw_uid, ports) if shutil.which(tool) is not None else None
         if listed is not None:
             rules[tool] = listed
+    nft = None if "iptables" in rules or shutil.which("nft") is None else nft_fence(bot.pw_uid, ports)
     if "iptables" in rules:
         mode = "iptables"
+    elif nft is not None:
+        mode, rules = "nftables", {"nft": nft}
     elif landlock_abi() >= 4:
         mode, rules = "landlock", {}
     else:
@@ -554,7 +624,7 @@ def cmd_setup(argv):
     os.chmod(STATE_FILE + ".tmp", 0o644)
     os.replace(STATE_FILE + ".tmp", STATE_FILE)
     print(json.dumps(dict(state, ok=mode != "none", landlock=landlock_abi(), **({} if mode != "none" else {
-        "step": "isolate", "error": "this computer has neither iptables nor Landlock to keep the Bot shell off the browser"}))))
+        "step": "isolate", "error": "this computer has neither iptables, nftables nor Landlock to keep the Bot shell off the browser"}))))
     return 0 if mode != "none" else 1
 
 
@@ -564,7 +634,7 @@ def cmd_check(argv):
     if state is None or account is None:
         print(json.dumps({"ok": False, "mode": "unset"}))
         return 1
-    print(json.dumps({"ok": state.get("mode") in ("iptables", "landlock"), "mode": state.get("mode"), "version": state.get("version")}))
+    print(json.dumps({"ok": state.get("mode") in ("iptables", "nftables", "landlock"), "mode": state.get("mode"), "version": state.get("version")}))
     return 0
 
 

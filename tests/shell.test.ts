@@ -274,14 +274,28 @@ describe("the computer's programs", () => {
       "mod.ephemeral_range = lambda: (32768, 60999)",
       "open_ = set(mod.landlock_ports([40001, 9301, 443]))",
       "probe = {p: p in open_ for p in (22, 443, 3306, 5432, 8081, 11434, 5901, 6080, 9301, 9399, 32768, 45000, 60999, 61000, 40001)}",
-      "print(json.dumps({'body': mod.rule_body(list(range(1, 18))), 'jump': mod.jump(1002), 'env': mod.environment({'A': '1', 'B=C': 'x', 'D': 3}), 'landlock': probe}))",
+      "print(json.dumps({'body': mod.rule_body(list(range(1, 18))), 'jump': mod.jump(1002), 'env': mod.environment({'A': '1', 'B=C': 'x', 'D': 3}), 'landlock': probe, 'nft': mod.nft_rules(1002, [22, 443])}))",
     ].join("\n");
     const out = JSON.parse(execFileSync("python3", ["-I", "-c", probe, path], { encoding: "utf8" })) as {
       body: string[][];
       jump: string[];
       env: Record<string, string>;
       landlock: Record<string, boolean>;
+      nft: string;
     };
+    // Where the iptables owner match is missing (a Vercel Sandbox VM): the same fence as an nftables table.
+    expect(out.nft).toBe(
+      [
+        "table ip bot_shell {",
+        "  chain out {",
+        "    type filter hook output priority 0; policy accept;",
+        '    oif "lo" meta skuid 1002 tcp dport { 22, 443 } accept',
+        '    oif "lo" meta skuid 1002 meta l4proto tcp ct state new drop',
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+    );
     // Landlock sees ports, not addresses: everything but the screens' ranges and the
     // ephemeral range, where agent-browser's stream lands; an extra port reopens only outside the screens'.
     expect(out.landlock).toEqual({
