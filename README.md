@@ -124,7 +124,8 @@ git pull && npm install && npm run build && npm start     # or: docker compose u
 
 Stored data is carried forward. A release that changes what is stored reads
 the old shape and writes the new one the first time it is needed, so a
-deployment can skip versions.
+deployment can skip versions. Some releases also need a decision from you;
+see [Upgrading to this version](#upgrading-to-this-version).
 
 ## What you get
 
@@ -143,8 +144,9 @@ deployment can skip versions.
 - **Durable jobs.** A run survives restarts and redeploys, waits for its start
   time with no compute, renews a lease so a dead run is noticed, and can park
   a day for your sign-off. A daily watchdog re-dispatches anything stranded.
-- **Approvals.** Sending email, retiring a Bot, and any connector tool that
-  changes something stop for a person first.
+- **Approvals.** Sending email, retiring a Bot, any connector tool that
+  changes something, and any browser click that could send, spend, delete or
+  save stop for a person first. See [Safety model](#safety-model).
 - **Memory.** The team remembers on its own. After each exchange with HQ, and
   after each job, Jev judges whether anything said is worth keeping, a small
   model phrases it, and it lands in one of three shared slots: about you, your
@@ -177,7 +179,7 @@ deployment can skip versions.
   needs OAuth is detected when it is added. Each connector has its own page:
   its account, every tool with a switch and a read-or-change tag, when a
   person is asked first, and the facts about it. Tools that change something
-  ask first. When a Bot needs an account nobody has connected yet, the thread
+  ask first, and HQ only uses the reads a person confirmed. When a Bot needs an account nobody has connected yet, the thread
   says so with a button to the Connectors page, and the work carries on once
   it is connected.
 
@@ -227,6 +229,84 @@ an insecure context, and the live screen will not connect. Use
 `npm run dev:https`, or on a standalone server set `BOT_COMPUTER_LOCAL_BIND=0.0.0.0`
 and serve over http, or put the gateway behind TLS.
 
+## Safety model
+
+What stops a Bot from doing something nobody meant, and what does not. The
+store decisions behind it are in
+[docs/decisions/0001-state-store.md](docs/decisions/0001-state-store.md).
+
+**Run fencing.** A job is worked by one run at a time, the holder of its
+lease. A Bot's session is bound to that run when it reads its brief, and every
+job write and every outward action (email, connector call, browser action,
+`create_bot`) checks it still is. A run whose lease lapsed and was taken over,
+or whose job was cancelled, is refused, even holding an approval it was given
+earlier.
+
+**Cancellation.** Stop in the console (`DELETE /bot/v1/jobs/:id`) cancels the
+job durably and stops its sessions immediately. Cancelling from a chat
+(HQ's `cancel_job`) refuses all of the Bot's actions immediately and ends the
+run. Either way nothing can mark the job done afterwards.
+
+**Connectors.** Every tool has a recorded effect, read or change. A tool
+nobody classified, one the server grew since its last check, or one whose
+name says it can run anything (SQL, HTTP, shell) counts as a change and needs
+approval under the "before changes" gate. HQ never asks, so it only gets
+reads a person confirmed (the "reads?" chips, or **Review** on the connector's
+page) or that the catalog vouches for. Every call re-reads the connector, so
+switching it or a tool off, re-marking a tool, or rotating a key bites on the
+next call. An approval is recorded with the connector's permission version and
+stops counting once any of those settings change. Approvals are structured
+answers sent through the signed-in console (`/respond`); a plain "yes" typed
+into a chat is a new message, not an approval.
+
+**Browser.** Every click, Enter, selection, checkbox and upload is classified
+first. It asks when the control's words send, spend, publish, delete, confirm
+or save a change ("Save", "Add member", "Apply"), when it submits a non-GET
+form or a form posting to another site, on checkout and payment pages, when
+the element cannot be inspected, and for every file upload. Typing, plain
+navigation, and whole labels that only rearrange the page ("Apply filters",
+"Clear search", "Reset zoom") on a control that submits nothing do not. An
+approval is bound to the exact page address (query and fragment included) and
+the element as it looked: its role, name, form target, its row and position
+among same-named elements, and the field's value for an Enter. If any of that
+changed, or the page renumbered the ref, it asks again. Residual risk: a
+consequential button with an innocuous label ("Continue", "Done") that runs
+page script without a form is not caught by words or structure. Use an egress
+allow-list for anything sensitive.
+
+**Email.** Each send is recorded in an action ledger before it goes out, with
+an id bound to the run and the exact payload, and the relay receives it as
+`Idempotency-Key`. Delivery toward the relay is at least once, so the relay
+must dedupe; see [Outbound email relay](#outbound-email-relay).
+
+**Budgets.** `BOT_BUDGET_MONTHLY_USD` and `BOT_BUDGET_DAILY_USD` cap what the
+workspace spends on models, per UTC month and day. A run reserves an estimate
+before it starts; one that would not fit is blocked with the reason. Spend is
+counted after each model step, so the limit can be overshot by the steps in
+flight when it runs out: a run past its reservation with no budget left is
+halted before its next step. A step whose provider reported no cost is counted
+and shown as unknown, never as free. Computer runtime is not counted.
+`BOT_JOB_COST_LIMIT_USD` and `BOT_HQ_COST_LIMIT_USD` still cap each session.
+
+### Upgrading to this version
+
+- **Confirm HQ's connector reads.** HQ now uses only reads a person
+  confirmed, so after the upgrade it has no tools from a custom connector, and
+  only the catalog-vouched ones from a built-in. Open each connector under
+  **Connectors**; where it says tools guessed as reads need your confirmation,
+  click **Review**, untick anything that changes something, and confirm.
+  Bots keep working meanwhile.
+- **Check the email relay.** If `BOT_EMAIL_WEBHOOK` is set, make sure the
+  relay dedupes on `Idempotency-Key` and answers as the
+  [contract](#outbound-email-relay) describes. `BOT_EMAIL_WEBHOOK_TIMEOUT_MS`
+  sets how long Bot waits (`30000`).
+- **Set a budget.** Without `BOT_BUDGET_MONTHLY_USD` (and optionally
+  `BOT_BUDGET_DAILY_USD`) spend is tracked but not capped.
+- **Standup room.** The standup now posts to HQ's `desk` by default. A
+  `BOT_STANDUP_ROOM` that is not `desk` or a Bot's room (`bot-<id>`), such as
+  the old example `standup`, is ignored with a warning; remove it or point it
+  at a room the console shows.
+
 ## HTTP
 
 Send `Authorization: Bearer <console token>`. Rooms are `desk` for HQ and
@@ -239,6 +319,7 @@ curl -X POST localhost:3000/bot/v1/rooms/desk/respond -H 'content-type: applicat
 curl -X POST localhost:3000/bot/v1/rooms/desk/reset                       # start the thread over
 curl -X POST localhost:3000/bot/v1/rooms/desk/recover -H 'content-type: application/json' -d '{"message":"…"}'  # a thread that stopped answering: fresh session, message sent again
 curl -X POST localhost:3000/bot/v1/connectors -H 'content-type: application/json' -d '{"catalog":"linear"}'      # add a connector; OAuth ones then need a sign-in
+curl -X POST localhost:3000/bot/v1/connectors/<id>/reviewed-reads -H 'content-type: application/json' -d '{"tools":["list_issues"]}'  # confirm guessed reads for HQ; no "tools" = all of them
 curl -X POST localhost:3000/bot/v1/connectors/<id>/oauth/start                                                 # the consent URL to open; the server sends the browser back to /bot/v1/oauth/callback
 curl localhost:3000/bot/v1/state                                          # roster, presence, feed
 curl -X POST localhost:3000/bot/v1/bots -H 'content-type: application/json' -d '{"name":"Ava","role":"Inbound sales follow-up","persona":"Warm and brief."}'
@@ -276,12 +357,12 @@ of it; these are the ones that matter.
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console passwords, each bound to a workspace |
-| `BOT_PUBLIC_URL` | the front door's public origin for canonical URLs and the sitemap; Vercel supplies its own |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
 | `BOT_STANDUP_CRON` / `BOT_STANDUP_ROOM` | when the daily standup runs (`0 13 * * 1-5`, in UTC) and where it posts: HQ's `desk` by default, or a Bot's room (`bot-<id>`) |
 | `BOT_SANDBOX_ALLOW_DOMAINS` / `BOT_BROWSER_ALLOWED_DOMAINS` | fence the computer and the browser |
 | `BOT_BROWSER_PAGE_CHARS` / `BOT_BROWSER_SETTLE_MS` | how much of a page a Bot reads per look (`8000`) and how long it lets the page settle first (`300`) |
-| `BOT_EMAIL_WEBHOOK` | where approved email goes; unset returns drafts. The relay must follow the contract below |
+| `BOT_EMAIL_WEBHOOK` / `BOT_EMAIL_WEBHOOK_TOKEN` | where approved email goes, and the bearer token sent with it; unset returns drafts. The relay must follow the contract below |
+| `BOT_EMAIL_WEBHOOK_TIMEOUT_MS` | how long one relay request may take before its outcome counts as unknown (`30000`) |
 
 ### Outbound email relay
 
