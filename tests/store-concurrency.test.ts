@@ -10,9 +10,9 @@ import { KvConflictError } from "../agent/lib/store/kv";
 /**
  * The invariants M1 builds on, each expressed as a single-document
  * compare-and-set (docs/decisions/0001-state-store.md). They run against the
- * two backends that work without credentials. Blob is not covered here: its
- * compare-and-set is enforced by the Blob service (`ifMatch`, create-only
- * `allowOverwrite: false`) and there is no mock of @vercel/blob to test against.
+ * two backends that work without credentials. Blob runs the same invariants,
+ * across several runtimes and with lost answers, against a fake of the Blob
+ * service in `store-blob-invariants.test.ts`.
  */
 const backends = ["memory", "fs"] as const;
 

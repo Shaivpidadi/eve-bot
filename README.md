@@ -209,8 +209,10 @@ estimate for its effort before it starts and gives back what it did not spend
 when it ends; a run that would not fit is blocked with the reason, and one
 that overruns its reservation once the month is used up is stopped before its
 next model step and blocked. Calls whose provider reported no price are
-counted as unpriced rather than as free. Computer runtime is billed by Vercel
-and is not counted here.
+counted as unpriced rather than as free. The computer's runtime counts too
+once you set its rate from your Vercel plan (`BOT_COMPUTER_USD_PER_HOUR`, or
+per active-CPU hour and per GB-hour): the watchdog charges each finished
+Sandbox session to the workspace, once. Without a rate it shows as unpriced.
 
 Behind Vercel Authentication the console shows who is signed in, with their
 Vercel name and picture. Elsewhere it shows the name in `X-Bot-User`, or the
@@ -350,6 +352,7 @@ of it; these are the ones that matter.
 | `BOT_MODEL_PRICES` | `model=in/out` USD per million tokens, so spend caps hold off Gateway; OpenRouter is read automatically |
 | `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`) |
 | `BOT_BUDGET_MONTHLY_USD` / `BOT_BUDGET_DAILY_USD` | workspace spend limit per UTC month / day; unset = no limit, spend still tracked |
+| `BOT_COMPUTER_USD_PER_HOUR` / `_PER_CPU_HOUR` / `_PER_GB_HOUR` | the computer's rate from your Vercel plan, so its runtime counts on the budget; unset = unpriced |
 | `BOT_MEMORY_FLOOR` | how sure Jev must be before something is remembered (`0`–`1`; defaults to `BOT_JEV_CONFIDENCE`) |
 | `BOT_MEMORY_MODEL` | the model that reads exchanges for memories (`anthropic/claude-haiku-4-5` on Gateway; the quick model on a custom endpoint) |
 | `BOT_MEMORY_EMBEDDINGS` / `BOT_MEMORY_EMBEDDING_MODEL` | `off` ranks lessons by words only; the model that embeds them otherwise (`openai/text-embedding-3-small`, on Gateway only) |

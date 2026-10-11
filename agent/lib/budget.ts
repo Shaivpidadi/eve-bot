@@ -1,6 +1,7 @@
 import { record } from "./activity";
 import { blockJob, deferRun, getJob } from "./jobs";
 import { DEFAULT_EFFORT, type JobEffort } from "./models";
+import { computerRates } from "./pricing";
 import { readDoc, store, updateDoc } from "./store";
 import type { Job } from "./types";
 
@@ -40,10 +41,13 @@ import type { Job } from "./types";
  * they set everything else: `BOT_BUDGET_MONTHLY_USD` and `BOT_BUDGET_DAILY_USD`
  * (unset, empty, `0` or `off` = no limit). Spend is tracked either way.
  *
- * Not priced here: the computer's runtime (Vercel Sandbox time and the
- * browser's CPU). Nothing in the app knows its rate, the computer is shared by
- * every run in the workspace, and Vercel bills it on its own line; the status
- * says so (`unpriced`) rather than pretending it is free.
+ * The computer's runtime (Vercel Sandbox) is charged per finished session,
+ * once, by `recordComputerSessions` (`computer-spend.ts` lists the sessions),
+ * against the workspace and never a run: the computer is shared by every run,
+ * so no session belongs to one. Its rate is the owner's to set
+ * (`BOT_COMPUTER_USD_PER_HOUR` and friends, see `pricing.ts`); without one,
+ * sessions are counted as unknown cost and the status says the runtime is
+ * unpriced rather than pretending it is free.
  */
 
 export type ReservationState = "held" | "settled" | "released";
@@ -59,6 +63,8 @@ export interface Reservation {
   /** When it was admitted. */
   readonly at: string;
   readonly closedAt?: string;
+  /** The call that closed it, so that call knows its own close when the write comes back as a conflict. */
+  readonly closedBy?: string;
   /** Spent past its reservation while the workspace had no headroom: no more model steps. */
   readonly halted?: boolean;
 }
@@ -91,6 +97,13 @@ export interface BudgetDoc {
   readonly reservations: Readonly<Record<string, Reservation>>;
   /** The last `SPEND_IDS_KEPT` spend ids, so a spend applied twice (a retry, a re-delivered event) counts once. */
   readonly recentSpendIds: readonly string[];
+  /**
+   * The computer's sessions charged to this period (the month each stopped
+   * in), by session id, with what each was charged (null: unknown cost).
+   * Never pruned, so a session listed again is never charged twice; a month
+   * holds as many as the computer had starts.
+   */
+  readonly computerSessions?: Readonly<Record<string, number | null>>;
   readonly updatedAt: string;
 }
 
@@ -335,7 +348,13 @@ export function applySpend(
 /** Closes a reservation. Closing one already closed, or one not on this doc, writes nothing and is success. */
 export function applyClose(
   current: BudgetDoc,
-  input: { readonly runToken: string; readonly state: Exclude<ReservationState, "held">; readonly limits: BudgetLimits; readonly at: Date },
+  input: {
+    readonly runToken: string;
+    readonly state: Exclude<ReservationState, "held">;
+    readonly limits: BudgetLimits;
+    readonly at: Date;
+    readonly by?: string;
+  },
 ): BudgetDoc | null {
   const reservation = current.reservations[input.runToken];
   if (reservation === undefined || reservation.state !== "held") return null;
@@ -344,12 +363,52 @@ export function applyClose(
       ...current,
       reservations: {
         ...current.reservations,
-        [input.runToken]: { ...reservation, state: input.state, closedAt: input.at.toISOString() },
+        [input.runToken]: {
+          ...reservation,
+          state: input.state,
+          closedAt: input.at.toISOString(),
+          ...(input.by === undefined ? {} : { closedBy: input.by }),
+        },
       },
     },
     input.limits,
     input.at,
   );
+}
+
+/** A finished computer session to charge: its id, its cost (null: unknown) and when it stopped. */
+export interface ComputerCharge {
+  readonly sessionId: string;
+  readonly usd: number | null;
+  readonly stoppedAt: Date;
+}
+
+/**
+ * Charges finished computer sessions to the workspace, each once: a session
+ * already in `computerSessions` is skipped. Each counts on the day it stopped.
+ * `next` is null when every one was already charged.
+ */
+export function applyComputerSessions(
+  current: BudgetDoc,
+  input: { readonly sessions: readonly ComputerCharge[]; readonly limits: BudgetLimits; readonly at: Date },
+): { next: BudgetDoc | null; charged: readonly string[] } {
+  let doc = current;
+  const charged: string[] = [];
+  for (const session of input.sessions) {
+    if (doc.computerSessions?.[session.sessionId] !== undefined || charged.includes(session.sessionId)) continue;
+    const spent = applySpend(doc, {
+      runToken: null,
+      usd: session.usd,
+      category: "computer",
+      id: `computer:${session.sessionId}`,
+      limits: input.limits,
+      at: session.stoppedAt,
+    }).next;
+    const usd = session.usd !== null && Number.isFinite(session.usd) ? money(Math.max(0, session.usd)) : null;
+    doc = { ...(spent ?? doc), computerSessions: { ...doc.computerSessions, [session.sessionId]: usd } };
+    charged.push(session.sessionId);
+  }
+  return charged.length === 0 ? { next: null, charged } : { next: seal(doc, input.limits, input.at), charged };
 }
 
 // ---------------------------------------------------------------------------
@@ -474,10 +533,50 @@ export async function recordSpend(
   return outcome.value;
 }
 
+/**
+ * Charges the computer's finished sessions to the workspace budget, each in
+ * the month it stopped, each once whoever calls and however often: the session
+ * id is recorded in the same compare-and-set as the charge, and a write that
+ * landed but came back as a conflict finds it there. Returns how many sessions
+ * this call newly charged (a write retried into its own success reports 0).
+ * Throws when the store cannot be written; the next sweep tries again.
+ */
+export async function recordComputerSessions(
+  workspaceId: string,
+  sessions: readonly ComputerCharge[],
+  options: { readonly now?: Date; readonly limits?: BudgetLimits } = {},
+): Promise<number> {
+  const at = options.now ?? new Date();
+  const limits = options.limits ?? budgetLimits();
+  const byPeriod = new Map<string, ComputerCharge[]>();
+  for (const session of sessions) {
+    const period = periodOf(session.stoppedAt);
+    byPeriod.set(period, [...(byPeriod.get(period) ?? []), session]);
+  }
+  let total = 0;
+  for (const [period, inPeriod] of byPeriod) {
+    const result = { charged: 0 };
+    await updateDoc<BudgetDoc>(key(workspaceId, period), (current) => {
+      const applied = applyComputerSessions(current ?? emptyBudget(workspaceId, period), { sessions: inPeriod, limits, at });
+      result.charged = applied.charged.length;
+      return applied.next;
+    });
+    total += result.charged;
+  }
+  return total;
+}
+
 async function close(workspaceId: string, runToken: string, state: "settled" | "released", now?: Date): Promise<boolean> {
   const at = now ?? new Date();
   const limits = budgetLimits();
-  return (await updateHolding(workspaceId, runToken, at, (current) => applyClose(current, { runToken, state, limits, at }))).written;
+  const by = `close_${crypto.randomUUID()}`;
+  const seen = { mine: false };
+  const { written } = await updateHolding(workspaceId, runToken, at, (current) => {
+    // Closed by this call already: its write landed but came back as a conflict (Blob).
+    seen.mine = current.reservations[runToken]?.closedBy === by;
+    return seen.mine ? null : applyClose(current, { runToken, state, limits, at, by });
+  });
+  return written || seen.mine;
 }
 
 /**
@@ -653,9 +752,15 @@ export interface BudgetStatus {
   readonly unpriced: readonly string[];
 }
 
-export const UNPRICED = ["computer runtime (Vercel Sandbox time is billed by Vercel, not counted here)"] as const;
+export const UNPRICED = [
+  "computer runtime (Vercel Sandbox time is billed by Vercel; set BOT_COMPUTER_USD_PER_HOUR to count it here)",
+] as const;
 
-export function statusOf(doc: BudgetDoc, limits: BudgetLimits, now: Date): BudgetStatus {
+/** What the figures leave out: the computer's runtime, until a rate for it is set. */
+export const unpricedCosts = (env: NodeJS.ProcessEnv = process.env): readonly string[] =>
+  computerRates(env) === null ? UNPRICED : [];
+
+export function statusOf(doc: BudgetDoc, limits: BudgetLimits, now: Date, unpriced: readonly string[] = unpricedCosts()): BudgetStatus {
   const reservations = Object.values(doc.reservations);
   return {
     period: doc.period,
@@ -669,7 +774,7 @@ export function statusOf(doc: BudgetDoc, limits: BudgetLimits, now: Date): Budge
     heldRuns: reservations.filter((reservation) => reservation.state === "held").length,
     haltedRuns: reservations.filter((reservation) => reservation.halted === true).length,
     byCategory: doc.byCategory,
-    unpriced: UNPRICED,
+    unpriced,
   };
 }
 
