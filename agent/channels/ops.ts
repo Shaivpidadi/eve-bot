@@ -348,7 +348,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
       const cancelledJobs: string[] = [];
       // The teammate's own session holds its open requests, such as a cost-limit
-      // card, so each job's run is stopped with it (see cancelJobRun).
+      // card, so each job's sessions are stopped with it: the run's bound one and
+      // the one the job records, which is all a run that never called job_brief
+      // has (see cancelJobRun).
       const interrupt = interruptVia(attachSession, "Room reset");
       for (const job of await listOpenJobs(workspaceId)) {
         if (job.room !== room || isRoutine(job)) continue;
