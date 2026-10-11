@@ -33,6 +33,27 @@ describe("classifyAction", () => {
     }
   });
 
+  it("flags controls that save or change a record, even a type=button with no form", () => {
+    for (const name of ["Save changes", "Save", "Create token", "Add member", "Update payment method", "Apply", "Finish setup", "Complete purchase", "Archive", "Mark as paid", "Add to cart", "Generate new token"]) {
+      // A single-page app's button: type="button", no form, so only the words say what it does.
+      const result = classifyAction(click({ tree: tree("button", name), dom: dom({ name }) }));
+      expect(result.verdict, name).toBe("consequential");
+      expect(result.reasons.join(" "), name).toMatch(/the control says/);
+    }
+  });
+
+  it("keeps plain movement safe, and does not read record verbs into a word that only contains them", () => {
+    for (const name of ["Next", "Back", "Open", "View", "Search", "Show more", "Close", "Updates", "Saved items", "Address", "Completed tasks"]) {
+      expect(classifyAction(click({ tree: tree("button", name), dom: dom({ name }) })).verdict, name).toBe("safe");
+    }
+    expect(classifyAction(click({ tree: tree("link", "Open"), dom: dom({ tag: "A", type: "", href: "https://app.example.com/records/42" }) })).verdict).toBe("safe");
+  });
+
+  it("does not read a record verb in an article's address as an action", () => {
+    const article = click({ tree: tree("link", "Ten tips"), dom: dom({ tag: "A", type: "", name: "Ten tips", href: "https://blog.example.com/how-to-save-and-update" }) });
+    expect(classifyAction(article).verdict).toBe("safe");
+  });
+
   it("lets plain navigation through", () => {
     for (const [role, name] of [["link", "Inbox"], ["tab", "Settings"], ["menuitem", "Billing"], ["button", "Show more"], ["row", "Invoice 1042"], ["checkbox", "Select all"]] as const) {
       expect(classifyAction(click({ tree: tree(role, name) })).verdict, `${role} ${name}`).toBe("safe");

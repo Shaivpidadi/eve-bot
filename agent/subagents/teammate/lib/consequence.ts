@@ -79,34 +79,54 @@ export interface Classification {
   readonly reasons: readonly string[];
 }
 
+/** Whole words, case-insensitively, with any run of whitespace between the words of a phrase. */
+const wordList = (words: readonly string[]): RegExp =>
+  new RegExp(`\\b(${words.map((word) => word.replace(/ /g, "\\s+")).join("|")})\\b`, "i");
+
+/** Words that spend, send, publish, destroy or commit outright, on a control or in its address. */
+const COMMITTING = [
+  // Money.
+  "pay", "pays", "payment", "buy", "purchase", "checkout", "check out", "order", "place order", "subscribe",
+  "donate", "transfer", "withdraw", "wire", "refund", "charge", "upgrade", "downgrade", "renew", "book", "reserve",
+  // Sending and publishing.
+  "send", "submit", "publish", "post", "reply", "reply all", "forward", "tweet", "retweet", "repost", "share",
+  "invite", "comment", "go live", "make public", "broadcast",
+  // Destroying.
+  "delete", "remove", "discard", "erase", "destroy", "trash", "empty", "purge", "wipe", "revoke", "deactivate",
+  "close account", "unsubscribe", "reset",
+  // Committing.
+  "confirm", "approve", "accept", "agree", "authorize", "authorise", "grant", "merge", "deploy", "release",
+  "cancel", "transfer ownership",
+  // Signing a document or signing up, but not signing in: that is a takeover.
+  "sign(?!\\s*in\\b)", "e-sign", "sign up",
+] as const;
+
 /**
- * Words on a control that spend, send, publish, destroy, or commit. Matched as
- * whole words, case-insensitively. Deliberately broad: the cost of asking is
- * one approval, and the cost of missing is an email nobody meant to send.
+ * Words that save or change a record: the verbs `catalog.ts` reads as a write
+ * in a tool's name, as they appear on a button. A single-page app's Save is
+ * often `type="button"` with no form around it, so its words are the only
+ * signal. Read on what a control says, not in a link's address, where they are
+ * as likely to be an article's slug (/blog/how-to-save-money).
+ *
+ * Plain movement stays out: next, back, open, view, search, show more, close.
  */
-export const CONSEQUENTIAL_WORDS = new RegExp(
-  "\\b(" +
-    [
-      // Money.
-      "pay", "pays", "payment", "buy", "purchase", "checkout", "check out", "order", "place order", "subscribe",
-      "donate", "transfer", "withdraw", "wire", "refund", "charge", "upgrade", "downgrade", "renew", "book", "reserve",
-      // Sending and publishing.
-      "send", "submit", "publish", "post", "reply", "reply all", "forward", "tweet", "retweet", "repost", "share",
-      "invite", "comment", "go live", "make public", "broadcast",
-      // Destroying.
-      "delete", "remove", "discard", "erase", "destroy", "trash", "empty", "purge", "wipe", "revoke", "deactivate",
-      "close account", "unsubscribe", "reset",
-      // Committing.
-      "confirm", "approve", "accept", "agree", "authorize", "authorise", "grant", "merge", "deploy", "release",
-      "cancel", "transfer ownership",
-      // Signing a document or signing up, but not signing in: that is a takeover.
-      "sign(?!\\s*in\\b)", "e-sign", "sign up",
-    ]
-      .map((word) => word.replace(/ /g, "\\s+"))
-      .join("|") +
-    ")\\b",
-  "i",
-);
+const RECORD_CHANGING = [
+  "save", "create", "add", "update", "apply", "finish", "complete", "assign", "unassign", "archive",
+  "unarchive", "move to", "rename", "revert", "restore", "import", "enable", "disable", "block", "unblock",
+  "lock", "unlock", "reject", "decline", "resolve", "reopen", "mark as", "set as", "join", "leave", "follow",
+  "unfollow", "report", "generate", "regenerate", "install", "uninstall", "connect", "disconnect", "link account",
+] as const;
+
+/**
+ * Words on a control that spend, send, publish, destroy, commit, or save a
+ * change. Matched as whole words, case-insensitively. Deliberately broad: the
+ * cost of asking is one approval, and the cost of missing is an email nobody
+ * meant to send.
+ */
+export const CONSEQUENTIAL_WORDS = wordList([...COMMITTING, ...RECORD_CHANGING]);
+
+/** The narrower set read in a link's address: /messages/42/delete. */
+const ADDRESS_WORDS = wordList(COMMITTING);
 
 /** Paths where a plain-looking button is likely to spend. */
 const MONEY_PATH = /(^|[/._-])(checkout|payment|payments|pay|cart|basket|purchase|transfer|wire|donate|subscribe|upgrade)([/._-]|$)/i;
@@ -141,11 +161,13 @@ const path = (url: string): string => {
 
 /** The words a control shows, which a page chooses. */
 function words(facts: ActionFacts): string[] {
-  const shown = [facts.tree?.name, facts.dom?.name, facts.option].filter((text): text is string => typeof text === "string" && text.trim() !== "");
-  // A link's address says what it does when its text does not: /messages/42/delete.
+  return [facts.tree?.name, facts.dom?.name, facts.option].filter((text): text is string => typeof text === "string" && text.trim() !== "");
+}
+
+/** A link's address, which says what it does when its text does not: /messages/42/delete. */
+function addressPath(facts: ActionFacts): string | null {
   const href = facts.dom?.href ?? "";
-  if (href !== "" && !href.startsWith("#")) shown.push(path(href) || href);
-  return shown;
+  return href !== "" && !href.startsWith("#") ? path(href) || href : null;
 }
 
 /** The role a tag carries without a `role` attribute, for an element the tree did not describe. */
@@ -206,13 +228,13 @@ export function classifyAction(facts: ActionFacts): Classification {
 
   // Typing alone changes nothing outside the page; the Enter that follows might.
   if (kind !== "fill" && kind !== "upload") {
-    for (const text of words(facts)) {
-      const hit = CONSEQUENTIAL_WORDS.exec(text);
-      if (hit !== null) {
-        flag("consequential", `the control says "${hit[0]}"`);
-        break;
-      }
-    }
+    const said = words(facts)
+      .map((text) => CONSEQUENTIAL_WORDS.exec(text))
+      .find((hit) => hit !== null);
+    const href = addressPath(facts);
+    const linked = href === null ? null : ADDRESS_WORDS.exec(href);
+    if (said) flag("consequential", `the control says "${said[0]}"`);
+    else if (linked !== null) flag("consequential", `the control says "${linked[0]}"`);
   }
 
   if (kind === "submit") {
@@ -241,7 +263,7 @@ export function classifyAction(facts: ActionFacts): Classification {
     }
     if (tree === null && dom === null) {
       flag("unknown", "the element could not be identified on the page");
-    } else if (BUTTON_ROLES.has(role) && words(facts).length === 0) {
+    } else if (BUTTON_ROLES.has(role) && words(facts).length === 0 && addressPath(facts) === null) {
       flag("unknown", "the control has no name to check");
     } else if (!navigating && !BUTTON_ROLES.has(role) && !NAVIGATING_ROLES.has(role)) {
       flag("unknown", `a ${role} is not a control this can vouch for`);
