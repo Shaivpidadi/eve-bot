@@ -1,5 +1,6 @@
 import { recentActivity } from "./activity";
 import { listBots } from "./bots";
+import { budgetStatus, type BudgetStatus } from "./budget";
 import { computerMode, vercelCredentialsError, type ComputerMode } from "./computer-config";
 import {
   handoverBelongsTo,
@@ -9,6 +10,7 @@ import {
   type ScreenAllocation,
   type ServiceState,
 } from "./computer/screens";
+import { jobHealth, type Health } from "./health";
 import { isRoutine, listOpenJobs } from "./jobs";
 import { describeSchedule } from "./schedule";
 import { ledgerTotal, NO_USAGE, readLedger, type Usage } from "./usage";
@@ -121,6 +123,10 @@ export interface Board {
   };
   /** What the workspace has spent on models, all time: HQ's own turns and every Bot's jobs. */
   readonly usage: { readonly total: Usage; readonly hq: Usage; readonly bots: Readonly<Record<string, Usage>> };
+  /** This month's workspace budget (see `budget.ts`): limit, spent, held by running jobs, unknown-cost flags. */
+  readonly budget: BudgetStatus;
+  /** Work that should have started and has not, and runs whose worker stopped (see `health.ts`). */
+  readonly health: Health;
 }
 
 export const HQ_MEMBER_ID = "hq";
@@ -163,12 +169,13 @@ export async function buildBoard(
   workspaceId: string,
   options: { after?: string } = {},
 ): Promise<Board> {
-  const [bots, open, recent, screens, ledger] = await Promise.all([
+  const [bots, open, recent, screens, ledger, budget] = await Promise.all([
     listBots(workspaceId),
     listOpenJobs(workspaceId),
     recentActivity(workspaceId, { limit: FEED_WINDOW }),
     readScreens(),
     readLedger(workspaceId),
+    budgetStatus(workspaceId),
   ]);
   const rooms = await Promise.all(
     [HQ_ROOM, ...bots.map((bot) => roomForBot(bot.id))].map((room) =>
@@ -214,6 +221,11 @@ export async function buildBoard(
       hq: ledger.hq,
       bots: ledger.bots,
     },
+    budget,
+    health: jobHealth(open, {
+      now,
+      pausedBotIds: new Set(bots.filter((bot) => bot.status !== "active").map((bot) => bot.id)),
+    }),
   };
 }
 

@@ -30,6 +30,14 @@ describe("candidateActions", () => {
     expect(candidates.find((candidate) => candidate.ref === "@e6")?.consequential).toBe(true);
     expect(candidates.find((candidate) => candidate.ref === "@e4")?.consequential).toBe(false);
   });
+
+  it("marks a control that saves or creates something, and not one that moves on", () => {
+    const candidates = candidateActions(`- button "Save changes" [ref=e1]
+- button "Create token" [ref=e2]
+- button "Next" [ref=e3]
+- link "Open" [ref=e4]`);
+    expect(candidates.map((candidate) => candidate.consequential)).toEqual([true, true, false, false]);
+  });
 });
 
 describe("stepQuestion", () => {
@@ -77,6 +85,7 @@ describe("readChoice", () => {
     const stopped = readChoice(answer("a3"), candidates);
     expect(stopped.stop).toBe("consequential");
     expect(stopped.pick?.name).toBe("Pay now");
-    expect(readChoice(answer("a3"), candidates, { allowConsequential: true }).stop).toBeNull();
+    // No option lets it through: only a person's approval does, via page_confirm.
+    expect(readChoice(answer("a3"), candidates, { allowConsequential: true } as never).stop).toBe("consequential");
   });
 });

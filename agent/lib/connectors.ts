@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
-import { catalogEntry, effectOf, mergePolicy, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind, type ToolEffect, type ToolPolicy } from "./catalog";
+import { catalogEntry, guessedReads, isReviewedRead, mergePolicy, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind, type ToolEffect, type ToolPolicy } from "./catalog";
 import { authorizeUrl, beginPkce, discover, exchangeCode, needsRefresh, type OAuthClient, type OAuthMetadata, refreshTokens, registerClient, type TokenSet } from "./connector-oauth";
 import { computerKey } from "./computer/keys";
 import { newId } from "./ids";
@@ -61,6 +61,22 @@ export interface Connector {
    * operator's to correct. A tool missing from it counts as a write.
    */
   readonly policy?: ToolPolicy;
+  /**
+   * Tools whose `policy` entry a person set on the Connectors page, as
+   * opposed to the name-based guess. Only a reviewed read (or one the catalog
+   * vouches for) is offered to HQ. Absent on connectors stored before this
+   * existed, which makes every entry they have a guess.
+   */
+  readonly reviewed?: readonly string[];
+  /**
+   * Bumped on every change to who may do what with this connector: on or off,
+   * gate, tool switches, policy, the tool list, the key, the sign-in. An
+   * approval is recorded with the version it was given under and counts only
+   * while that is still the live one, so a decision made under old settings
+   * (an approval "once") is not reused (see `connector-connection.ts`).
+   * Absent means 0.
+   */
+  readonly permissionVersion?: number;
   /** Tools the operator switched off; Bots and HQ never see them. Absent means all on. */
   readonly disabledTools?: readonly string[];
   readonly check: ConnectorCheck;
@@ -109,6 +125,17 @@ export function publicConnector(connector: Connector): PublicConnector {
         : { kind: connector.auth.kind };
   return { ...connector, auth };
 }
+
+/** The connector's permission version; see `Connector.permissionVersion`. */
+export const permissionVersion = (connector: Pick<Connector, "permissionVersion">): number => connector.permissionVersion ?? 0;
+
+/**
+ * The next permission version, for a record that changes who may do what.
+ * Always applied inside the same `updateDoc` as the change itself, so the two
+ * land together. A write retried after a false conflict bumps twice, which is
+ * harmless: the version only has to differ, never to count.
+ */
+const bump = (connector: Pick<Connector, "permissionVersion">) => ({ permissionVersion: permissionVersion(connector) + 1 });
 
 /** A connector that signs in through the server's own OAuth and has not yet. */
 export const needsConnect = (connector: Connector): boolean => connector.auth.kind === "oauth" && connector.auth.sealed === null;
@@ -179,6 +206,8 @@ export async function addConnector(
     enabled: true,
     gate,
     policy: mergePolicy(undefined, probe.tools),
+    reviewed: [],
+    permissionVersion: 1,
     check: probe,
     createdAt: now,
     createdBy,
@@ -196,8 +225,9 @@ export async function updateConnector(
     enabled?: boolean;
     gate?: ConnectorGate;
     description?: string;
+    /** What the server offers now; on success the policy is merged over the new tool list (a guess for anything new). */
     check?: ConnectorCheck;
-    /** Corrections to what a tool does, merged over what is recorded. */
+    /** An operator's decisions about what a tool does, merged over what is recorded and marked reviewed. */
     policy?: Readonly<Record<string, ToolEffect>>;
     /** Tools switched on (true) or off (false), merged over what is recorded. */
     tools?: Readonly<Record<string, boolean>>;
@@ -207,25 +237,80 @@ export async function updateConnector(
     if (current === null) return null;
     const disabled = new Set(current.disabledTools ?? []);
     for (const [tool, on] of Object.entries(patch.tools ?? {})) if (on) disabled.delete(tool); else disabled.add(tool);
+    const gate = patch.gate === undefined || !GATES.includes(patch.gate) ? undefined : patch.gate;
+    // The operator's decisions first, then a successful check re-fits the whole policy to the tools the server lists now.
+    let policy: ToolPolicy | undefined = patch.policy === undefined ? current.policy : { ...current.policy, ...patch.policy };
+    let reviewed = patch.policy === undefined ? current.reviewed : [...new Set([...(current.reviewed ?? []), ...Object.keys(patch.policy)])].sort();
+    if (patch.check?.ok === true) {
+      policy = mergePolicy(policy, patch.check.tools, reviewed);
+      reviewed = (reviewed ?? []).filter((tool) => patch.check?.tools.includes(tool));
+    }
+    const permissions = patch.enabled !== undefined || gate !== undefined || patch.check !== undefined || patch.policy !== undefined || patch.tools !== undefined;
     return {
       ...current,
       ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
-      ...(patch.gate === undefined || !GATES.includes(patch.gate) ? {} : { gate: patch.gate }),
+      ...(gate === undefined ? {} : { gate }),
       ...(patch.description === undefined ? {} : { description: patch.description.trim().slice(0, DESCRIPTION_MAX) }),
       ...(patch.check === undefined ? {} : { check: patch.check }),
-      ...(patch.policy === undefined ? {} : { policy: { ...current.policy, ...patch.policy } }),
+      ...(policy === undefined ? {} : { policy }),
+      ...(reviewed === undefined ? {} : { reviewed }),
       ...(patch.tools === undefined ? {} : { disabledTools: [...disabled].sort() }),
+      ...(permissions ? bump(current) : {}),
     };
   });
 }
 
 /**
- * The tools a connector offers right now: what the server listed at the last
- * check, less what the operator switched off, and for HQ only those that read.
+ * Confirms, in one operator action, that tools guessed to read do only read,
+ * so HQ may use them: the upgrade path for connectors stored before HQ needed
+ * reviewed reads, which otherwise means one "reads?" click per tool.
+ *
+ * Only a tool that is a guessed read on the record as it stands when the write
+ * lands (`guessedReads`) is marked reviewed; anything else asked for — a
+ * write, a switched-off tool, one already reviewed, one the server no longer
+ * lists — is left alone and reported back as skipped. `tools` omitted means
+ * every guessed read. The policy entry stays "read" (it already is), the
+ * permission version moves once in the same write, and nothing moves when
+ * there was nothing to confirm.
  */
-export function allowedTools(connector: Pick<Connector, "check" | "disabledTools" | "policy">, options: { readonly readsOnly?: boolean } = {}): string[] {
+export async function confirmGuessedReads(
+  workspaceId: string,
+  id: string,
+  tools?: readonly string[],
+): Promise<{ connector: Connector; confirmed: string[]; skipped: string[] } | null> {
+  let confirmed: string[] = [];
+  let skipped: string[] = [];
+  const updated = await updateDoc<Connector>(key(workspaceId, id), (current) => {
+    if (current === null) return null;
+    const guessed = guessedReads(current);
+    const wanted = tools === undefined ? guessed : [...new Set(tools)];
+    confirmed = wanted.filter((tool) => guessed.includes(tool));
+    skipped = wanted.filter((tool) => !guessed.includes(tool));
+    if (confirmed.length === 0) return current;
+    const policy: Record<string, ToolEffect> = { ...current.policy };
+    for (const tool of confirmed) policy[tool] = "read";
+    return {
+      ...current,
+      policy,
+      reviewed: [...new Set([...(current.reviewed ?? []), ...confirmed])].sort(),
+      ...bump(current),
+    };
+  });
+  return updated === null ? null : { connector: updated, confirmed, skipped };
+}
+
+/**
+ * The tools a connector offers right now: what the server listed at the last
+ * check, less what the operator switched off, and for HQ only the reads a
+ * person (or the catalog) stands behind. A read guessed from a name alone is
+ * not enough for HQ, which has no approval gate at all.
+ */
+export function allowedTools(
+  connector: Pick<Connector, "check" | "disabledTools" | "policy" | "reviewed"> & { readonly catalog?: string | null },
+  options: { readonly readsOnly?: boolean } = {},
+): string[] {
   const off = new Set(connector.disabledTools ?? []);
-  return connector.check.tools.filter((tool) => !off.has(tool) && (!options.readsOnly || effectOf(connector.policy, tool) === "read"));
+  return connector.check.tools.filter((tool) => !off.has(tool) && (!options.readsOnly || isReviewedRead(connector, tool)));
 }
 
 /**
@@ -249,7 +334,16 @@ export async function replaceKey(
   if (!probe.ok) return { ok: false, error: probe.error ?? "The server did not accept that key." };
   const auth = await seal(kind, header, secret);
   const updated = await updateDoc<Connector>(key(workspaceId, id), (record) =>
-    record === null ? null : { ...record, auth, check: probe, policy: mergePolicy(record.policy, probe.tools) },
+    record === null
+      ? null
+      : {
+          ...record,
+          auth,
+          check: probe,
+          policy: mergePolicy(record.policy, probe.tools, record.reviewed),
+          reviewed: (record.reviewed ?? []).filter((tool) => probe.tools.includes(tool)),
+          ...bump(record),
+        },
   );
   return updated === null ? { ok: false, error: "no such connector" } : { ok: true, connector: updated };
 }
@@ -263,10 +357,7 @@ export async function removeConnector(workspaceId: string, id: string): Promise<
 /** Reaches the server again with its stored key and records what it offers now. */
 export async function recheckConnector(connector: Connector): Promise<Connector | null> {
   const check = await probeMcp(connector.url, await connectorHeaders(connector));
-  return updateConnector(connector.workspaceId, connector.id, {
-    check,
-    ...(check.ok ? { policy: mergePolicy(connector.policy, check.tools) } : {}),
-  });
+  return updateConnector(connector.workspaceId, connector.id, { check });
 }
 
 /** The connector's request headers with its key unsealed. Only for server-side calls. */
@@ -319,7 +410,7 @@ export async function startOAuth(workspaceId: string, id: string, origin: string
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
     const registered = client;
-    await updateDoc<Connector>(key(workspaceId, id), (current) => (current === null || current.auth.kind !== "oauth" ? null : { ...current, auth: { ...current.auth, client: registered } }));
+    await updateDoc<Connector>(key(workspaceId, id), (current) => (current === null || current.auth.kind !== "oauth" ? null : { ...current, auth: { ...current.auth, client: registered }, ...bump(current) }));
   }
   const pkce = beginPkce(connector.auth.metadata.pkce);
   await writeDoc<Pending>(pendingKey(pkce.state), { workspaceId, connectorId: id, verifier: pkce.verifier, at: new Date().toISOString() });
@@ -352,7 +443,7 @@ export async function completeOAuth(state: string, code: string | null, failure:
     return fail(error instanceof Error ? error.message : String(error));
   }
   const auth = { ...connector.auth, sealed: await sealText(JSON.stringify(tokens)), connectedAt: new Date().toISOString() };
-  const connected = await updateDoc<Connector>(key(workspaceId, connectorId), (current) => (current === null ? null : { ...current, auth }));
+  const connected = await updateDoc<Connector>(key(workspaceId, connectorId), (current) => (current === null ? null : { ...current, auth, ...bump(current) }));
   if (connected !== null) await recheckConnector(connected);
   return { workspaceId, connectorId, error: null };
 }
@@ -362,7 +453,12 @@ export async function disconnectOAuth(workspaceId: string, id: string): Promise<
   const updated = await updateDoc<Connector>(key(workspaceId, id), (current) =>
     current === null || current.auth.kind !== "oauth"
       ? null
-      : { ...current, auth: { ...current.auth, sealed: null, connectedAt: null }, check: { ok: false, at: new Date().toISOString(), tools: current.check.tools, error: "Connect to finish setting it up." } },
+      : {
+          ...current,
+          auth: { ...current.auth, sealed: null, connectedAt: null },
+          check: { ok: false, at: new Date().toISOString(), tools: current.check.tools, error: "Connect to finish setting it up." },
+          ...bump(current),
+        },
   );
   return updated !== null;
 }

@@ -5,6 +5,8 @@ import { z } from "zod";
 import { record, recentActivity } from "../lib/activity";
 import { readArtifact } from "../lib/artifacts";
 import { getBot } from "../lib/bots";
+import { admitClaimedRun, BUDGET_HALT_REASON, releaseRun, runHalted, settleRun } from "../lib/budget";
+import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
 import { renderBrief } from "../lib/brief";
 import { reapIdleScreens } from "../lib/computer/reaper";
 import { forgetJob } from "../lib/computer/screens";
@@ -21,8 +23,10 @@ import {
   releaseJob,
   renewLease,
   resultIsFromRun,
+  runStanding,
   sendBack,
   type Hold,
+  type Standing,
 } from "../lib/jobs";
 import { learnFromFeedback } from "../lib/memory/outcomes";
 import { sameFindings } from "../lib/findings";
@@ -30,21 +34,30 @@ import { jevEnabled, judge } from "../lib/jev";
 import { completionQuestions, noteShadow, readVerdict, unmetCriteria } from "../lib/jev-watch";
 import { DEFAULT_EFFORT, nextEffort } from "../lib/models";
 import { ROUTINE_REPORT_PREFIX } from "../lib/rooms";
+import { nextWake } from "../lib/run-stop";
 import { operator } from "../lib/session";
 import { looseBoolean } from "../lib/tool-input";
 import type { JobResult, JobStatus } from "../lib/types";
 
 /**
  * Short on purpose, so a run that died is noticed within minutes. A live run
- * renews it on every heartbeat, however long the bot takes.
+ * renews it every few checks, however long the bot takes.
  */
 const LEASE_MS = 20 * 60_000;
-const HEARTBEAT = "8m";
+/**
+ * How often a run waiting on its bot looks at its job: a cancelled job's run
+ * ends within this even while the bot is parked on a card. A look is one read;
+ * the lease, a write, is renewed only every `RENEW_EVERY` looks (8 minutes).
+ */
+const CHECK_EVERY = "1m";
+const RENEW_EVERY = 8;
 const SIGNOFF_TIMEOUT = "24h";
 /** Outlives the sign-off wait, so the timeout branch always runs before it lapses. */
 const SIGNOFF_LEASE_MS = 25 * 60 * 60_000;
 /** A run waits again when its job is rescheduled, but not forever. */
 const MAX_WAKES = 20;
+/** How often a run retries a budget it could not check before leaving the job to the watchdog. */
+const MAX_DEFERRALS = 5;
 /**
  * A routine's run keeps its own schedule, then hands off to a fresh run. Runs
  * finish on the deployment that started them, so a day's bound is how code
@@ -147,11 +160,30 @@ export default defineWorkflowTool({
       let signedOff = false;
       let done: { result: JobResult; token: string; title: string; botName: string; previous: string | null } | null = null;
       work: {
-        const claim = await claimForRun(workspaceId, jobId, {
+        let claim = await claimForRun(workspaceId, jobId, {
           waitToken,
           takeOverWait: now === true && cycle === 1,
+          deferrals: 0,
         });
+        // The budget could not be checked: the claim went back and the job
+        // waits under this run's wait token. Sleep and try again, a few times,
+        // then leave it to the watchdog, which picks it up once the wait lapses.
+        for (let deferrals = 1; !claim.ok && claim.retryAt !== null; deferrals += 1) {
+          if (deferrals > MAX_DEFERRALS) {
+            return { jobId, ran: cycle > 1, cyclesRun: cycle - 1, reason: `${claim.reason} The job is waiting; the watchdog will try it again.` };
+          }
+          yield { phase: "scheduled", title: claim.title, runAt: claim.retryAt };
+          await sleep(new Date(claim.retryAt));
+          claim = await claimForRun(workspaceId, jobId, { waitToken, takeOverWait: false, deferrals });
+        }
         if (!claim.ok) return { jobId, ran: cycle > 1, cyclesRun: cycle - 1, reason: claim.reason };
+
+        // A cancel that landed between the claim and here: the bot never starts.
+        const beforeWork = await standing(workspaceId, jobId, claim.token);
+        if (beforeWork !== "owns") {
+          await closeBudget(workspaceId, claim.token, "release");
+          return stoppedEarly(jobId, beforeWork);
+        }
 
         yield { phase: claim.revising ? "revising" : "working", bot: claim.botName, title: claim.title };
 
@@ -164,21 +196,51 @@ export default defineWorkflowTool({
             (error: unknown): Settled => ({ ok: false, error: describeError(error) }),
           );
 
-        // Heartbeat: while the bot works, keep the lease fresh so the watchdog
-        // never mistakes a long job for a dead one and starts a second copy.
+        // Heartbeat: while the bot works, look at the job every minute and keep
+        // the lease fresh, so the watchdog never mistakes a long job for a dead
+        // one and starts a second copy. A cancel reaches the bot itself, not
+        // this wait: eve gives a workflow no handle on the child `ctx.agent`
+        // started, so the bot fails its turn before its next model call (the
+        // teammate's `fence` hook), which settles `working`, and every job
+        // write or guarded action it tries until then is refused. The cancel
+        // also kills the run's shell commands, so a long command does not hold
+        // the bot back from that call. A bot parked on a card is noticed at the
+        // next look. (A Workflow hook resumed by the cancel was tried here and
+        // made replay diverge; see run-stop.ts.)
         let settled: Settled | null = null;
+        let looks = 0;
         while (settled === null) {
-          const next = await Promise.race([working, sleep(HEARTBEAT).then(() => null)]);
-          if (next !== null) {
-            settled = next;
-          } else if (!(await keepLease(workspaceId, jobId, claim.token))) {
-            return {
-              jobId,
-              ran: true as const,
-              status: "superseded" as const,
-              reason: "The job was cancelled or taken over while the bot worked.",
-            };
+          const wake = await nextWake(working, sleep(CHECK_EVERY));
+          if (wake.kind === "settled") {
+            settled = wake.settled;
+            continue;
           }
+          looks += 1;
+          const still =
+            looks % RENEW_EVERY === 0
+              ? await keepLease(workspaceId, jobId, claim.token)
+              : (await standing(workspaceId, jobId, claim.token)) === "owns";
+          if (!still) {
+            await closeBudget(workspaceId, claim.token, "release");
+            return stoppedEarly(jobId, await standing(workspaceId, jobId, claim.token));
+          }
+        }
+
+        // A cancel can land while the bot works, and stopping its session is
+        // one way the child returns at all: whatever it left is not this
+        // job's result any more, so nothing is salvaged, failed, or closed.
+        const afterWork = await standing(workspaceId, jobId, claim.token);
+        if (afterWork !== "owns") {
+          await closeBudget(workspaceId, claim.token, "release");
+          return stoppedEarly(jobId, afterWork);
+        }
+
+        // The budget stopped the bot mid-run (see the teammate's usage hook):
+        // the job waits for a person with the reason, rather than failing.
+        const budgetStop = settled.ok ? null : await budgetHalted(workspaceId, claim.token);
+        if (budgetStop !== null) {
+          await markBlocked(workspaceId, jobId, budgetStop, claim.token);
+          return { jobId, ran: true as const, status: "blocked" as const, reason: budgetStop };
         }
 
         // What the run left behind, in order of trust: the result finish_job
@@ -219,6 +281,7 @@ export default defineWorkflowTool({
         // manual re-run is refused until this request is answered or times out.
         const held = await parkForSignoff(workspaceId, jobId, claim.token, result);
         if (!held) {
+          await closeBudget(workspaceId, claim.token, "release");
           return {
             jobId,
             ran: true as const,
@@ -254,6 +317,9 @@ export default defineWorkflowTool({
         // `sleep` is a durable timer, not a setTimeout: nothing is held open
         // while the request sits on the operator's channel.
         const answer = await Promise.race([pending, sleep(SIGNOFF_TIMEOUT).then(() => null)]);
+        // A cancel while the card waited: the answer no longer decides anything.
+        const afterCard = await standing(workspaceId, jobId, claim.token);
+        if (afterCard !== "owns") return stoppedEarly(jobId, afterCard);
 
         if (answer === null) {
           await markBlocked(workspaceId, jobId, "Sign-off timed out after 24h.", claim.token, result);
@@ -296,6 +362,8 @@ export default defineWorkflowTool({
 
       // 3. Close.
       const closed = await markDone(workspaceId, jobId, done.result, done.token);
+      // Cancelled after the work (during sign-off, say): completeJob left it cancelled.
+      if (closed.status === "cancelled") return stoppedEarly(jobId, "cancelled");
       if (closed.nextRunAt === null) {
         return {
           jobId,
@@ -331,8 +399,21 @@ export default defineWorkflowTool({
   },
 });
 
+/** The run's answer when it finds the job is no longer its own: nothing recorded. */
+function stoppedEarly(jobId: string, standing: Standing) {
+  return standing === "cancelled"
+    ? { jobId, ran: true as const, status: "cancelled" as const, reason: "The job was cancelled; this run recorded nothing for it." }
+    : {
+        jobId,
+        ran: true as const,
+        status: "superseded" as const,
+        reason: "The job was taken over or closed while the bot worked; this run recorded nothing.",
+      };
+}
+
 type Claim =
-  | { ok: false; reason: string }
+  /** Not run. `retryAt` is set when the claim was handed back to be tried again then (see `admitClaimedRun`). */
+  | { ok: false; reason: string; retryAt: string | null; title: string }
   | {
       ok: true;
       token: string;
@@ -359,18 +440,19 @@ type Claim =
 async function claimForRun(
   workspaceId: string,
   jobId: string,
-  options: { waitToken: string; takeOverWait: boolean },
+  options: { waitToken: string; takeOverWait: boolean; deferrals: number },
 ): Promise<Claim> {
   "use step";
   const job = await getJob(workspaceId, jobId);
-  if (job === null) return { ok: false, reason: `No job ${jobId} in this workspace.` };
+  if (job === null) return { ok: false, reason: `No job ${jobId} in this workspace.`, retryAt: null, title: "" };
+  const refused = (reason: string): Claim => ({ ok: false, reason, retryAt: null, title: job.title });
 
   const bot = await getBot(workspaceId, job.botId);
-  if (bot === null) return { ok: false, reason: "That job's bot is no longer on the roster." };
+  if (bot === null) return refused("That job's bot is no longer on the roster.");
   if (bot.status === "paused") {
     // Hand a dispatched job back; the watchdog skips paused bots until they resume.
     await releaseJob(workspaceId, jobId);
-    return { ok: false, reason: `${bot.name} is paused. Resume them to run this job.` };
+    return refused(`${bot.name} is paused. Resume them to run this job.`);
   }
 
   // A job whose last run failed gets another try on a more capable model.
@@ -391,7 +473,19 @@ async function claimForRun(
     waitToken: options.waitToken,
     takeOverWait: options.takeOverWait,
   });
-  if (!claimed.ok) return claimed;
+  if (!claimed.ok) return refused(claimed.reason);
+
+  // Each claim is its own reservation under its own token, so a routine's
+  // cycles and a job's retries each answer to the workspace budget afresh.
+  // Refused: the job is blocked with the reason, fenced on this token.
+  // Unchecked: the claim goes back and this run retries at `retryAt`.
+  // The computer's sessions that finished since the last sweep count before this run is admitted.
+  await chargeComputerRuntimeSoon();
+  const admission = await admitClaimedRun(workspaceId, claimed.job, token, {
+    waitToken: options.waitToken,
+    deferrals: options.deferrals,
+  });
+  if (!admission.admitted) return { ok: false, reason: admission.reason, retryAt: admission.retryAt, title: claimed.job.title };
 
   const effort = claimed.job.effort ?? DEFAULT_EFFORT;
   // A job a person sent back carries their note until it closes.
@@ -409,7 +503,7 @@ async function claimForRun(
   return {
     ok: true,
     token,
-    brief: renderBrief(bot, claimed.job),
+    brief: renderBrief(bot, claimed.job, { token }),
     botName: bot.name,
     title: claimed.job.title,
     requiresSignoff: claimed.job.requiresSignoff,
@@ -520,7 +614,7 @@ async function reviewClose(
       closedBy: result.completion ?? "unknown",
     },
     questions,
-    { timeoutMs: 4_000, workspaceId },
+    { timeoutMs: 4_000, workspaceId, runToken: claim.token },
   );
   if (judgement === null) return;
   const overall = readVerdict(judgement, "overall");
@@ -546,7 +640,11 @@ async function noteQuietCycle(workspaceId: string, jobId: string, botName: strin
   });
 }
 
-/** The result the Bot recorded with finish_job during this run, if it recorded one. */
+/**
+ * The result the Bot recorded with finish_job during this run, if it recorded one.
+ * finish_job stamps the run's token on the result, so a run that outlived its
+ * lease can never pass off its result as this one's.
+ */
 async function resultRecordedSince(
   workspaceId: string,
   jobId: string,
@@ -557,7 +655,7 @@ async function resultRecordedSince(
   "use step";
   const job = await getJob(workspaceId, jobId);
   if (job === null || job.lease?.token !== token || job.result === null) return null;
-  return resultIsFromRun(job.result, { startedAt, resultAtClaim: atClaim }) ? job.result : null;
+  return resultIsFromRun(job.result, { token, startedAt, resultAtClaim: atClaim }) ? job.result : null;
 }
 
 async function newWaitToken(): Promise<string> {
@@ -575,9 +673,35 @@ async function holdForStart(workspaceId: string, jobId: string, token: string): 
   return holdUntilDue(workspaceId, jobId, token);
 }
 
+async function standing(workspaceId: string, jobId: string, token: string): Promise<Standing> {
+  "use step";
+  return runStanding(workspaceId, jobId, token);
+}
+
 async function keepLease(workspaceId: string, jobId: string, token: string): Promise<boolean> {
   "use step";
   return renewLease(workspaceId, jobId, token, LEASE_MS);
+}
+
+/**
+ * Closes the run's budget reservation: `settle` when the run finished its
+ * part, `release` when it was cancelled or superseded. Both are idempotent
+ * and harmless on a reservation already closed. Best effort: a reservation
+ * left held is released by `repairReservations` once the lease is gone.
+ *
+ * The close steps below (`markDone`, `markFailed`, `markBlocked`,
+ * `parkForSignoff`, `markSentBack`) do the same inline: a plain helper shared
+ * with them would pull the store into the workflow bundle.
+ */
+async function closeBudget(workspaceId: string, token: string, how: "settle" | "release"): Promise<void> {
+  "use step";
+  await (how === "settle" ? settleRun(workspaceId, token) : releaseRun(workspaceId, token)).catch(() => false);
+}
+
+/** The reason to block with when the budget halted this run, else null. A step, so the workflow body never loads the budget. */
+async function budgetHalted(workspaceId: string, token: string): Promise<string | null> {
+  "use step";
+  return (await runHalted(workspaceId, token).catch(() => false)) ? BUDGET_HALT_REASON : null;
 }
 
 async function parkForSignoff(
@@ -588,6 +712,8 @@ async function parkForSignoff(
 ): Promise<boolean> {
   "use step";
   const job = await holdForSignoff(workspaceId, jobId, { token, forMs: SIGNOFF_LEASE_MS, result });
+  // The work is over; waiting on a person spends nothing.
+  if (job !== null) await settleRun(workspaceId, token).catch(() => false);
   return job !== null;
 }
 
@@ -599,6 +725,8 @@ async function markDone(
 ): Promise<{ status: JobStatus | null; nextRunAt: string | null }> {
   "use step";
   const job = await completeJob(workspaceId, jobId, result, { token });
+  // Null: another run holds the job now. Cancelled: a person stopped it.
+  await (job === null || job.status === "cancelled" ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
   // A handover this job raised is over with it.
   await forgetJob(workspaceId, jobId).catch(() => undefined);
   // Browsers nobody is using are stopped; they start again on the next use.
@@ -614,7 +742,8 @@ async function markFailed(
   token: string,
 ): Promise<void> {
   "use step";
-  await failJob(workspaceId, jobId, error, { token });
+  const failed = await failJob(workspaceId, jobId, error, { token });
+  await (failed === null ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
   await forgetJob(workspaceId, jobId).catch(() => undefined);
   await reapIdleScreens().catch(() => 0);
 }
@@ -624,10 +753,11 @@ async function markBlocked(
   jobId: string,
   note: string,
   token: string,
-  result: JobResult,
+  result?: JobResult,
 ): Promise<void> {
   "use step";
-  await blockJob(workspaceId, jobId, note, { token, result });
+  const blocked = await blockJob(workspaceId, jobId, note, { token, ...(result === undefined ? {} : { result }) });
+  await (blocked === null ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
 }
 
 async function markSentBack(
@@ -638,7 +768,8 @@ async function markSentBack(
   result: JobResult,
 ): Promise<void> {
   "use step";
-  await sendBack(workspaceId, jobId, note, { token, result });
+  const sent = await sendBack(workspaceId, jobId, note, { token, result });
+  await (sent === null ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
   await forgetJob(workspaceId, jobId).catch(() => undefined);
   // A person saying what to change is the clearest statement of how they want work done.
   await learnFromFeedback(workspaceId, jobId, note, result);

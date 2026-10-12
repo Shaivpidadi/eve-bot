@@ -1,6 +1,9 @@
 import type { ToolContext } from "eve/tools";
 
-import { browser, refreshScreen } from "./browser";
+import type { Stopped } from "../../../lib/computer/netguard";
+
+import { browser, refreshScreen, textOf } from "./browser";
+import { treeIndex, type TreeFacts } from "./consequence";
 import { sessionState } from "./session-state";
 
 /**
@@ -281,6 +284,24 @@ export interface Look {
 const lastLook = sessionState<Look>();
 
 /**
+ * What each ref named in the last tree this session handed the Bot.
+ *
+ * agent-browser numbers refs by position in each snapshot, so a page that
+ * inserts or removes an element above a control renumbers it: the `@e6` the Bot
+ * read as Send can be Save changes in the next snapshot. The gate takes a fresh
+ * snapshot before acting and checks the Bot's ref against this, so the element
+ * classified and acted on is the one the Bot meant (see `gate.ts`).
+ *
+ * Kept apart from `lastLook`, which is dropped when the page moves without a
+ * read: these are still the refs the Bot holds then, and acting on one of them
+ * must still be checked against what it meant.
+ */
+const seenRefs = sessionState<ReadonlyMap<string, TreeFacts>>();
+
+/** What each ref meant in the last tree the Bot was shown; undefined when this process has not shown it one. */
+export const refsSeen = (ctx: ToolContext): ReadonlyMap<string, TreeFacts> | undefined => seenRefs.get(ctx.session.id);
+
+/**
  * Reads the page after it has settled: the load event, then a moment for the
  * app to re-render. `full` asks for agent-browser's whole tree instead of the
  * trimmed one.
@@ -291,19 +312,22 @@ export async function look(ctx: ToolContext, options: { readonly full?: boolean 
   if (settle > 0) await browser(ctx, ["wait", String(settle)]);
   const snapshot = await browser(ctx, ["snapshot", "-c"]);
   if (!snapshot.ok) return { error: snapshot.error ?? "The page could not be read.", detail: snapshot.output };
+  // The tree itself, not agent-browser's JSON envelope around it (see `payload`).
+  const tree = textOf(snapshot, "snapshot");
   const at = await browser(ctx, ["get", "url"]);
-  const url = at.ok ? at.output.trim().slice(0, 500) : "";
-  const trimmed = options.full === true ? null : trimTree(snapshot.output, pageBudget());
+  const url = at.ok ? textOf(at, "url").trim().slice(0, 500) : "";
+  const trimmed = options.full === true ? null : trimTree(tree, pageBudget());
   const result: Look = {
     url,
-    page: trimmed === null ? snapshot.output : trimmed.text,
+    page: trimmed === null ? tree : trimmed.text,
     shown:
       trimmed === null
-        ? { lines: snapshot.output.split("\n").length, of: snapshot.output.split("\n").length, interactive: 0, trimmed: false }
+        ? { lines: tree.split("\n").length, of: tree.split("\n").length, interactive: 0, trimmed: false }
         : { lines: trimmed.shown, of: trimmed.of, interactive: trimmed.interactive, trimmed: trimmed.level > 0 },
-    tree: snapshot.output,
+    tree,
   };
   lastLook.set(ctx.session.id, result);
+  seenRefs.set(ctx.session.id, treeIndex(tree));
   return result;
 }
 
@@ -334,27 +358,37 @@ export interface Acted {
   readonly page: string | null;
   readonly shown: Look["shown"] | null;
   readonly note: string;
+  /** With `guard`: what the network guard stopped the action from sending. */
+  readonly stopped?: readonly Stopped[];
+  /** With `guard`: the action ran, but what it sent could not be accounted for. */
+  readonly unwatched?: string;
 }
+
+export type ActFailed = { readonly ok: false; readonly error: string; readonly detail: string; readonly unwatched?: string };
 
 /**
  * Runs one action and reports what it did to the page. The page comes back
  * only when it changed: an action that changed nothing says so, which is the
  * signal a Bot needs to stop retrying the same click.
  */
-export async function act(ctx: ToolContext, args: readonly string[]): Promise<Acted | { readonly ok: false; readonly error: string; readonly detail: string }> {
+export async function act(ctx: ToolContext, args: readonly string[], options: { readonly guard?: boolean } = {}): Promise<Acted | ActFailed> {
   const before = lastLook.get(ctx.session.id);
-  const result = await browser(ctx, args);
-  if (!result.ok) return { ok: false, error: result.error ?? "The action failed.", detail: result.output };
+  const result = await browser(ctx, args, options);
+  if (!result.ok) {
+    return { ok: false, error: result.error ?? "The action failed.", detail: result.output, ...(result.unwatched === undefined ? {} : { unwatched: result.unwatched }) };
+  }
+  const guard = { ...(result.stopped === undefined ? {} : { stopped: result.stopped }), ...(result.unwatched === undefined ? {} : { unwatched: result.unwatched }) };
   await refreshScreen(ctx);
   const after = await look(ctx);
   if (!isLook(after)) return { ok: false, error: after.error, detail: after.detail };
   if (before === undefined) {
-    return { ok: true, url: after.url, changed: "page", page: after.page, shown: after.shown, note: "Read the page to see where you are." };
+    return { ok: true, url: after.url, changed: "page", page: after.page, shown: after.shown, note: "Read the page to see where you are.", ...guard };
   }
   const change = compareTrees(before, after);
   if (change.kind === "none") {
     const stale = change.refsMoved;
     return {
+      ...guard,
       ok: true,
       url: after.url,
       changed: "none",
@@ -368,6 +402,7 @@ export async function act(ctx: ToolContext, args: readonly string[]): Promise<Ac
     };
   }
   return {
+    ...guard,
     ok: true,
     url: after.url,
     changed: change.kind,

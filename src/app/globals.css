@@ -167,6 +167,7 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .side-update { color: var(--purple); text-decoration: none; }
 .side-update .i { color: var(--purple); }
 .side-item .i { color: var(--muted); }
+.side-health, .side-health .i { color: var(--warn); cursor: default; }
 .me { display: flex; align-items: center; gap: 9px; padding: 6px 8px; font-size: 12.5px; }
 .me-avatar {
   width: 20px; height: 20px; border-radius: 50%; flex: none; display: grid; place-items: center;
@@ -924,6 +925,11 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .cpage-tag { flex: none; font: inherit; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line-2); background: none; color: var(--muted); cursor: pointer; }
 .cpage-tag.write { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .cpage-tag:hover:not(:disabled) { background: var(--hover); }
+.cpage-review { border-color: color-mix(in srgb, var(--warn) 40%, var(--line-2)); }
+.cpage-review > .cpage-row:first-child > .i { color: var(--warn); }
+.cpage-pick { cursor: pointer; }
+.cpage-pick input { flex: none; accent-color: var(--purple); }
+.cpage-review-actions { flex-wrap: wrap; gap: 8px; }
 .cpage-select { font: inherit; font-size: 12.5px; color: var(--text); background: var(--field); border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 10px; max-width: 46%; }
 .cpage-facts .cpage-row { justify-content: space-between; }
 .cpage-facts .cpage-row > span { color: var(--muted); }

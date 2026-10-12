@@ -2,6 +2,8 @@ import type { Experimental_EvaluationQuestion as EvaluationQuestion } from "ai";
 
 import { confidenceFloor, type Judgement } from "../../../lib/jev";
 
+import { CONSEQUENTIAL_WORDS } from "./consequence";
+
 /**
  * Driving a few browser steps without a model turn for each one.
  *
@@ -17,6 +19,10 @@ import { confidenceFloor, type Judgement } from "../../../lib/jev";
  * unsure, out of steps, out of time, or facing anything that spends money or
  * sends something, and hands back to the model with what it saw.
  *
+ * It is navigation only. No input can authorise it to take a consequential
+ * step: such a step comes back as a proposal (see `gate.ts`), and only a
+ * person's approval through `page_confirm` makes it happen.
+ *
  * Everything here is pure; the loop that uses it lives in `tools/page_pilot.ts`.
  */
 
@@ -27,13 +33,13 @@ const CONTROL = /^\s*-\s+([A-Za-z]+)(?:\s+"((?:[^"\\]|\\.)*)")?[^"]*\[ref=(e\d+)
 const FILLABLE = new Set(["textbox", "searchbox", "combobox", "textarea", "spinbutton"]);
 
 /**
- * Anything that spends, sends, or destroys. The pilot never picks one of
- * these on its own: the model that set the goal decides, because it is the one
- * that can be held to the brief. Deliberately broad — the cost of asking is a
- * model turn, and the cost of being wrong is an email nobody meant to send.
+ * The pilot never picks a control whose name spends, sends, or destroys: it
+ * stops there and the gate in `gate.ts` turns the step into a proposal a person
+ * approves. The words are the classifier's own (`consequence.ts`), so a step
+ * the pilot lets through by name is still checked against the element itself
+ * before it is taken.
  */
-const CONSEQUENTIAL =
-  /\b(pay|buy|purchase|checkout|order|subscribe|donate|transfer|withdraw|send|submit|publish|post|delete|remove|discard|cancel|confirm|approve|accept|agree|sign|share|invite|deactivate|close account)\b/i;
+const CONSEQUENTIAL = CONSEQUENTIAL_WORDS;
 
 export interface Candidate {
   readonly id: string;
@@ -102,6 +108,7 @@ export type Stop =
   | "out-of-steps"
   | "out-of-time"
   | "cancelled"
+  | "refused"
   | "failed"
   | "unavailable";
 
@@ -132,7 +139,7 @@ export interface Choice {
 export function readChoice(
   judgement: Judgement<Record<string, EvaluationQuestion>> | null,
   candidates: readonly Candidate[],
-  options: { readonly allowConsequential?: boolean; readonly floor?: number } = {},
+  options: { readonly floor?: number } = {},
 ): Choice {
   if (judgement === null) return { pick: null, stop: "unavailable" };
   const answer = (judgement.answers as Record<string, unknown>).next as { choice?: unknown } | undefined;
@@ -146,7 +153,8 @@ export function readChoice(
   if (chosen === STUCK) return { pick: null, stop: "stuck" };
   const pick = candidates.find((candidate) => candidate.id === chosen) ?? null;
   if (pick === null) return { pick: null, stop: "unsure" };
-  if (pick.consequential && options.allowConsequential !== true) return { pick, stop: "consequential" };
+  // Never taken by the pilot, whatever it was asked: a person approves these.
+  if (pick.consequential) return { pick, stop: "consequential" };
   return { pick, stop: null };
 }
 
@@ -156,11 +164,12 @@ export const STOP_NOTE: Readonly<Record<Stop, string>> = {
   stuck: "Nothing on the page moved toward the goal. Read the page and decide yourself.",
   unsure: "The next step was not clear enough to take without you. Read the page and decide yourself.",
   consequential:
-    "The next step would spend, send, or delete something. It was not taken: decide yourself, and do it with page_click if the brief allows it.",
+    "The next step could send, spend, publish, delete or commit something, so it was not taken. If the brief calls for it, ask a person with page_confirm using the proposal here; otherwise take another route.",
   "no-progress": "The page stopped reacting. Read it and try a different route.",
   "out-of-steps": "The step limit was reached. Read the page and carry on, or run the pilot again with the next subgoal.",
   "out-of-time": "The time limit was reached. Read the page and carry on.",
   cancelled: "The job was cancelled.",
+  refused: "This run no longer owns its job. Stop: nothing you do now counts.",
   failed: "A browser action failed. Read the page and carry on yourself.",
   unavailable: "The pilot is not available on this deployment. Drive the page yourself with page_click and page_fill.",
 };

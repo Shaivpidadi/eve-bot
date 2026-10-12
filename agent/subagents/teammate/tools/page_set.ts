@@ -3,7 +3,9 @@ import { z } from "zod";
 
 import { looseBoolean } from "../../../lib/tool-input";
 
-import { act } from "../lib/page";
+import { guardSideEffect } from "../../../lib/run-guard";
+
+import { actChecked, gate } from "../lib/gate";
 
 /**
  * Dropdowns and checkboxes, which clicking does not reliably set.
@@ -12,10 +14,13 @@ import { act } from "../lib/page";
  * tree on most platforms, so a bot that clicks one is left guessing; a checkbox
  * clicked twice is back where it started. Both have exact commands, and a bot
  * that says the state it wants gets that state.
+ *
+ * Checked like a click: ticking "I agree" or choosing a plan is a commitment,
+ * and comes back as a proposal for `page_confirm` instead of happening.
  */
 export default defineTool({
   description:
-    "Set a dropdown or a checkbox, by the state you want rather than by clicking. Give option to choose from a <select> (its visible label or its value), or checked to tick or untick a checkbox or radio. Reports what changed the same way page_click does.",
+    "Set a dropdown or a checkbox, by the state you want rather than by clicking. Give option to choose from a <select> (its visible label or its value), or checked to tick or untick a checkbox or radio. Reports what changed the same way page_click does. A choice that could commit to something (agreeing, subscribing, paying) comes back with needsApproval and a proposal for page_confirm.",
   inputSchema: z
     .object({
       target: z.string().min(1).describe("An @ref like @e9, or a CSS selector."),
@@ -27,8 +32,18 @@ export default defineTool({
     }),
   label: { start: ({ target, option, checked }) => `Set ${target} to ${option ?? (checked === true ? "checked" : "unchecked")}` },
   async execute({ target, option, checked }, ctx) {
-    const args = option !== undefined ? ["select", target, option] : [checked === true ? "check" : "uncheck", target];
-    const result = await act(ctx, args);
+    const kind = option !== undefined ? "select" : checked === true ? "check" : "uncheck";
+    const checkedGate = await gate(ctx, {
+      kind,
+      target: { target },
+      action: (selector) => (option !== undefined ? ["select", selector, option] : [kind, selector]),
+      ...(option === undefined ? {} : { option }),
+    });
+    if (!checkedGate.go) return { set: false as const, target, ...checkedGate.result };
+    const run = await guardSideEffect(ctx);
+    if (!run.ok) return { set: false as const, target, reason: run.reason, error: run.message };
+    const result = await actChecked(ctx, checkedGate);
+    if ("held" in result) return { set: false as const, target, ...result.held };
     if (!result.ok) {
       return {
         set: false as const,

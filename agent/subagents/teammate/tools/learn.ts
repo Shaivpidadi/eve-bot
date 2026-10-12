@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { record } from "../../../lib/activity";
 import { getBot, teachBot } from "../../../lib/bots";
-import { getJob } from "../../../lib/jobs";
+import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
 
 export default defineTool({
@@ -20,8 +20,12 @@ export default defineTool({
   label: { start: ({ lesson }) => `Learn: ${lesson.slice(0, 60)}` },
   async execute({ jobId, lesson }, ctx) {
     const who = operator(ctx);
-    const job = await getJob(who.workspaceId, jobId);
-    if (job === null) return { learned: false as const, reason: `No job ${jobId}.` };
+    // A superseded run does not get to teach the Bot anything either.
+    const run = await guardSideEffect(ctx, jobId);
+    if (!run.ok) {
+      return { learned: false as const, reason: run.reason, message: run.message };
+    }
+    const job = run.job;
 
     const bot = await teachBot(who.workspaceId, job.botId, lesson);
     if (bot === null) return { learned: false as const, reason: "That bot is no longer on the roster." };

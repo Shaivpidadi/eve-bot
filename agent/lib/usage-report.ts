@@ -1,4 +1,5 @@
 import { getBot } from "./bots";
+import { budgetStatus, type BudgetStatus } from "./budget";
 import { listJobs } from "./jobs";
 import type { Job } from "./types";
 import { gatewayAccount, type GatewayAccount } from "./gateway-account";
@@ -24,6 +25,8 @@ export interface UsageReport {
   readonly models: readonly { readonly model: string; readonly usage: Usage }[];
   /** One entry per day for the last `days` days, oldest first, zeros where nothing ran. */
   readonly days: readonly { readonly day: string; readonly usage: Usage }[];
+  /** This month's workspace budget: limit, spent, held by running jobs, and unknown-cost flags (see `budget.ts`). */
+  readonly budget: BudgetStatus;
   /** Jobs that recorded usage, newest first. */
   readonly jobs: readonly {
     readonly id: string;
@@ -43,7 +46,12 @@ const byCost = (left: { usage: Usage }, right: { usage: Usage }) =>
 export async function usageReport(workspaceId: string, options: { days?: number; jobs?: number; now?: Date } = {}): Promise<UsageReport> {
   const now = options.now ?? new Date();
   const span = options.days ?? 30;
-  const [ledger, jobs, account] = await Promise.all([readLedger(workspaceId), listJobs(workspaceId, { limit: 500 }), gatewayAccount()]);
+  const [ledger, jobs, account, budget] = await Promise.all([
+    readLedger(workspaceId),
+    listJobs(workspaceId, { limit: 500 }),
+    gatewayAccount(),
+    budgetStatus(workspaceId, now),
+  ]);
 
   const botIds = new Set([...Object.keys(ledger.bots), ...jobs.filter((job) => job.usage !== undefined).map((job) => job.botId)]);
   const names = new Map<string, { name: string; emoji: string | null; retired: boolean }>();
@@ -74,6 +82,7 @@ export async function usageReport(workspaceId: string, options: { days?: number;
       .map(([model, usage]) => ({ model, usage }))
       .sort(byCost),
     days,
+    budget,
     jobs: jobs
       .filter((job): job is Job & { usage: Usage } => job.usage !== undefined && job.usage.steps > 0)
       .slice(0, options.jobs ?? 50)

@@ -124,7 +124,8 @@ git pull && npm install && npm run build && npm start     # or: docker compose u
 
 Stored data is carried forward. A release that changes what is stored reads
 the old shape and writes the new one the first time it is needed, so a
-deployment can skip versions.
+deployment can skip versions. Some releases also need a decision from you;
+see [Upgrading to this version](#upgrading-to-this-version).
 
 ## What you get
 
@@ -143,8 +144,9 @@ deployment can skip versions.
 - **Durable jobs.** A run survives restarts and redeploys, waits for its start
   time with no compute, renews a lease so a dead run is noticed, and can park
   a day for your sign-off. A daily watchdog re-dispatches anything stranded.
-- **Approvals.** Sending email, retiring a Bot, and any connector tool that
-  changes something stop for a person first.
+- **Approvals.** Sending email, retiring a Bot, any connector tool that
+  changes something, and any browser click that could send, spend, delete or
+  save stop for a person first. See [Safety model](#safety-model).
 - **Memory.** The team remembers on its own. After each exchange with HQ, and
   after each job, Jev judges whether anything said is worth keeping, a small
   model phrases it, and it lands in one of three shared slots: about you, your
@@ -177,7 +179,7 @@ deployment can skip versions.
   needs OAuth is detected when it is added. Each connector has its own page:
   its account, every tool with a switch and a read-or-change tag, when a
   person is asked first, and the facts about it. Tools that change something
-  ask first. When a Bot needs an account nobody has connected yet, the thread
+  ask first, and HQ only uses the reads a person confirmed. When a Bot needs an account nobody has connected yet, the thread
   says so with a button to the Connectors page, and the work carries on once
   it is connected.
 
@@ -199,6 +201,19 @@ thread panel repeats each member's own figures, and every finished job carries
 its line in the feed. Off AI Gateway a provider reports no price, so set
 `BOT_MODEL_PRICES` to see dollars instead of zeros.
 
+The **budget** card on the same page is the workspace's spending limit for
+the month (`BOT_BUDGET_MONTHLY_USD`, and `BOT_BUDGET_DAILY_USD` for a daily
+one). Everything that calls a model draws on it: HQ, every job run, each
+routine cycle and retry, Jev's judgements and memory. A run reserves an
+estimate for its effort before it starts and gives back what it did not spend
+when it ends; a run that would not fit is blocked with the reason, and one
+that overruns its reservation once the month is used up is stopped before its
+next model step and blocked. Calls whose provider reported no price are
+counted as unpriced rather than as free. The computer's runtime counts too
+once you set its rate from your Vercel plan (`BOT_COMPUTER_USD_PER_HOUR`, or
+per active-CPU hour and per GB-hour): the watchdog charges each finished
+Sandbox session to the workspace, once. Without a rate it shows as unpriced.
+
 Behind Vercel Authentication the console shows who is signed in, with their
 Vercel name and picture. Elsewhere it shows the name in `X-Bot-User`, or the
 name you set by clicking the footer of the sidebar; HQ and the Bots use that
@@ -216,6 +231,102 @@ an insecure context, and the live screen will not connect. Use
 `npm run dev:https`, or on a standalone server set `BOT_COMPUTER_LOCAL_BIND=0.0.0.0`
 and serve over http, or put the gateway behind TLS.
 
+## Safety model
+
+What stops a Bot from doing something nobody meant, and what does not. The
+store decisions behind it are in
+[docs/decisions/0001-state-store.md](docs/decisions/0001-state-store.md).
+
+**Run fencing.** A job is worked by one run at a time, the holder of its
+lease. A Bot's session is bound to that run when it reads its brief, and every
+job write and every outward action (email, connector call, browser action,
+`create_bot`) checks it still is. A run whose lease lapsed and was taken over,
+or whose job was cancelled, is refused, even holding an approval it was given
+earlier.
+
+**Cancellation.** Stop in the console (`DELETE /bot/v1/jobs/:id`) cancels the
+job durably and stops its sessions immediately. Cancelling from a chat
+(HQ's `cancel_job`) refuses all of the Bot's actions immediately, kills the
+run's shell commands, and stops the Bot before its next model call (a context
+compaction included); a run waiting on an approval card ends within a minute.
+Either way nothing can mark the job done afterwards.
+
+**Connectors.** Every tool has a recorded effect, read or change. A tool
+nobody classified, one the server grew since its last check, or one whose
+name says it can run anything (SQL, HTTP, shell) counts as a change and needs
+approval under the "before changes" gate. HQ never asks, so it only gets
+reads a person confirmed (the "reads?" chips, or **Review** on the connector's
+page) or that the catalog vouches for. Every call re-reads the connector, so
+switching it or a tool off, re-marking a tool, or rotating a key bites on the
+next call. An approval is recorded with the permission version the person was
+asked under, only if the settings have not changed since, and stops counting
+once any of them change. An approval that lands after the job was cancelled or
+taken over, or for a tool switched off or a connector removed since the
+request, is rejected: the call never runs, and the person denies the card. Approvals are structured
+answers sent through the signed-in console (`/respond`); a plain "yes" typed
+into a chat is a new message, not an approval.
+
+**Browser.** Every click, Enter, selection, checkbox and upload is classified
+first. It asks when the control's words send, spend, publish, delete, confirm
+or save a change ("Save", "Add member", "Apply"), when it submits a non-GET
+form or a form posting to another site, on checkout and payment pages, when
+the element cannot be inspected, and for every file upload. Typing, plain
+navigation, and whole labels that only rearrange the page ("Apply filters",
+"Clear search", "Reset zoom") on a control that submits nothing do not. An
+approval is bound to the exact page address (query and fragment included) and
+the element as it looked: its role, name, form target, its row and position
+among same-named elements, and the field's value for an Enter. If any of that
+changed, or the page renumbered the ref, it asks again. Words and structure
+cannot see a button labelled "Continue" or "Done" whose page script posts an
+order, so every click the gate lets through runs with a network guard on the
+Bot's tab: reads (GET, HEAD, OPTIONS) go on, and anything else the click sends
+(a POST, PUT, PATCH or DELETE, a JSON call, a form posted from script) is
+stopped inside the browser and turns the click into an approval request; once
+approved, the click is made again with nothing held back. The new page a link
+opens loads freely, and beacons and well-known analytics are dropped quietly
+rather than asked about. A click whose sending cannot be watched asks first.
+Not seen: requests a page's service worker makes on its own, WebSocket
+messages, a GET with side effects, and what a page sends more than a moment
+after the click (`BOT_BROWSER_GUARD_MS`, default 1200). Use an egress
+allow-list for anything sensitive.
+
+**Email.** Each send is recorded in an action ledger before it goes out, with
+an id bound to the run and the exact payload, and the relay receives it as
+`Idempotency-Key`. Delivery toward the relay is at least once, so the relay
+must dedupe; see [Outbound email relay](#outbound-email-relay).
+
+**Budgets.** `BOT_BUDGET_MONTHLY_USD` and `BOT_BUDGET_DAILY_USD` cap what the
+workspace spends on models, per UTC month and day. A run reserves an estimate
+before it starts; one that would not fit is blocked with the reason. Spend is
+counted after each model step, so the limit can be overshot by the steps in
+flight when it runs out: a run past its reservation with no budget left is
+halted before its next step. A step whose provider reported no cost is counted
+and shown as unknown, never as free. Vercel Sandbox runtime is charged to the
+workspace once you set its rate (`BOT_COMPUTER_USD_PER_HOUR` and friends):
+each session the computer ran is charged once it stops, swept before the next
+run is admitted and whenever the usage page loads (and by the tick); until a
+rate is set it is shown as unpriced.
+`BOT_JOB_COST_LIMIT_USD` and `BOT_HQ_COST_LIMIT_USD` still cap each session.
+
+### Upgrading to this version
+
+- **Confirm HQ's connector reads.** HQ now uses only reads a person
+  confirmed, so after the upgrade it has no tools from a custom connector, and
+  only the catalog-vouched ones from a built-in. Open each connector under
+  **Connectors**; where it says tools guessed as reads need your confirmation,
+  click **Review**, untick anything that changes something, and confirm.
+  Bots keep working meanwhile.
+- **Check the email relay.** If `BOT_EMAIL_WEBHOOK` is set, make sure the
+  relay dedupes on `Idempotency-Key` and answers as the
+  [contract](#outbound-email-relay) describes. `BOT_EMAIL_WEBHOOK_TIMEOUT_MS`
+  sets how long Bot waits (`30000`).
+- **Set a budget.** Without `BOT_BUDGET_MONTHLY_USD` (and optionally
+  `BOT_BUDGET_DAILY_USD`) spend is tracked but not capped.
+- **Standup room.** The standup now posts to HQ's `desk` by default. A
+  `BOT_STANDUP_ROOM` that is not `desk` or a Bot's room (`bot-<id>`), such as
+  the old example `standup`, is ignored with a warning; remove it or point it
+  at a room the console shows.
+
 ## HTTP
 
 Send `Authorization: Bearer <console token>`. Rooms are `desk` for HQ and
@@ -228,6 +339,7 @@ curl -X POST localhost:3000/bot/v1/rooms/desk/respond -H 'content-type: applicat
 curl -X POST localhost:3000/bot/v1/rooms/desk/reset                       # start the thread over
 curl -X POST localhost:3000/bot/v1/rooms/desk/recover -H 'content-type: application/json' -d '{"message":"…"}'  # a thread that stopped answering: fresh session, message sent again
 curl -X POST localhost:3000/bot/v1/connectors -H 'content-type: application/json' -d '{"catalog":"linear"}'      # add a connector; OAuth ones then need a sign-in
+curl -X POST localhost:3000/bot/v1/connectors/<id>/reviewed-reads -H 'content-type: application/json' -d '{"tools":["list_issues"]}'  # confirm guessed reads for HQ; no "tools" = all of them
 curl -X POST localhost:3000/bot/v1/connectors/<id>/oauth/start                                                 # the consent URL to open; the server sends the browser back to /bot/v1/oauth/callback
 curl localhost:3000/bot/v1/state                                          # roster, presence, feed
 curl -X POST localhost:3000/bot/v1/bots -H 'content-type: application/json' -d '{"name":"Ava","role":"Inbound sales follow-up","persona":"Warm and brief."}'
@@ -257,6 +369,8 @@ of it; these are the ones that matter.
 | `BOT_SEARCH_PROVIDER` / `BOT_SEARCH_URL` / `BOT_SEARCH_API_KEY` | web search on your own endpoint: `searxng`, `brave`, `tavily`, `exa` |
 | `BOT_MODEL_PRICES` | `model=in/out` USD per million tokens, so spend caps hold off Gateway; OpenRouter is read automatically |
 | `BOT_HQ_COST_LIMIT_USD` / `BOT_JOB_COST_LIMIT_USD` | per-session spend caps (`10` / `5`) |
+| `BOT_BUDGET_MONTHLY_USD` / `BOT_BUDGET_DAILY_USD` | workspace spend limit per UTC month / day; unset = no limit, spend still tracked |
+| `BOT_COMPUTER_USD_PER_HOUR` / `_PER_CPU_HOUR` / `_PER_GB_HOUR` | the computer's rate from your Vercel plan, so its runtime counts on the budget; unset = unpriced |
 | `BOT_MEMORY_FLOOR` | how sure Jev must be before something is remembered (`0`–`1`; defaults to `BOT_JEV_CONFIDENCE`) |
 | `BOT_MEMORY_MODEL` | the model that reads exchanges for memories (`anthropic/claude-haiku-4-5` on Gateway; the quick model on a custom endpoint) |
 | `BOT_MEMORY_EMBEDDINGS` / `BOT_MEMORY_EMBEDDING_MODEL` | `off` ranks lessons by words only; the model that embeds them otherwise (`openai/text-embedding-3-small`, on Gateway only) |
@@ -264,11 +378,74 @@ of it; these are the ones that matter.
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console passwords, each bound to a workspace |
-| `BOT_PUBLIC_URL` | the front door's public origin for canonical URLs and the sitemap; Vercel supplies its own |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
+| `BOT_STANDUP_CRON` / `BOT_STANDUP_ROOM` | when the daily standup runs (`0 13 * * 1-5`, in UTC) and where it posts: HQ's `desk` by default, or a Bot's room (`bot-<id>`) |
 | `BOT_SANDBOX_ALLOW_DOMAINS` / `BOT_BROWSER_ALLOWED_DOMAINS` | fence the computer and the browser |
 | `BOT_BROWSER_PAGE_CHARS` / `BOT_BROWSER_SETTLE_MS` | how much of a page a Bot reads per look (`8000`) and how long it lets the page settle first (`300`) |
-| `BOT_EMAIL_WEBHOOK` | where approved email goes; unset returns drafts |
+| `BOT_EMAIL_WEBHOOK` / `BOT_EMAIL_WEBHOOK_TOKEN` | where approved email goes, and the bearer token sent with it; unset returns drafts. The relay must follow the contract below |
+| `BOT_EMAIL_WEBHOOK_TIMEOUT_MS` | how long one relay request may take before its outcome counts as unknown (`30000`) |
+
+### Outbound email relay
+
+`send_email` POSTs each approved email to `BOT_EMAIL_WEBHOOK` (with
+`Authorization: Bearer $BOT_EMAIL_WEBHOOK_TOKEN` when set):
+
+```
+POST $BOT_EMAIL_WEBHOOK
+Idempotency-Key: action_<32 hex>
+Content-Type: application/json
+
+{"actionId":"action_<32 hex>","to":["…"],"cc":[],"subject":"…","text":"…","jobId":"job_…"}
+```
+
+Every send is first recorded in an action ledger (`agent/lib/actions.ts`,
+`actions/<workspace>/<actionId>.json`). The action id is derived from the job,
+the run, and a hash of exactly this payload, so a replayed step finds the first
+attempt's record and returns its receipt instead of sending again, and any
+change to the email is a new action that needs its own approval.
+
+Bot still delivers **at least once** toward the relay: if the relay accepts a
+request and its reply is lost, Bot cannot tell. So the relay must:
+
+- **Dedupe on `Idempotency-Key`.** A repeated key must not send a second email;
+  answer it with the original result. Keep keys at least as long as a job can
+  run (a day is plenty).
+- **Answer 2xx only once the email is accepted**, with a JSON body carrying its
+  receipt: `{"id": "<provider message id>", "status": "queued"}` (`messageId` or
+  `receiptId` are read too). Bot stores it on the action.
+- **Answer 4xx only when nothing was sent and nothing will be**: Bot records the
+  action as failed and does not retry it (`429` is the exception: retried under
+  the same key on the next call).
+- Expect a `5xx`, `408`, `409`, a timeout (`BOT_EMAIL_WEBHOOK_TIMEOUT_MS`,
+  30s) or a dropped connection to be read as **delivery unknown**: Bot never
+  resends those on its own and tells the Bot to report the email as possibly
+  sent, so a person can check the relay's log.
+
+### The Bots' shell
+
+A Bot's `bash`, `read_file` and `write_file` (and HQ's) run on the computer as
+an unprivileged `bot` user, not the user the browser runs as: they cannot read
+the browser's profiles, the team's sign-ins or the gateway key, cannot type
+into a screen, and cannot connect to Chrome's DevTools, VNC or agent-browser's
+stream. So a Bot cannot drive the browser around the approval gate from its
+shell. The network fence is iptables where the computer allows it (a
+container with `NET_ADMIN`), nftables where the kernel lacks iptables' owner
+match (Vercel Sandbox, which also lacks Landlock and IPv6 filtering, so IPv6 is
+switched off there), and Landlock otherwise (Docker, Linux 6.7+). Under
+iptables and nftables the shell may connect to this machine only on an
+allowlist of ports (web, DNS, ssh, git, common dev servers) and to the internet
+on any. Landlock sees ports, not
+addresses, so it closes the screens' ports and the kernel's ephemeral range
+(where agent-browser's stream and other unnamed listeners land) everywhere and
+leaves every other port open. `BOT_SHELL_TCP_PORTS` adds ports to the allowlist
+(`5432,6379`), and under Landlock reopens ports inside the ephemeral range.
+Each command carries its run as a group of its own, so cancelling a job kills
+every process its run started, including ones it left running in the
+background. A computer that can have neither fence refuses the shell rather
+than run it unfenced;
+`BOT_SHELL_ISOLATION=off` instead runs it as the browser's user with every
+command waiting for approval. `bot-computer status` reports the mode as
+`shell`.
 
 ## Development
 

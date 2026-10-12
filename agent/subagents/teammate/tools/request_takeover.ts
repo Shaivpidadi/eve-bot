@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { syncIdentity, toolIo } from "../../../lib/computer/runtime";
 import { finishHandover, liveControl, sessionBinding, setControl, teamScreen } from "../../../lib/computer/screens";
+import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
 import { browser } from "../lib/browser";
 import { forgetLook } from "../lib/page";
@@ -45,6 +46,11 @@ export default defineTool({
     } catch {
       // The sign-in still holds in this browser.
     }
+    // Checked after the approval, not before: the job may have been cancelled
+    // while the person had control. The handover is released and what they
+    // signed in to is kept either way; only the bot's carrying on is refused.
+    const run = await guardSideEffect(ctx);
+    if (!run.ok) return { handedBack: true as const, reason, personSaid, page: null, note: run.message };
     // A person may have gone anywhere in the browser while they had control.
     forgetLook(ctx);
     const page = await browser(ctx, ["snapshot", "-i"]);

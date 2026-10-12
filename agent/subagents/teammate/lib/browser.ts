@@ -7,7 +7,9 @@ import type { ToolContext } from "eve/tools";
 
 import { COMPUTER_PATHS } from "../../../lib/computer";
 import { AGENT_BROWSER_INSTALL } from "../../../lib/computer-config";
-import { captureScreen, ComputerError, ensureScreen, raiseBrowser, toolIo } from "../../../lib/computer/runtime";
+import { GUARD_TTL_MS, guardGraceMs, NETGUARD_FILE, parseGuardAnswer, type Stopped } from "../../../lib/computer/netguard";
+import { captureScreen, ComputerError, ensureScreen, raiseBrowser, shellQuote, toolIo } from "../../../lib/computer/runtime";
+import { COMPUTER_BIN } from "../../../lib/computer/script";
 import {
   allocateScreen,
   bindSession,
@@ -168,6 +170,10 @@ export interface BrowserResult {
   readonly output: string;
   readonly data: unknown;
   readonly error?: string;
+  /** With `guard`: what the network guard stopped the action from sending (see `netguard.ts`). */
+  readonly stopped?: readonly Stopped[];
+  /** With `guard`: why the action could not be watched. When it was not run at all, `ok` is false. */
+  readonly unwatched?: string;
 }
 
 /** agent-browser commands that would take the browser away from the operator too. */
@@ -228,8 +234,13 @@ async function readyScreen(ctx: ToolContext, n: number, recorded: ServiceState):
  *
  * Failures come back as data rather than exceptions: a click that missed is
  * information the model should act on, not a tool crash.
+ *
+ * With `guard`, the action runs with the network guard armed on the run's tab
+ * (`netguard.ts`), and the result says what the guard stopped it from sending.
+ * An action that cannot be watched is not run (`unwatched`), and a guarded
+ * action is not retried here: a retry might land on another tab.
  */
-export async function browser(ctx: ToolContext, args: readonly string[]): Promise<BrowserResult> {
+export async function browser(ctx: ToolContext, args: readonly string[], options: { readonly guard?: boolean } = {}): Promise<BrowserResult> {
   if (FORBIDDEN.has(args[0] ?? "")) {
     return failure(new Error(`"${args[0]}" is not available: the browser stays open so the team can see and use it.`));
   }
@@ -241,6 +252,7 @@ export async function browser(ctx: ToolContext, args: readonly string[]): Promis
 
   let n: number;
   let recorded: ServiceState;
+  let tab: string | null;
   try {
     const screen = await currentScreen(ctx, binding);
     const control = liveControl(screen);
@@ -255,7 +267,7 @@ export async function browser(ctx: ToolContext, args: readonly string[]): Promis
     recorded = screen.browser.state;
     await readyScreen(ctx, n, recorded);
     // Open this run's own tab before its first action, so two Bots never share one page.
-    await ensureRunTab(ctx, binding, n);
+    tab = await ensureRunTab(ctx, binding, n);
   } catch (error) {
     return failure(error);
   }
@@ -268,6 +280,8 @@ export async function browser(ctx: ToolContext, args: readonly string[]): Promis
       // One agent-browser session per run, pinned to that run's own tab in the shared browser.
       session,
     });
+
+  if (options.guard === true) return guarded(ctx, screenPorts(n).cdp, tab, run);
 
   try {
     return shape(await run());
@@ -296,6 +310,40 @@ export async function browser(ctx: ToolContext, args: readonly string[]): Promis
   }
 }
 
+/** One action with the network guard armed on the run's tab; see `browser`. */
+async function guarded(
+  ctx: ToolContext,
+  cdp: number,
+  tab: string | null,
+  run: () => Promise<{ json: unknown; stdout: string; stderr: string }>,
+): Promise<BrowserResult> {
+  const unwatched = (reason: string): BrowserResult => ({
+    ok: false,
+    output: "",
+    data: null,
+    error: `This was not done: what it would send could not be watched (${reason}).`,
+    unwatched: reason,
+  });
+  if (tab === null) return unwatched("this run's tab could not be found");
+  const io = await toolIo(ctx);
+  const program = shellQuote(`${COMPUTER_BIN}/${NETGUARD_FILE}`);
+  const armed = parseGuardAnswer<{ id: string }>(
+    (await io.run(`node ${program} arm ${cdp} ${shellQuote(tab)} ${GUARD_TTL_MS}`, { timeoutMs: 20_000 }).catch((error: unknown) => ({ stdout: JSON.stringify({ ok: false, error: String(error) }) }))).stdout,
+  );
+  if (!armed.ok) return unwatched(armed.error);
+
+  let result: BrowserResult;
+  try {
+    result = shape(await run());
+  } catch (error) {
+    result = failure(error);
+  }
+  const report = parseGuardAnswer<{ blocked: Stopped[] }>(
+    (await io.run(`node ${program} disarm ${shellQuote(armed.id)} ${guardGraceMs()}`, { timeoutMs: 20_000 }).catch((error: unknown) => ({ stdout: JSON.stringify({ ok: false, error: String(error) }) }))).stdout,
+  );
+  return report.ok ? { ...result, stopped: report.blocked } : { ...result, unwatched: report.error };
+}
+
 const POSTER_EVERY_MS = 5_000;
 const lastPoster = sessionState<number>();
 
@@ -321,6 +369,26 @@ export async function refreshScreen(ctx: ToolContext): Promise<void> {
   } catch {
     // The console keeps showing the previous frame.
   }
+}
+
+/**
+ * The `data` of agent-browser's JSON envelope, `{ success, data, error }`.
+ *
+ * `runAgentBrowser` passes `--json` to every command, so `output` is that
+ * envelope rather than the plain text the CLI prints by hand. Null when the
+ * command printed something else, so callers fall back to `output`.
+ */
+export function payload(result: Pick<BrowserResult, "data">): Record<string, unknown> | null {
+  const envelope = result.data as { data?: unknown } | null;
+  const data = envelope?.data;
+  return data !== null && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : null;
+}
+
+/** One string field of the envelope's data, or the plain output when there is no envelope. */
+export function textOf(result: BrowserResult, field: string): string {
+  const value = payload(result)?.[field];
+  if (typeof value === "string") return value;
+  return payload(result) === null ? result.output : "";
 }
 
 function shape(result: { json: unknown; stdout: string; stderr: string }): BrowserResult {

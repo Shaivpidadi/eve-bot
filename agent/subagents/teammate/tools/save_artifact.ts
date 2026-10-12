@@ -3,7 +3,8 @@ import { z } from "zod";
 
 import { record } from "../../../lib/activity";
 import { MAX_ARTIFACT_BYTES, saveArtifact } from "../../../lib/artifacts";
-import { attachArtifact, getJob } from "../../../lib/jobs";
+import { attachArtifact, describeRunRefusal } from "../../../lib/jobs";
+import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
 
 const MEDIA_TYPES: Record<string, string> = {
@@ -30,8 +31,13 @@ export default defineTool({
   label: { start: ({ path }) => `Save ${path}` },
   async execute({ jobId, path, name, mediaType }, ctx) {
     const who = operator(ctx);
-    const job = await getJob(who.workspaceId, jobId);
-    if (job === null) return { saved: false as const, reason: `No job ${jobId}.` };
+    // Checked before the copy so a superseded run stores nothing; the attach
+    // below checks again in the same step as the write.
+    const run = await guardSideEffect(ctx, jobId);
+    if (!run.ok) {
+      return { saved: false as const, reason: run.reason, message: run.message };
+    }
+    const job = run.job;
 
     const sandbox = await ctx.getSandbox();
     const bytes = await sandbox.readBinaryFile({ path });
@@ -52,7 +58,11 @@ export default defineTool({
       bytes,
     });
 
-    await attachArtifact(who.workspaceId, jobId, artifact);
+    const attached = await attachArtifact(who.workspaceId, jobId, artifact, ctx.session.id);
+    if (!attached.ok) {
+      // Superseded mid-copy: the stored file is attached to nothing, and the job is left as the new run has it.
+      return { saved: false as const, reason: attached.reason, message: describeRunRefusal(attached.reason, jobId) };
+    }
     await record({
       workspaceId: who.workspaceId,
       kind: "job.artifact",

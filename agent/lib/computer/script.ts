@@ -1,5 +1,16 @@
 import { createHash } from "node:crypto";
 
+import { NETGUARD_FILE, NETGUARD_JS } from "./netguard";
+import {
+  RESERVED_PORTS,
+  SHELL_GROUP,
+  SHELL_HELPER,
+  SHELL_HELPER_DIR,
+  SHELL_PY,
+  SHELL_REFUSED_MARK,
+  SHELL_USER,
+} from "./shell-helper";
+
 /**
  * The software that turns the team's computer into Grok Bot's "Agent Computer":
  * a screen per Bot that people can watch and take over, with a browser, a file
@@ -16,6 +27,8 @@ import { createHash } from "node:crypto";
  * - The desktop: openbox and tint2 settings, dock icons, and launchers.
  * - `bot-computer-cdp.mjs`: screenshots and the shared sign-in jar over the
  *   Chrome DevTools Protocol.
+ * - `bot_shell.py`: runs a Bot's shell commands as a user that cannot reach
+ *   any of the above (see `shell-helper.ts`); `bot-computer isolate` installs it.
  *
  * Everything except the gateway listens on 127.0.0.1. The gateway admits a
  * connection only with a fresh, single-use token signed by the app (see
@@ -27,13 +40,13 @@ import { createHash } from "node:crypto";
  */
 
 /** Bump when the programs change in a way a running computer must pick up. */
-const RUNTIME_REVISION = "2";
+const RUNTIME_REVISION = "3";
 
 /**
  * Bump when the installed packages change, so sandbox templates are rebuilt
  * with them preinstalled. Programs alone are rewritten on the next use.
  */
-export const COMPUTER_SOFTWARE_REVISION = "2";
+export const COMPUTER_SOFTWARE_REVISION = "3";
 
 export const COMPUTER_HOME = "/workspace/.computer";
 export const COMPUTER_BIN = `${COMPUTER_HOME}/bin`;
@@ -72,6 +85,12 @@ export function computerRuntime(options: { chromeFlags?: string; aptMirror?: str
     __APT_MIRROR__: /^https?:\/\/[\w.-]+(\/[\w./-]*)?$/.test(mirror) ? mirror : DEFAULT_APT_MIRROR,
     __DESKTOP__: COMPUTER_DESKTOP,
     __SCRIPT__: COMPUTER_SCRIPT,
+    __HELPER_DIR__: SHELL_HELPER_DIR,
+    __HELPER__: SHELL_HELPER,
+    __USER__: SHELL_USER,
+    __GROUP__: SHELL_GROUP,
+    __MARK__: SHELL_REFUSED_MARK,
+    __RESERVED__: RESERVED_PORTS.map(([low, high]) => `(${low}, ${high}),`).join(" "),
   };
   const fill = (source: string) =>
     Object.entries(settings).reduce((text, [name, value]) => text.replaceAll(name, value), source);
@@ -94,6 +113,8 @@ export function computerRuntime(options: { chromeFlags?: string; aptMirror?: str
     { path: COMPUTER_SCRIPT, content: fill(BASH), mode: 0o755 },
     { path: `${COMPUTER_BIN}/bot_computer.py`, content: fill(PYTHON), mode: 0o644 },
     { path: `${COMPUTER_BIN}/bot-computer-cdp.mjs`, content: fill(CDP), mode: 0o644 },
+    { path: `${COMPUTER_BIN}/${NETGUARD_FILE}`, content: fill(NETGUARD_JS), mode: 0o644 },
+    { path: `${COMPUTER_BIN}/bot_shell.py`, content: fill(SHELL_PY), mode: 0o644 },
     { path: `${COMPUTER_DESKTOP}/openbox.xml`, content: fill(OPENBOX), mode: 0o644 },
     { path: `${COMPUTER_DESKTOP}/tint2rc`, content: fill(TINT2), mode: 0o644 },
     { path: `${COMPUTER_DESKTOP}/icons/files.svg`, content: FILES_ICON, mode: 0o644 },
@@ -266,10 +287,13 @@ PROFILES="$STATE/chrome"
 IDENTITY="$STATE/identity"
 KEY="$STATE/key"
 RUN=/tmp/bot-computer
+HELPER="__HELPER__"
+# The screens' X displays admit only clients holding this cookie, which a Bot's shell cannot read.
+export XAUTHORITY="$STATE/xauthority"
 PORT=__PORT__
 WIDTH=__WIDTH__
 HEIGHT=__HEIGHT__
-PACKAGES="tigervnc-standalone-server websockify xdotool x11-utils x11-xserver-utils fonts-noto-core fonts-noto-color-emoji fonts-liberation ca-certificates curl openbox tint2 pcmanfm xfce4-terminal dbus-x11"
+PACKAGES="tigervnc-standalone-server websockify xdotool x11-utils x11-xserver-utils xauth iptables nftables fonts-noto-core fonts-noto-color-emoji fonts-liberation ca-certificates curl openbox tint2 pcmanfm xfce4-terminal dbus-x11"
 DESK="__DESKTOP__"
 CHROME_FLAGS="--remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --password-store=basic --disable-dev-shm-usage --window-position=0,0 --start-maximized --restore-last-session --hide-crash-restore-bubble --noerrdialogs --test-type --disable-features=Translate,MediaRouter __EXTRA_CHROME_FLAGS__"
 
@@ -283,7 +307,8 @@ chrome_sandbox_flags() {
 }
 
 mkdir -p "$RUN" "$PROFILES" "$IDENTITY" 2>/dev/null
-chmod 700 "$IDENTITY" 2>/dev/null
+# Logs, screenshots, session buses and gateway nonces: the computer's alone.
+chmod 700 "$RUN" "$IDENTITY" 2>/dev/null
 
 quote() { python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$1"; }
 
@@ -372,7 +397,8 @@ installed() {
   command -v google-chrome >/dev/null && command -v Xvnc >/dev/null && command -v websockify >/dev/null &&
     command -v xdotool >/dev/null && command -v xdpyinfo >/dev/null &&
     command -v openbox >/dev/null && command -v tint2 >/dev/null && command -v pcmanfm >/dev/null &&
-    command -v xfce4-terminal >/dev/null && command -v dbus-daemon >/dev/null && command -v xsetroot >/dev/null
+    command -v xfce4-terminal >/dev/null && command -v dbus-daemon >/dev/null && command -v xsetroot >/dev/null &&
+    command -v xauth >/dev/null && command -v iptables >/dev/null && command -v nft >/dev/null
 }
 
 # Some sandbox networks cannot reach Ubuntu's plain-HTTP archive at all, and apt
@@ -494,9 +520,16 @@ cmd_ensure() {
   flock -w 90 8 || fail ensure "screen $n is still starting"
   ensure_gateway
   local vnc=$((5900 + n)) cdp=$((9300 + n)) profile="$PROFILES/$n"
+  # A display from before X cookies admits anyone on the computer; restart the screen once.
+  if running "display$n" "$(display_pattern "$n")" && ! tr '\0' ' ' <"/proc/$(pid_of "display$n")/cmdline" 2>/dev/null | grep -q -- ' -auth '; then
+    stop_screen "$n"
+  fi
   if ! running "display$n" "$(display_pattern "$n")"; then
     rm -f "/tmp/.X$n-lock" "/tmp/.X11-unix/X$n"
-    daemon "display$n" Xvnc ":$n" -geometry "$WIDTH"x"$HEIGHT" -depth 24 -rfbport "$vnc" -localhost -SecurityTypes None -AlwaysShared -desktop "screen $n"
+    xauth -q remove ":$n" >/dev/null 2>&1
+    xauth -q add ":$n" . "$(mcookie)" || fail display "could not make screen $n's X cookie"
+    chmod 600 "$XAUTHORITY"
+    daemon "display$n" Xvnc ":$n" -auth "$XAUTHORITY" -nolisten tcp -geometry "$WIDTH"x"$HEIGHT" -depth 24 -rfbport "$vnc" -localhost -SecurityTypes None -AlwaysShared -desktop "screen $n"
     wait_for 100 display_up "$n" || fail display "screen $n's display did not start: $(tail -n 3 "$RUN/display$n.log")"
     changed=true
   fi
@@ -546,8 +579,29 @@ cmd_status() {
   done
   running gateway "$GATEWAY_PATTERN" && gateway=true
   installed && software=true
-  printf '{"ok":true,"version":"%s","installed":%s,"gateway":%s,"screens":[%s]}\n' \
-    "$VERSION" "$software" "$gateway" "$screens"
+  printf '{"ok":true,"version":"%s","installed":%s,"gateway":%s,"shell":"%s","screens":[%s]}\n' \
+    "$VERSION" "$software" "$gateway" "$(shell_mode)" "$screens"
+}
+
+# shell_mode: how a Bot's shell is kept off the browser: iptables, nftables, landlock, none, or unset.
+shell_mode() {
+  local mode
+  mode=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("mode", "unset"))' "__HELPER_DIR__/state.json" 2>/dev/null)
+  case "$mode" in iptables | nftables | landlock | none) printf '%s' "$mode" ;; *) printf unset ;; esac
+}
+
+# isolate PORTS: installs the Bot shell's helper root-owned and fences the bot user off
+# the browser (see shell-helper.ts). PORTS: what the shell may connect to under Landlock.
+cmd_isolate() {
+  local ports=$1
+  wait_installed 60
+  sudo -n true 2>/dev/null || fail isolate "the Bot shell needs sudo on the computer to run as its own user"
+  if ! sudo -n cmp -s "$BIN/bot_shell.py" "$HELPER"; then
+    sudo -n install -d -o root -g root -m 755 "__HELPER_DIR__" &&
+      sudo -n install -o root -g root -m 644 "$BIN/bot_shell.py" "$HELPER" ||
+      fail isolate "could not install the Bot shell's helper"
+  fi
+  sudo -n python3 -I "$HELPER" setup "$(id -un)" "$STATE" "$RUN" "$ports"
 }
 
 cmd_shot() {
@@ -715,8 +769,9 @@ case "$1" in
   reload) cmd_reload ;;
   input) cmd_input "$2" "$3" ;;
   identity) cmd_identity "$2" "$3" ;;
+  isolate) cmd_isolate "$2" ;;
   recover) cmd_recover ;;
-  *) fail args "usage: bot-computer version | install | ensure N | stop N | status | launch browser|files|terminal | raise N | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | recover" ;;
+  *) fail args "usage: bot-computer version | install | ensure N | stop N | status | launch browser|files|terminal | raise N | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | isolate PORTS | recover" ;;
 esac
 `;
 

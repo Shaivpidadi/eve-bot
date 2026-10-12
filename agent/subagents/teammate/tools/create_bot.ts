@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { findBot, getBot, hireBot } from "../../../lib/bots";
-import { getJob } from "../../../lib/jobs";
+import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
 
 export default defineTool({
@@ -23,8 +23,10 @@ export default defineTool({
   label: { start: ({ name, role }) => `Create ${name} — ${role}` },
   async execute(input, ctx) {
     const who = operator(ctx);
-    const job = await getJob(who.workspaceId, input.jobId);
-    if (job === null) return { created: false as const, reason: `No job ${input.jobId}.` };
+    // A new teammate outlives the job: a cancelled or superseded run must not hire one.
+    const run = await guardSideEffect(ctx, input.jobId);
+    if (!run.ok) return { created: false as const, reason: run.message };
+    const job = run.job;
 
     const existing = await findBot(who.workspaceId, input.name);
     if (existing !== null) {

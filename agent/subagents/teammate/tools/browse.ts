@@ -5,6 +5,7 @@ import { watchAuthWall } from "../../../lib/jev-watch";
 import { operator } from "../../../lib/session";
 
 import { browser, refreshScreen } from "../lib/browser";
+import { scriptUrl } from "../lib/consequence";
 import { forgetLook, isLook, look } from "../lib/page";
 
 export default defineTool({
@@ -23,6 +24,13 @@ export default defineTool({
     }),
   label: { start: ({ url, go }) => (url === undefined ? `Go ${go}` : `Open ${url}`) },
   async execute({ url, go }, ctx) {
+    if (url !== undefined && scriptUrl(url)) {
+      return {
+        opened: false as const,
+        url,
+        error: "Script and data addresses are not opened: they act on the page instead of opening one. Open a web address, and act on the page with page_click or page_fill.",
+      };
+    }
     const opened = await browser(ctx, url === undefined ? [go as string] : ["open", url]);
     if (!opened.ok) {
       return { opened: false as const, url: url ?? go, error: opened.error, detail: opened.output };

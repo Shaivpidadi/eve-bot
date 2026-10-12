@@ -2,7 +2,9 @@ import { defineSchedule } from "eve/schedules";
 
 import ops from "../channels/ops";
 import { getBot } from "../lib/bots";
+import { repairAllReservations } from "../lib/budget";
 import { reapIdleScreens } from "../lib/computer/reaper";
+import { chargeComputerRuntime } from "../lib/computer-spend";
 import { newId } from "../lib/ids";
 import { claimJob, dueJobs, failJob, releaseJob } from "../lib/jobs";
 import { roomAttributes } from "../lib/rooms";
@@ -71,6 +73,11 @@ export default defineSchedule({
     );
     // Browsers nobody is using are stopped; they start again on the next use.
     waitUntil(reapIdleScreens().catch(() => 0));
+    // Budget held by runs that died before settling goes back (admission also
+    // repairs on demand, so a daily tick is enough).
+    waitUntil(repairAllReservations().catch(() => 0));
+    // The computer's finished sessions go on the workspace budget, each once.
+    waitUntil(chargeComputerRuntime().catch(() => 0));
   },
 });
 

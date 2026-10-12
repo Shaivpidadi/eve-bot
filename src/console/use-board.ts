@@ -12,6 +12,8 @@ export interface BoardState {
   readonly members: readonly Member[];
   /** Oldest first. */
   readonly activity: readonly ActivityEvent[];
+  /** Overdue work and dead runs; absent from a server that does not report them yet. */
+  readonly health?: BoardResponse["health"];
 }
 
 const ACTIVITY_LIMIT = 1_200;
@@ -44,7 +46,7 @@ export function useBoard(): { board: BoardState | null; online: boolean; refresh
         events.current.delete(stale.id);
       }
 
-      setBoard({ workspaceId: next.workspaceId, user: next.user, profile: next.profile ?? null, members: next.members, activity });
+      setBoard({ workspaceId: next.workspaceId, user: next.user, profile: next.profile ?? null, members: next.members, activity, health: next.health });
       setOnline(true);
     } catch (error) {
       if (!(error instanceof SignedOutError)) setOnline(false);

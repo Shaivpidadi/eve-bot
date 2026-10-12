@@ -10,12 +10,15 @@ import { findBot, getBot, hireBot, listBots, patchBot, retireBot } from "../lib/
 import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
-import { cancelJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
+import { cancelJobRun, describeInterruption, interruptVia, within } from "../lib/cancel";
+import { stopRunCommands } from "../lib/computer/shell";
+import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
+import { isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
 import { FIELDS as MEMORY_FIELDS, forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, readFields, remember, restore as restoreMemory, revive as reviveMemory, rewrite as rewriteMemory, setField, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
 import { CATALOG } from "../lib/catalog";
-import { addConnector, completeOAuth, disconnectOAuth, getConnector, listConnectors, needsConnect, OAUTH_CALLBACK_PATH, publicConnector, recheckConnector, removeConnector, replaceKey, startOAuth, updateConnector } from "../lib/connectors";
+import { addConnector, completeOAuth, confirmGuessedReads, disconnectOAuth, getConnector, listConnectors, needsConnect, OAUTH_CALLBACK_PATH, publicConnector, recheckConnector, removeConnector, replaceKey, startOAuth, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
 import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
@@ -96,7 +99,7 @@ async function restartWedgedRoom(
   const old = (await getRoomState(workspaceId, room))?.sessionId ?? null;
   const generation = await restartRoom(workspaceId, room);
   if (old !== null) {
-    await Promise.race([attachSession(old).cancel({ tasks: false }), new Promise((resolve) => setTimeout(resolve, 5_000))]).catch(() => undefined);
+    await within(attachSession(old).cancel({ tasks: false }), 5_000).catch(() => undefined);
   }
   const botId = botIdForRoom(room);
   const bot = botId === null ? null : await getBot(workspaceId, botId);
@@ -341,22 +344,19 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const recorded = (await getRoomState(workspaceId, room))?.sessionId ?? null;
       const generation = await resetRoom(workspaceId, room);
 
-      const within = <T>(work: Promise<T>, ms = 8_000): Promise<T> =>
-        Promise.race([work, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timed out")), ms))]);
       const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
       const cancelledJobs: string[] = [];
+      // The teammate's own session holds its open requests, such as a cost-limit
+      // card, so each job's sessions are stopped with it: the run's bound one and
+      // the one the job records, which is all a run that never called job_brief
+      // has (see cancelJobRun).
+      const interrupt = interruptVia(attachSession, "Room reset");
       for (const job of await listOpenJobs(workspaceId)) {
         if (job.room !== room || isRoutine(job)) continue;
-        const cancelled = await cancelJob(workspaceId, job.id);
+        const cancelled = await cancelJobRun(workspaceId, job.id, { interrupt, stopCommands: stopRunCommands });
         if (!cancelled.ok) continue;
         cancelledJobs.push(job.id);
-        // The teammate's own session holds its open requests, such as a cost-limit card.
-        if (job.sessionId) {
-          const child = attachSession(job.sessionId);
-          await quietly(within(child.cancel({ tasks: true })));
-          await quietly(within(child.reset({ reason: "Room reset" })));
-        }
       }
       const old = [...new Set([live?.id ?? null, recorded].filter((id): id is string => id !== null))];
       // The session alone, not its tasks: the one-off jobs' sessions were cancelled
@@ -609,7 +609,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * open one-off jobs are cancelled, its playbook goes with it, and a handover it
      * was waiting on is over. The console confirms with the person first.
      */
-    DELETE("/bot/v1/bots/:botId", async (request, { params }) => {
+    DELETE("/bot/v1/bots/:botId", async (request, { attachSession, params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const workspaceId = gate.access.workspaceId;
@@ -617,8 +617,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (bot === null) return json({ error: "no such bot" }, 404);
       const open = (await listOpenJobs(workspaceId)).filter((job) => job.botId === bot.id);
       const cancelled: string[] = [];
+      const interrupt = interruptVia(attachSession, `${bot.name} was removed`);
       for (const job of open) {
-        const outcome = await cancelJob(workspaceId, job.id);
+        const outcome = await cancelJobRun(workspaceId, job.id, { interrupt, stopCommands: stopRunCommands });
         if (outcome.ok) cancelled.push(job.id);
       }
       await retireBot(workspaceId, bot.id);
@@ -760,6 +761,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     GET("/bot/v1/usage", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
+      await chargeComputerRuntimeSoon();
       return json(await usageReport(gate.access.workspaceId));
     }),
 
@@ -812,12 +814,27 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return changed.ok ? json({ job: changed.job }) : json({ error: changed.reason }, 422);
     }),
 
-    /** Stops a job or routine from the console; what it already delivered stays. */
-    DELETE("/bot/v1/jobs/:jobId", async (request, { params }) => {
+    /**
+     * Stops a job or routine from the console; what it already delivered stays.
+     * The same cancelJobRun as cancel_job, and here the bot's running session is
+     * stopped too. A failed interruption still answers 200: the job is cancelled
+     * and fenced, and `interruption` says the session was not stopped.
+     */
+    DELETE("/bot/v1/jobs/:jobId", async (request, { attachSession, params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      const cancelled = await cancelJob(gate.access.workspaceId, params.jobId ?? "");
-      return cancelled.ok ? json({ cancelled: true, job: { id: cancelled.job.id, title: cancelled.job.title } }) : json({ error: cancelled.reason }, 422);
+      const cancelled = await cancelJobRun(gate.access.workspaceId, params.jobId ?? "", {
+        interrupt: interruptVia(attachSession, `Cancelled from the console by ${gate.access.user}`),
+        stopCommands: stopRunCommands,
+      });
+      if (!cancelled.ok) return json({ error: cancelled.reason }, 422);
+      return json({
+        cancelled: true,
+        job: { id: cancelled.job.id, title: cancelled.job.title },
+        alreadyCancelled: cancelled.alreadyCancelled,
+        interruption: cancelled.interruption,
+        note: describeInterruption(cancelled),
+      });
     }),
 
     /** The team's connectors: services every Bot can use. Keys never come back out. */
@@ -892,6 +909,29 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         ...(toolsPatch(body?.tools) === null ? {} : { tools: toolsPatch(body?.tools) as Record<string, boolean> }),
       });
       return updated === null ? json({ error: "no such connector" }, 404) : json({ connector: publicConnector(updated) });
+    }),
+
+    /**
+     * Confirms guessed reads in bulk, so HQ may use them: `{ tools: [...] }`
+     * for a selection, or no `tools` for every tool the Connectors page shows
+     * as "reads?". The same people who may PATCH the policy may do this; only
+     * guessed reads move, everything else comes back as `skipped`.
+     */
+    POST("/bot/v1/connectors/:connectorId/reviewed-reads", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      let tools: string[] | undefined;
+      if (body?.tools !== undefined) {
+        if (!Array.isArray(body.tools) || body.tools.length > POLICY_TOOLS || !body.tools.every((tool) => typeof tool === "string" && /^[A-Za-z0-9_.:-]{1,120}$/.test(tool))) {
+          return json({ error: "tools must be a list of tool names" }, 400);
+        }
+        tools = body.tools as string[];
+      }
+      const done = await confirmGuessedReads(gate.access.workspaceId, params.connectorId ?? "", tools);
+      return done === null
+        ? json({ error: "no such connector" }, 404)
+        : json({ connector: publicConnector(done.connector), confirmed: done.confirmed, skipped: done.skipped });
     }),
 
     /** Swaps the connector's key, once the server has accepted the new one. */

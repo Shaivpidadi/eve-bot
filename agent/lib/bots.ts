@@ -1,7 +1,7 @@
 import { record } from "./activity";
 import { DEFAULT_BOT } from "./default-bot";
 import { newId } from "./ids";
-import { deleteDoc, isConflict, listDocs, readDoc, updateDoc, writeDoc } from "./store";
+import { createDoc, deleteDoc, isConflict, listDocs, readDoc, updateDoc, writeDoc } from "./store";
 import type { Bot } from "./types";
 
 const key = (workspaceId: string, botId: string) => `bots/${workspaceId}/${botId}.json`;
@@ -14,6 +14,8 @@ interface SeedRecord {
   readonly state: "seeding" | "seeded";
   readonly at: string;
   readonly botId?: string;
+  /** Which seeding attempt wrote it, so an attempt can recognise its own claim. */
+  readonly claim?: string;
 }
 
 export async function hireBot(input: {
@@ -44,7 +46,7 @@ export async function hireBot(input: {
     updatedAt: now,
     stats: { jobsCompleted: 0, jobsFailed: 0 },
   };
-  await writeDoc(key(bot.workspaceId, bot.id), bot, null);
+  await createDoc(key(bot.workspaceId, bot.id), bot);
   await record({
     workspaceId: bot.workspaceId,
     kind: "bot.hired",
@@ -79,7 +81,7 @@ export async function listBots(workspaceId: string): Promise<Bot[]> {
  * cannot both hire it.
  */
 async function seedDefaultBot(workspaceId: string): Promise<void> {
-  const seeding: SeedRecord = { state: "seeding", at: new Date().toISOString() };
+  const seeding: SeedRecord = { state: "seeding", at: new Date().toISOString(), claim: newId("seed") };
   const existing = await readDoc<SeedRecord>(seedKey(workspaceId));
   if (existing !== null) {
     const stalled =
@@ -89,8 +91,10 @@ async function seedDefaultBot(workspaceId: string): Promise<void> {
   try {
     await writeDoc(seedKey(workspaceId), seeding, existing?.version ?? null);
   } catch (error) {
-    if (isConflict(error)) return;
-    throw error;
+    if (!isConflict(error)) throw error;
+    // On Blob a claim that landed can come back as a conflict; only another attempt's claim means it is theirs.
+    const now = await readDoc<SeedRecord>(seedKey(workspaceId));
+    if (now?.value.claim !== seeding.claim) return;
   }
 
   const bots = await listDocs<Bot>(`bots/${workspaceId}/`);
