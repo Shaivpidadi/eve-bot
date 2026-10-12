@@ -18,6 +18,21 @@ describe("version", () => {
     expect(newer("garbage", "0.2.0")).toBe(false);
   });
 
+  it("knows its version where no package.json sits in the working directory, as when bundled on Vercel", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const pkg = (await import("../package.json")).default as { version: string };
+    vi.spyOn(process, "cwd").mockReturnValue(mkdtempSync(join(tmpdir(), "bundled-")));
+    try {
+      expect(ownVersion()).toBe(pkg.version);
+      const github = (async () => new Response(JSON.stringify({ version: pkg.version }), { status: 200 })) as unknown as typeof fetch;
+      expect((await versionReport(github)).updateAvailable).toBe(false);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("reads its own version from the package, and says when the original is newer", async () => {
     expect(ownVersion()).toMatch(/^\d+\.\d+\.\d+$/);
     forgetVersion();

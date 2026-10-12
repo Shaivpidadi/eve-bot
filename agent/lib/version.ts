@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { version as packageVersion } from "../../package.json";
 
 /**
  * Which EVE Bot this is, and whether the original has moved on.
@@ -49,18 +48,16 @@ const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 let own: string | undefined;
 let upstream: { readonly latest: string | null; readonly until: number } | undefined;
 
-/** This build's version: the package's, or `BOT_VERSION` where the package file is not shipped. */
+/**
+ * This build's version, or `BOT_VERSION` when set. Taken from the package at
+ * build time: on Vercel the agent runs bundled, where no package.json of ours
+ * sits in the working directory, and reading one there said 0.0.0, so every
+ * deployment saw an update it already had.
+ */
 export function ownVersion(): string {
   if (own !== undefined) return own;
   const fromEnv = process.env.BOT_VERSION?.trim();
-  if (fromEnv) return (own = fromEnv);
-  try {
-    const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { version?: unknown };
-    own = typeof pkg.version === "string" ? pkg.version : "0.0.0";
-  } catch {
-    own = "0.0.0";
-  }
-  return own;
+  return (own = fromEnv || packageVersion);
 }
 
 /** `a` is newer than `b`, comparing dot-separated numbers; anything unparseable is 0. */
