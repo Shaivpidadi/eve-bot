@@ -7,6 +7,7 @@
  * Checks that cost model tokens (a real job, a real routine) are off unless
  * QA_JOBS=1, so the default run is free and fast enough to sit in front of a
  * deploy. Evidence for anything that fails is written under .qa/.
+ * QA_ONLY=resume,stranded runs only the checks whose names contain those words.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -33,7 +34,10 @@ if (!url || !token) {
 
 const withJobs = process.env.QA_JOBS === "1";
 const concurrency = Number(process.env.QA_CONCURRENCY) || 3;
-const checks = [...access, ...roster, ...memory, ...connectors, ...(withJobs ? [...jobs, ...stranded, ...resume] : [])];
+const only = (process.env.QA_ONLY ?? "").split(",").map((part) => part.trim()).filter((part) => part !== "");
+const checks = [...access, ...roster, ...memory, ...connectors, ...(withJobs ? [...jobs, ...stranded, ...resume] : [])].filter(
+  (check) => only.length === 0 || only.some((part) => check.name.includes(part)),
+);
 
 console.log(`Bot QA · ${url} · ${checks.length} checks · ${concurrency} at a time${withJobs ? " · jobs included" : ""}\n`);
 

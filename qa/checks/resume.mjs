@@ -38,9 +38,11 @@ function resumeCheck({ viaTick }) {
       });
       const jobId = assigned.jobId;
 
-      // Crash once the first step is in the journal, while the sleep runs.
+      // Crash once step 1 is in the journal, while the sleep runs. A Bot may write
+      // the file with the shell rather than write_file, so its own note is the signal.
+      const wroteFirst = (line) => (line.kind === "file" && line.data?.path === file) || (line.kind === "progress" && /first/i.test(line.text) && /(wrote|written|creat)/i.test(line.text));
       const before = await waitFor(() => job(call, jobId), {
-        until: (record) => (record?.journal ?? []).some((line) => line.kind === "file" && line.data?.path === file),
+        until: (record) => (record?.journal ?? []).some(wroteFirst),
         what: "the first run to write its file",
         timeoutMs: 240_000,
       });
@@ -70,14 +72,14 @@ function resumeCheck({ viaTick }) {
       expect(["job.done", "job.blocked"].includes(end.event.kind), true, "the job reached a working end state", { end: end.event });
 
       const final = await job(call, jobId);
-      const writes = (final?.journal ?? []).filter((line) => line.kind === "file" && line.data?.path === file);
       const closes = end.events.filter((entry) => entry.kind === "job.done");
       expect(closes.length <= 1, true, "the job closed once", { closes });
       expect(final?.resumedFrom, (n) => n >= (before.journal ?? []).length, "the second run started from the journal", { resumedFrom: final?.resumedFrom, continued });
-      // The file may be written again to append "second"; it must not be rewritten with "first" from scratch.
-      const restarts = writes.filter((line) => line.runToken !== writes[0]?.runToken && /first/.test(line.text) && !/second/.test(line.text));
-      expect(restarts.length, 0, "the second run did not redo step 1", { writes });
-      return `resumed from step ${final?.resumedFrom}, ${(final?.journal ?? []).length} steps, ended ${end.event.kind}`;
+      // The file itself says whether step 1 was redone: once means "first" then "second", and nothing else.
+      const content = await call(`/bot/v1/computer/files/content?path=${encodeURIComponent(file)}`);
+      const lines = typeof content.body === "string" ? content.body.trim().split("\n").map((line) => line.trim()) : null;
+      expect(JSON.stringify(lines), JSON.stringify(["first", "second"]), "the file shows each step done once", { status: content.status, body: content.body, journal: final?.journal });
+      return `resumed from step ${final?.resumedFrom}, ${(final?.journal ?? []).length} steps, file ${JSON.stringify(lines)}, ended ${end.event.kind}`;
     },
   };
 }
