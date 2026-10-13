@@ -58,6 +58,13 @@ of it; these are the ones that matter.
 | `BOT_QA` | `1` opens the QA suite's fault routes (crash a job's run, replace the computer) on this deployment; leave unset in production |
 | `BOT_STANDUP_CRON` / `BOT_STANDUP_ROOM` | when the daily standup runs (`0 13 * * 1-5`, in UTC) and where it posts: HQ's `desk` by default, or a Bot's room (`bot-<id>`) |
 
+## Journal and rewind
+
+There are no settings. Each job keeps the first 20 and last 180 lines of its
+journal, and up to 10 rewind points (the first and the latest nine), taken
+when a run starts, at each decision, and before an email. A rewind point
+holds only the job's own files.
+
 ## Email
 
 | Variable | Does |

@@ -48,7 +48,7 @@ Two helpers every track needs, built first:
 | D2. A workspace that follows its owner | [done] | 4/4 |
 | D3. Thin hands | [in-progress] | 2/4 |
 | D4. One Workflow world | [done] | 2/2 |
-| D5. Rewind | [in-progress] | 2/4 |
+| D5. Rewind | [in-progress] | 3/4 |
 
 ## D0. Stranded runs `[in-progress]`
 
@@ -475,9 +475,9 @@ D1 and the backup generations.
   the messages after the index. QA: `qa/checks/fork.mjs`.
 - **Done when:** a person can take a thread back to a message and go a different way.
 
-### D5.4 Write it down `[to-do]`
+### D5.4 Write it down `[done]`
 
-- `[to-do]` D5.4.1 README "What you get" gains one bullet on rewind; `docs/safety.md`
+- `[done]` D5.4.1 README "What you get" gains one bullet on rewind; `docs/safety.md`
   says what a rewind cannot undo; `docs/configuration.md` lists the retention knobs.
 - **Done when:** the docs render and the link check passes.
 

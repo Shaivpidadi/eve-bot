@@ -103,6 +103,19 @@ usage page loads (and by the tick); until a rate is set it is shown as
 unpriced. `BOT_JOB_COST_LIMIT_USD` and `BOT_HQ_COST_LIMIT_USD` still cap each
 session.
 
+## Rewind
+
+Rewinding a job puts back only what that job owns on the shared computer:
+its Bot's folder and the files its journal lists elsewhere. Other Bots'
+work is never touched. Files the Bot wrote through the shell outside its
+own folder are not in the journal, so a rewind does not restore them.
+
+A rewind cannot undo anything outside the computer. Emails sent after the
+chosen step stay sent; the next run's brief lists them as done and not to
+repeat. Changes made through connectors (a ticket filed, a page edited) are
+not in the action ledger yet, so they are neither undone nor listed: check
+the journal before rewinding past one.
+
 ## Shell
 
 The Bots' shell runs as a separate unprivileged user behind a network fence,
