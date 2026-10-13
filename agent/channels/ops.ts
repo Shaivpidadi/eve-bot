@@ -15,7 +15,7 @@ import { forgetGeneration } from "../lib/computer-backup";
 import { computerControl } from "../lib/computer/control";
 import { stopRunCommands } from "../lib/computer/shell";
 import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
-import { isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
+import { getJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
 import { FIELDS as MEMORY_FIELDS, forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, readFields, remember, restore as restoreMemory, revive as reviveMemory, rewrite as rewriteMemory, setField, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
@@ -797,6 +797,23 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /** A routine, changed from the console: a new interval or clock schedule, or a new title. */
+    /** One job as stored, with its journal: what the console's job card and the QA suite read. */
+    GET("/bot/v1/jobs/:jobId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const job = await getJob(gate.access.workspaceId, params.jobId ?? "");
+      if (job === null) return json({ error: "not found" }, 404);
+      const { lease, ...rest } = job;
+      // The lease's token proves a run's identity to job_brief; it never leaves the server.
+      return json({
+        job: {
+          ...rest,
+          journal: job.journal ?? [],
+          lease: lease === null ? null : { kind: lease.kind, until: lease.until, build: lease.build ?? null },
+        },
+      });
+    }),
+
     PATCH("/bot/v1/jobs/:jobId", async (request, { params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);

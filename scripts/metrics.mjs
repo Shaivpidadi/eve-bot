@@ -9,6 +9,7 @@
  *
  *   npm run metrics                 # the default workspace
  *   npm run metrics -- --days 7     # only the last week
+ *   npm run metrics -- --resume     # how well resumed runs continued (redo ratio)
  */
 import nextEnv from "@next/env";
 
@@ -17,6 +18,7 @@ nextEnv.loadEnvConfig(process.cwd(), false);
 const { listJobs } = await import("../agent/lib/jobs.ts");
 const { recentActivity } = await import("../agent/lib/activity.ts");
 const { formatSummary, summarise } = await import("../agent/lib/metrics.ts");
+const { redoRatio } = await import("../agent/lib/journal.ts");
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -34,6 +36,22 @@ const events = await recentActivity(workspace, { limit: 2_000 });
 
 if (jobs.length === 0) {
   console.log(`No jobs in workspace "${workspace}"${days > 0 ? ` in the last ${days} days` : ""} yet.`);
+  process.exit(0);
+}
+
+if (args.includes("--resume")) {
+  const resumed = jobs
+    .map((job) => ({ job, ratio: redoRatio(job.journal ?? [], job.resumedFrom) }))
+    .filter((row) => row.ratio !== null);
+  if (resumed.length === 0) {
+    console.log("No job has resumed from a journal yet.");
+    process.exit(0);
+  }
+  const mean = resumed.reduce((sum, row) => sum + row.ratio, 0) / resumed.length;
+  console.log(`Resumed runs: ${resumed.length} · mean redo ratio ${mean.toFixed(2)} (0 is a clean continuation)\n`);
+  for (const { job, ratio } of resumed.sort((a, b) => b.ratio - a.ratio)) {
+    console.log(`  ${job.id}  ${ratio.toFixed(2)}  from step ${job.resumedFrom} of ${(job.journal ?? []).length}  ${job.title.slice(0, 60)}`);
+  }
   process.exit(0);
 }
 

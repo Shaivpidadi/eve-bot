@@ -171,23 +171,25 @@ facts a run produced, written into the job record under the fence.
   that URL first (stub model scripted to follow instructions, asserting the tool order).
 - **Done when:** a re-run's brief carries the diary and the Bot's first action continues it.
 
-### D1.4 Prove it: crash and continue `[to-do]`
+### D1.4 Prove it: crash and continue `[in-progress]`
 
 - **Files:** `agent/channels/ops.ts` (the `BOT_QA=1` crash route), `qa/checks/resume.mjs`,
   `qa/lib/wait.mjs`.
-- `[to-do]` D1.4.1 The crash route: ends the run's teammate session (`attachSession(...).cancel`
+- `[done]` D1.4.1 The crash route: ends the run's teammate session (`attachSession(...).cancel`
   then reset), lapses the lease (`until` = now) without touching status, records
   `job.crashed` in the feed. Refused with 404 unless `BOT_QA=1`.
-- `[to-do]` D1.4.2 `qa/checks/resume.mjs` with `QA_JOBS=1`: assign a three-step job (open a
+- `[done]` D1.4.2 (written; `GET /bot/v1/jobs/:id` added so it can read the journal) `qa/checks/resume.mjs` with `QA_JOBS=1`: assign a three-step job (open a
   known page, write a file, log a line), wait for two journal entries, crash it, expect a new
   run whose brief carried the journal (read `resumedFrom` on the job), expect the job to
   close once, and expect the file written once (journal has one `file` entry for the path).
-- `[to-do]` D1.4.3 Same check under a watchdog tick rather than a manual `run_job`, so the
+- `[done]` D1.4.3 (written) Same check under a watchdog tick rather than a manual `run_job`, so the
   dispatch path is covered.
 - **Eval:** redo ratio = journal entries after resume that repeat a `page` URL or `file` path
   from before, divided by entries before the crash. Computed by `npm run metrics -- --resume`
   (new flag reading `resumedFrom`). Record before (no journal: ratio 1.0 by definition) and
   after. Target: under 0.2 on the QA job, under 0.4 on a real research job.
+- `[to-do]` D1.4.4 Run both checks live with `QA_JOBS=1` on Vercel Sandbox and on Docker, and record the ratio here. Blocked locally: the only model credential in `.env.local` is a Vercel OIDC token that expired in September (`npx vercel env pull` refreshes it).
+- **Eval results:** `npm run metrics -- --resume` `[done]`; numbers `[to-do]`.
 - **Done when:** the QA check passes on Vercel Sandbox and on Docker, and the ratio is recorded.
 
 ### D1.5 A note to self `[to-do]`
@@ -452,7 +454,7 @@ D1 and the backup generations.
 
 1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[done]` (`agent/lib/qa.ts`, routes in `ops.ts`, `tests/qa.test.ts`)
 2. D0.1 `[done]`, D0.2 `[done]` (QA check written, not yet run live: needs a model and `BOT_QA=1`)
-3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[to-do]`
+3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[in-progress]` (live run pending a model credential)
 4. D2.1, D2.2, D2.4 `[to-do]`
 5. D1.5, D1.6, D0.3 (after E4) `[to-do]`
 6. D3.1, D3.2 `[to-do]`

@@ -115,3 +115,26 @@ describe("appendJournal", () => {
     expect(journalOf({})).toEqual([]);
   });
 });
+
+describe("redoRatio", () => {
+  it("counts pages and files a resumed run repeated, over the steps before it", async () => {
+    const { redoRatio } = await import("../agent/lib/journal");
+    const before = [
+      entry(1, { kind: "page", text: "a", data: { url: "https://a" } }),
+      entry(2, { kind: "file", text: "x", data: { path: "/w/x" } }),
+      entry(3, { kind: "progress", text: "noted" }),
+      entry(4, { kind: "page", text: "b", data: { url: "https://b" } }),
+    ];
+    const clean = [...before, entry(5, { runToken: "run_2", kind: "page", text: "b", data: { url: "https://c" } })];
+    expect(redoRatio(clean, 4)).toBe(0);
+    const redid = [
+      ...before,
+      entry(5, { runToken: "run_2", kind: "page", text: "a", data: { url: "https://a" } }),
+      entry(6, { runToken: "run_2", kind: "file", text: "x", data: { path: "/w/x" } }),
+      entry(7, { runToken: "run_2", kind: "page", text: "a again", data: { url: "https://a" } }),
+    ];
+    expect(redoRatio(redid, 4)).toBe(0.5);
+    expect(redoRatio(redid, undefined)).toBeNull();
+    expect(redoRatio(redid, 0)).toBeNull();
+  });
+});

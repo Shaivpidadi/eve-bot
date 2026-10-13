@@ -134,3 +134,25 @@ export function renderJournal(journal: readonly JournalEntry[], options: { reado
   if (asked.length > 0) lines.push("", "Asked and answered:", ...asked.map((entry) => `- ${entry.text}`));
   return lines.join("\n");
 }
+
+/**
+ * How much of a resumed run was spent redoing what the run before it had
+ * already done: the lines after `resumedFrom` that open a page or write a
+ * file already in the journal before it, over the lines before it. 0 is a
+ * perfect continuation; 1 means it redid as much as there was. Null for a
+ * job that never resumed.
+ */
+export function redoRatio(journal: readonly JournalEntry[], resumedFrom: number | undefined): number | null {
+  if (resumedFrom === undefined || resumedFrom <= 0 || resumedFrom > journal.length) return null;
+  const before = journal.slice(0, resumedFrom);
+  const after = journal.slice(resumedFrom);
+  const keyOf = (entry: JournalEntry): string | null =>
+    entry.kind === "page" && typeof entry.data?.url === "string"
+      ? `page ${entry.data.url}`
+      : entry.kind === "file" && typeof entry.data?.path === "string"
+        ? `file ${entry.data.path}`
+        : null;
+  const done = new Set(before.map(keyOf).filter((key): key is string => key !== null));
+  const redone = new Set(after.map(keyOf).filter((key): key is string => key !== null && done.has(key)));
+  return redone.size / before.length;
+}
