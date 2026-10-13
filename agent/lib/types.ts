@@ -193,6 +193,7 @@ export type ActivityKind =
   | "job.failed"
   | "job.cancelled"
   | "job.crashed"
+  | "job.stranded"
   | "job.learned"
   | "memory.saved"
   | "input.requested"

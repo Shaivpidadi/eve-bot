@@ -43,7 +43,7 @@ Two helpers every track needs, built first:
 | Track | Status | Tasks done |
 | --- | --- | --- |
 | E. eve 0.78 upgrade (prerequisite, see backlog) | [to-do] | 0/7 |
-| D0. Stranded runs | [in-progress] | 1/3 |
+| D0. Stranded runs | [in-progress] | 2/3 |
 | D1. The job record as the session log | [to-do] | 0/6 |
 | D2. A workspace that follows its owner | [to-do] | 0/4 |
 | D3. Thin hands | [to-do] | 0/4 |
@@ -70,22 +70,22 @@ when the Workflow world is local.
   records without it are treated as "unknown build". Unit test on the lease shape.
 - **Done when:** every new `run` and `wait` lease names its build.
 
-### D0.2 Treat a lease from another build as lapsed on local worlds `[to-do]`
+### D0.2 Treat a lease from another build as lapsed on local worlds `[done]`
 
 - **Files:** `agent/lib/jobs.ts` (`dueJobs`, a `leaseIsLive(lease)` helper),
   `agent/schedules/tick.ts`, `scripts/start.mjs`, `agent/lib/world.ts` (new: `worldIsLocal()`).
-- `[to-do]` D0.2.1 `worldIsLocal()`: true unless `VERCEL=1` or `experimental.workflow.world`
+- `[done]` D0.2.1 `worldIsLocal()`: true unless `VERCEL=1` or `experimental.workflow.world`
   names a shared world (read from `agent.ts` config through an env mirror
   `BOT_WORKFLOW_WORLD`). Unit test.
-- `[to-do]` D0.2.2 `leaseIsLive`: on a local world a `run`, `wait`, `dispatch` or `signoff`
+- `[done]` D0.2.2 `leaseIsLive`: on a local world a `run`, `wait`, `dispatch` or `signoff`
   lease whose `build` differs from `buildId()` is lapsed at once; elsewhere, the `until`
   clock rules. `dueJobs` uses it. Unit tests: four lease kinds × same build, other build,
   unknown build, Vercel.
-- `[to-do]` D0.2.3 A sweep at start: `npm start` and `eve dev` trigger one tick pass
+- `[done]` D0.2.3 A sweep at start (`POST /bot/v1/jobs/sweep`, called by `scripts/start.mjs` a minute after boot and by the console on its first load; one pass a minute per process): `npm start` and `eve dev` trigger one tick pass
   60 seconds after boot (`BOT_TICK_ON_START=off` disables). Under `eve dev` the
   schedule runner is off, so the pass is a direct call to the tick's dispatcher through
   the dev schedules route the README already documents.
-- `[to-do]` D0.2.4 The feed records `job.stranded` with the old build and the new one, so
+- `[done]` D0.2.4 The feed records `job.stranded` with the old build and the new one, so
   the thread says "the server restarted with new code; Atlas is picking the job up again".
 - **Tests:** unit as above; QA `qa/checks/stranded.mjs`: with `BOT_QA=1`, crash a job's run,
   bump the build stamp through `POST /bot/v1/qa/build/bump`, and expect the job
@@ -452,7 +452,7 @@ D1 and the backup generations.
 ## Order of work
 
 1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[done]` (`agent/lib/qa.ts`, routes in `ops.ts`, `tests/qa.test.ts`)
-2. D0.1 `[done]`, D0.2 `[to-do]`
+2. D0.1 `[done]`, D0.2 `[done]` (QA check written, not yet run live: needs a model and `BOT_QA=1`)
 3. D1.1, D1.2, D1.3, D1.4 `[to-do]`
 4. D2.1, D2.2, D2.4 `[to-do]`
 5. D1.5, D1.6, D0.3 (after E4) `[to-do]`

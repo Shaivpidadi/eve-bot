@@ -71,3 +71,8 @@ function buildDate(cwd: string): string | null {
 export function resetBuildId(): void {
   cached = undefined;
 }
+
+/** For the QA suite: this process now reports `id`, as if it were new code. */
+export function overrideBuildId(id: string): void {
+  cached = id;
+}

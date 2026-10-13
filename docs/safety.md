@@ -12,6 +12,13 @@ outward action (email, connector call, browser action, `create_bot`) checks it
 still is. A run whose lease lapsed and was taken over, or whose job was
 cancelled, is refused, even holding an approval it was given earlier.
 
+Every lease also names the build of the code that holds it. Outside Vercel
+the Workflow state cannot resume a run across a code change, so after a
+rebuild a lease from the old build is dead at once: the job is due again, a
+sweep a minute after start (or the console opening) re-dispatches it, and the
+thread says the server restarted. On Vercel the old deployment keeps its runs
+alive, so there the clock still rules.
+
 ## Cancellation
 
 Stop in the console (`DELETE /bot/v1/jobs/:id`) cancels the job durably and

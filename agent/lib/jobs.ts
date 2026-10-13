@@ -5,7 +5,8 @@ import { getBot, patchBot } from "./bots";
 import { DEFAULT_EFFORT, type JobEffort } from "./models";
 import { describeSchedule, nextRun, type Schedule } from "./schedule";
 import { createDoc, deleteDoc, listDocs, readDoc, store, updateDoc } from "./store";
-import type { Job, JobArtifact, JobResult, JobStatus } from "./types";
+import type { Job, JobArtifact, JobLease, JobResult, JobStatus } from "./types";
+import { worldIsLocal } from "./world";
 import { describeUsage } from "./usage";
 
 export const key = (workspaceId: string, jobId: string) => `jobs/${workspaceId}/${jobId}.json`;
@@ -20,6 +21,32 @@ const INDEX_BUILT = "index/open.built";
 const openMarker = (workspaceId: string, jobId: string) => `${OPEN_INDEX}${workspaceId}/${jobId}`;
 /** A marker with no job behind it may belong to an assignment still being written. */
 const ORPHAN_MARKER_MS = 10 * 60_000;
+
+/**
+ * Whether a lease is held by a run that could still be alive.
+ *
+ * By the clock, until `until` passes. On a local Workflow world a lease from
+ * another build is dead at once: its run cannot resume under new code, so
+ * waiting out its expiry only delays the job (see `lib/build.ts`). A lease
+ * without a build (written before builds were recorded) is judged by the
+ * clock alone.
+ */
+export function leaseIsLive(
+  lease: JobLease | null,
+  now: number = Date.now(),
+  world: { readonly build?: string; readonly local?: boolean } = {},
+): boolean {
+  if (lease === null) return false;
+  if (leaseStranded(lease, world)) return false;
+  return Date.parse(lease.until) > now;
+}
+
+/** A lease held by another build on a world where that run cannot have survived. */
+export function leaseStranded(lease: JobLease, world: { readonly build?: string; readonly local?: boolean } = {}): boolean {
+  const local = world.local ?? worldIsLocal();
+  if (!local || lease.build === undefined) return false;
+  return lease.build !== (world.build ?? buildId());
+}
 
 /** Statuses the minute tick hands to HQ. */
 const DISPATCHABLE: readonly JobStatus[] = ["scheduled", "queued", "dispatched", "running"];
@@ -228,7 +255,7 @@ export async function dueJobs(limit = 25): Promise<Job[]> {
     .filter((job): job is Job => job !== null)
     .filter((job) => DISPATCHABLE.includes(job.status))
     .filter((job) => Date.parse(job.runAt) <= now)
-    .filter((job) => job.lease === null || Date.parse(job.lease.until) <= now)
+    .filter((job) => !leaseIsLive(job.lease, now))
     .sort((left, right) =>
       left.priority === right.priority
         ? left.runAt.localeCompare(right.runAt)
@@ -292,7 +319,7 @@ export async function claimJob(
     }
 
     const lease = current.lease;
-    if (lease !== null && Date.parse(lease.until) > now) {
+    if (lease !== null && leaseIsLive(lease, now)) {
       // A run takes over the dispatcher's lease — that hand-off is the whole
       // point of dispatching. Anything else waits for the lease to lapse.
       const handOff =
@@ -365,7 +392,7 @@ export async function holdUntilDue(workspaceId: string, jobId: string, token: st
     }
     const lease = current.lease;
     const mine = lease?.kind === "wait" && lease.token === token;
-    if (lease !== null && Date.parse(lease.until) > now && !mine) {
+    if (lease !== null && leaseIsLive(lease, now) && !mine) {
       outcome.hold =
         lease.kind === "dispatch"
           ? { kind: "due" }

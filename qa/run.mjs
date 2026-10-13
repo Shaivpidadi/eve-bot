@@ -17,6 +17,7 @@ import roster from "./checks/roster.mjs";
 import memory from "./checks/memory.mjs";
 import connectors from "./checks/connectors.mjs";
 import jobs from "./checks/jobs.mjs";
+import stranded from "./checks/stranded.mjs";
 
 const url = process.env.QA_URL?.trim();
 const token = process.env.QA_TOKEN?.trim();
@@ -31,7 +32,7 @@ if (!url || !token) {
 
 const withJobs = process.env.QA_JOBS === "1";
 const concurrency = Number(process.env.QA_CONCURRENCY) || 3;
-const checks = [...access, ...roster, ...memory, ...connectors, ...(withJobs ? jobs : [])];
+const checks = [...access, ...roster, ...memory, ...connectors, ...(withJobs ? [...jobs, ...stranded] : [])];
 
 console.log(`Bot QA · ${url} · ${checks.length} checks · ${concurrency} at a time${withJobs ? " · jobs included" : ""}\n`);
 

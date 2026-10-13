@@ -29,6 +29,7 @@ export function useBoard(): { board: BoardState | null; online: boolean; refresh
   const [online, setOnline] = useState(true);
   const events = useRef(new Map<string, ActivityEvent>());
   const cursor = useRef<string | null>(null);
+  const swept = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -48,6 +49,12 @@ export function useBoard(): { board: BoardState | null; online: boolean; refresh
 
       setBoard({ workspaceId: next.workspaceId, user: next.user, profile: next.profile ?? null, members: next.members, activity, health: next.health });
       setOnline(true);
+      if (!swept.current) {
+        // Opening the console after a restart is the moment to pick up jobs the
+        // restart stranded; the server does at most one pass a minute.
+        swept.current = true;
+        void api("/bot/v1/jobs/sweep", { method: "POST" }).catch(() => undefined);
+      }
     } catch (error) {
       if (!(error instanceof SignedOutError)) setOnline(false);
     }

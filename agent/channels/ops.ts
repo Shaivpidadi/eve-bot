@@ -24,6 +24,8 @@ import { addConnector, completeOAuth, confirmGuessedReads, disconnectOAuth, getC
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
 import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
+import { buildId, overrideBuildId } from "../lib/build";
+import { dispatchDue } from "../lib/dispatch";
 import { crashRun, qaEnabled } from "../lib/qa";
 import { store } from "../lib/store";
 import { usageReport } from "../lib/usage-report";
@@ -124,6 +126,19 @@ function publicOrigin(request: Request): string {
   const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.replace(":", "");
   const host = requestHost(request) ?? url.host;
   return `${proto}://${host}`;
+}
+
+const SWEEP_EVERY_MS = 60_000;
+let lastSweepAt = 0;
+
+/** The app itself, acting in a room: what a schedule sends as. */
+function runtimePrincipal(workspaceId: string, room: string): SessionAuthContext {
+  return {
+    attributes: roomAttributes(workspaceId, room),
+    authenticator: "app",
+    principalId: "eve:app",
+    principalType: "runtime",
+  };
 }
 
 function principal(access: Access, room: string): SessionAuthContext {
@@ -841,6 +856,24 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /**
+     * The watchdog, on demand: one dispatch pass over due jobs, for a server
+     * that just started (`scripts/start.mjs` calls it) and for the console
+     * when it opens, so a job stranded by a restart is picked up in a minute
+     * rather than at the next cron. At most one pass a minute per process.
+     */
+    POST("/bot/v1/jobs/sweep", async (request, { from }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (Date.now() - lastSweepAt < SWEEP_EVERY_MS) return json({ swept: false, reason: "swept recently" });
+      lastSweepAt = Date.now();
+      const outcome = await dispatchDue(async (job, message) => {
+        await from(await addressOf(job.workspaceId, job.room)).send(message, { auth: runtimePrincipal(job.workspaceId, job.room) });
+      });
+      if (outcome.due > 0) console.log(`[bot] sweep: ${outcome.due} due, ${outcome.dispatched} dispatched, ${outcome.stranded} stranded, ${outcome.ms}ms`);
+      return json({ swept: true, build: buildId(), ...outcome });
+    }),
+
+    /**
      * Faults for the QA suite (`lib/qa.ts`), only on a deployment that set
      * `BOT_QA=1`; elsewhere these paths do not exist. Each makes the store look
      * as it does after something the console cannot otherwise cause, so a
@@ -870,6 +903,16 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         ...(problems.length === 0 ? {} : { interruptError: problems.join("; ") }),
         commandsStopped,
       });
+    }),
+
+    POST("/bot/v1/qa/build/bump", async (request) => {
+      if (!qaEnabled()) return json({ error: "not found" }, 404);
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const previous = buildId();
+      overrideBuildId(`qa-${Date.now().toString(36)}`);
+      lastSweepAt = 0;
+      return json({ bumped: true, from: previous, to: buildId() });
     }),
 
     POST("/bot/v1/qa/computer/replace", async (request) => {
