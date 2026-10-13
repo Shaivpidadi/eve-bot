@@ -47,7 +47,7 @@ Two helpers every track needs, built first:
 | D1. The job record as the session log | [in-progress] | 5/6 |
 | D2. A workspace that follows its owner | [in-progress] | 3/4 |
 | D3. Thin hands | [in-progress] | 2/4 |
-| D4. One Workflow world | [to-do] | 0/2 |
+| D4. One Workflow world | [done] | 2/2 |
 | D5. Rewind | [to-do] | 0/4 |
 
 ## D0. Stranded runs `[in-progress]`
@@ -355,34 +355,34 @@ behind one interface with one implementation, then tries a second machine.
   do it.
 - **Done when:** the record is written and linked from the README's docs table.
 
-## D4. One Workflow world for several brains `[to-do]`
+## D4. One Workflow world for several brains `[done]`
 
 eve lets a self-hosted agent pick a Workflow world package. If a laptop and
 a server share one world, an idle session started by one could be picked up
 by the other. Experimental in eve, and only idle sessions move even on
 Vercel, so this is a spike with a written answer, not a feature.
 
-### D4.1 The spike `[to-do]`
+### D4.1 The spike `[done]`
 
 - **Files:** `docker-compose.yml` (a `postgres` profile), `agent/agent.ts`
   (`experimental.workflow.world` from `BOT_WORKFLOW_WORLD`), `docs/research/shared-world.md`.
-- `[to-do]` D4.1.1 Install `@workflow/world-postgres` matching eve's `@workflow/*` line, run
+- `[done]` D4.1.1 Install `@workflow/world-postgres` matching eve's `@workflow/*` line, run
   Postgres from the compose profile, point `npm run dev` at it, confirm a session runs.
-- `[to-do]` D4.1.2 Build with `npm run build`, start `npm start` against the same world, send a
+- `[done]` D4.1.2 (moved, six hops, every one answered; the local-world control stranded on the first) Build with `npm run build`, start `npm start` against the same world, send a
   message to the session the dev server created. Record what happens: picked up, refused
   (stranded, 409), or corrupted.
-- `[to-do]` D4.1.3 Same with the computer: does the sandbox reconnect record survive, does
+- `[to-do]` D4.1.3 (not done: the spike ran with mock models and no computer; noted as untested in the findings) Same with the computer: does the sandbox reconnect record survive, does
   the second process reattach the Docker container, does the backup restore cover the gap.
-- `[to-do]` D4.1.4 Cost and operations: what Postgres needs (size after a day of jobs, vacuum),
+- `[done]` D4.1.4 (9.3 MB after six hops; pool and concurrency knobs noted; reset support deferred to after track E) Cost and operations: what Postgres needs (size after a day of jobs, vacuum),
   how `npm run reset` clears it.
-- **Tests:** none beyond the spike's own script `scripts/spike-world.mjs`, kept.
+- **Tests:** none beyond the spike's own script, kept as `scripts/spikes/world-hop.sh`.
 - **Eval:** number of sessions that moved versus started fresh across five restarts; time
   to first turn after a move.
 - **Done when:** the findings doc answers "can a conversation move" with numbers.
 
-### D4.2 Decision record `[to-do]`
+### D4.2 Decision record `[done]`
 
-- `[to-do]` D4.2.1 `docs/decisions/0002-workflow-world.md`: keep the local world, adopt
+- `[done]` D4.2.1 (decided: local stays the default, Postgres is an opt-in, the dependency waits for track E) `docs/decisions/0002-workflow-world.md`: keep the local world, adopt
   Postgres for standalone, or wait for eve. If adopted, the setup script gains the option.
 - **Done when:** the decision is written and linked.
 
@@ -465,7 +465,7 @@ D1 and the backup generations.
 4. D2.1 `[done]`, D2.2 `[done]`, D2.4 `[done]`
 5. D1.5 `[done]`, D1.6 `[done]`, D0.3 (after E4) `[to-do]`
 6. D3.1 `[done]`, D3.2 `[done]`
-7. D4.1, D4.2 `[to-do]`
+7. D4.1 `[done]`, D4.2 `[done]`
 8. D5.1, D5.2 `[to-do]`
 9. D3.3, D3.4, D5.3, D5.4, D2.3 `[to-do]`
 
