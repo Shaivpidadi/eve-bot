@@ -101,3 +101,13 @@ describe("export and import", () => {
     await expect(transfer.importFrom(inMemoryKv(), Readable.from(gzipSync('{"format":"other"}\n')))).rejects.toThrow(/Not an EVE BOT export/);
   });
 });
+
+describe("the export route's switch", () => {
+  it("is off unless the deployment opts in", async () => {
+    const { exportEnabled } = await import("../agent/lib/store/transfer");
+    expect(exportEnabled({})).toBe(false);
+    expect(exportEnabled({ BOT_EXPORT: "on" })).toBe(true);
+    expect(exportEnabled({ BOT_EXPORT: "1" })).toBe(true);
+    expect(exportEnabled({ BOT_EXPORT: "off" })).toBe(false);
+  });
+});

@@ -301,7 +301,7 @@ export function Console() {
 
       {page === null ? null : (
         <Sheet onClose={closePage} label={page.page === "usage" ? "Usage" : page.page === "memory" ? "Memory" : "Connectors"}>
-          {page.page === "usage" ? <UsagePage onClose={closePage} /> : null}
+          {page.page === "usage" ? <UsagePage onClose={closePage} exportable={board.exportable === true} /> : null}
           {page.page === "memory" ? <MemoryPage onClose={closePage} /> : null}
           {page.page === "connectors" ? <ConnectorsPage selectedId={page.item} onSelect={(id) => openPage("connectors", id)} onClose={closePage} /> : null}
         </Sheet>

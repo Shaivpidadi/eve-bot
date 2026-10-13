@@ -3,6 +3,7 @@ import { listBots } from "./bots";
 import { budgetStatus, type BudgetStatus } from "./budget";
 import { computerMode, vercelCredentialsError, type ComputerMode } from "./computer-config";
 import { currentKind, type HandsKind } from "./hands/kinds";
+import { exportEnabled } from "./store/transfer";
 import {
   handoverBelongsTo,
   liveControl,
@@ -132,6 +133,8 @@ export interface Board {
   readonly budget: BudgetStatus;
   /** Work that should have started and has not, and runs whose worker stopped (see `health.ts`). */
   readonly health: Health;
+  /** Whether the console may offer the workspace as an export file (`BOT_EXPORT`). */
+  readonly exportable: boolean;
 }
 
 export const HQ_MEMBER_ID = "hq";
@@ -229,6 +232,7 @@ export async function buildBoard(
       bots: ledger.bots,
     },
     budget,
+    exportable: exportEnabled(),
     health: jobHealth(open, {
       now,
       pausedBotIds: new Set(bots.filter((bot) => bot.status !== "active").map((bot) => bot.id)),

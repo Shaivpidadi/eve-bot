@@ -28,6 +28,9 @@ import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { crashRun, qaEnabled } from "../lib/qa";
 import { rewind } from "../lib/rewind";
+import { exportEnabled, exportTo } from "../lib/store/transfer";
+import { PassThrough, Readable } from "node:stream";
+import { version as appVersion } from "../../package.json";
 import { handsFor } from "../lib/hands";
 import { store } from "../lib/store";
 import { usageReport } from "../lib/usage-report";
@@ -812,6 +815,33 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           ...rest,
           journal: job.journal ?? [],
           lease: lease === null ? null : { kind: lease.kind, until: lease.until, build: lease.build ?? null },
+        },
+      });
+    }),
+
+    /**
+     * The signed-in workspace as an export file (see `lib/store/transfer.ts`),
+     * for an owner with no checkout of their own: `npm run import` reads it.
+     * Off unless `BOT_EXPORT=on`. Connector keys, OAuth tokens and the key
+     * they are sealed with are left out unless `?secrets=1` is asked for.
+     */
+    GET("/bot/v1/export", async (request) => {
+      if (!exportEnabled()) return json({ error: "Exporting is off on this deployment. Set BOT_EXPORT=on to allow it." }, 404);
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const secrets = new URL(request.url).searchParams.get("secrets") === "1";
+      const out = new PassThrough();
+      const chunks: Buffer[] = [];
+      out.on("data", (chunk: Buffer) => chunks.push(chunk));
+      const manifest = await exportTo(store(), out, { workspace: gate.access.workspaceId, secrets, version: appVersion });
+      console.info(`[export] ${gate.access.user} exported workspace ${gate.access.workspaceId}${secrets ? " with secrets" : ""}: ${manifest.counts.docs} documents, ${manifest.counts.bytes} binary objects`);
+      const name = `eve-bot-${gate.access.workspaceId}-${manifest.exportedAt.slice(0, 10)}.bot.gz`;
+      return new Response(Readable.toWeb(Readable.from(Buffer.concat(chunks))) as ReadableStream, {
+        headers: {
+          "content-type": "application/gzip",
+          "content-disposition": `attachment; filename="${name}"`,
+          "cache-control": "no-store",
+          ...SECURITY_HEADERS,
         },
       });
     }),

@@ -54,7 +54,7 @@ const share = (part: number, whole: number) => (whole <= 0 ? "—" : part > 0 &&
  * when a provider reports no price the page says so instead of showing $0 as
  * a fact.
  */
-export function UsagePage({ onClose }: { onClose: () => void }) {
+export function UsagePage({ onClose, exportable = false }: { onClose: () => void; exportable?: boolean }) {
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -339,6 +339,15 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
             under the Bot and on the job. Not counted: anything before this ledger existed, eve's own housekeeping calls such as compaction, and other
             projects on the same key, which is why the Gateway account figure runs higher. Daily figures keep 90 days; totals keep forever.
           </p>
+          {exportable ? (
+            <p className="faint usage-foot">
+              <a href="/bot/v1/export" download>
+                Export this workspace
+              </a>{" "}
+              as a file <code>npm run import</code> reads on another deployment or your own machine. Connectors are left out; reconnect them after
+              the import, or ask for <a href="/bot/v1/export?secrets=1">an export with them</a> and keep that file like a password.
+            </p>
+          ) : null}
         </div>
       )}
     </div>

@@ -45,7 +45,7 @@ Two helpers every track needs, built first:
 | E. eve 0.78 upgrade (prerequisite, see backlog) | [to-do] | 0/7 |
 | D0. Stranded runs | [in-progress] | 2/3 |
 | D1. The job record as the session log | [done] | 6/6 |
-| D2. A workspace that follows its owner | [in-progress] | 3/4 |
+| D2. A workspace that follows its owner | [done] | 4/4 |
 | D3. Thin hands | [in-progress] | 2/4 |
 | D4. One Workflow world | [done] | 2/2 |
 | D5. Rewind | [in-progress] | 2/4 |
@@ -234,7 +234,7 @@ facts a run produced, written into the job record under the fence.
   timeline order matches.
 - **Done when:** a person can read what a Bot did while they were away from the card alone.
 
-## D2. A workspace that follows its owner `[in-progress]`
+## D2. A workspace that follows its owner `[done]`
 
 Runs do not move (they live in the Workflow world). Everything else can:
 documents and bytes under the store prefix. After this track a workspace
@@ -287,12 +287,12 @@ connectors and backups, and open jobs are picked up by the watchdog there.
   to reset); the unit round trip covers the same ground against the memory driver.
 - **Done when:** a workspace moves Vercel → laptop → Vercel with nothing lost but live runs.
 
-### D2.3 Route for hosted deployments `[to-do]`
+### D2.3 Route for hosted deployments `[done]`
 
-- `[to-do]` D2.3.1 `GET /bot/v1/export` (console token, `BOT_EXPORT=on`) streams the same
+- `[done]` D2.3.1 (the signed-in workspace only; secrets only with `?secrets=1`) `GET /bot/v1/export` (console token, `BOT_EXPORT=on`) streams the same
   archive, so an owner without a local checkout can still take their workspace out.
-- `[to-do]` D2.3.2 The Usage sheet's footer gets "Export workspace".
-- **Tests:** QA: the route's archive imports cleanly with the script.
+- `[done]` D2.3.2 The Usage sheet's footer gets "Export workspace".
+- **Tests:** unit for the switch; checked live: 404 without `BOT_EXPORT`; with it, 546 KB, 202 keys, no connector keys or sealing key; with `?secrets=1`, 2 connectors and the sealing key added; the download dry-runs into a fresh store with `npm run import`.
 - **Done when:** the export is reachable from the console behind the gate.
 
 ### D2.4 Write it down `[done]`

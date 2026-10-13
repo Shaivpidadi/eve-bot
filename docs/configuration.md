@@ -48,6 +48,7 @@ of it; these are the ones that matter.
 | --- | --- |
 | `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console passwords, each bound to a workspace |
 | `BOT_PUBLIC_URL` | the address the world reaches this deployment at, for OAuth redirect URIs and the sitemap; Vercel supplies its own |
+| `BOT_EXPORT` | `on` lets the console download the signed-in workspace as an export file (`GET /bot/v1/export`; add `?secrets=1` for connectors) |
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |

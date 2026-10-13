@@ -22,6 +22,9 @@ import type { Kv } from "./kv";
  */
 export const FORMAT = "eve-bot-export/1";
 
+/** The console's export route is on only when the deployment opts in. */
+export const exportEnabled = (env: Readonly<Record<string, string | undefined>> = process.env): boolean => /^(on|1|true)$/i.test(env.BOT_EXPORT?.trim() ?? "");
+
 export interface Manifest {
   readonly format: typeof FORMAT;
   readonly exportedAt: string;

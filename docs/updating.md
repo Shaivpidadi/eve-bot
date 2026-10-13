@@ -52,6 +52,9 @@ npm run import -- --in workspace.bot.gz --dry-run
 npm run import -- --in workspace.bot.gz         # on the checkout pointed at the new store, server stopped
 ```
 
+Without a checkout, a deployment with `BOT_EXPORT=on` offers **Export this
+workspace** at the foot of the Usage sheet, which downloads the same file.
+
 Each command reads the same environment the server does, so a checkout
 with `npx vercel env pull` reads Vercel Blob and a standalone checkout reads
 `.data/`. Add `--workspace <id>` to move one workspace, and
