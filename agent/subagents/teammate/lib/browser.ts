@@ -8,7 +8,7 @@ import type { ToolContext } from "eve/tools";
 import { COMPUTER_PATHS } from "../../../lib/computer";
 import { AGENT_BROWSER_INSTALL } from "../../../lib/computer-config";
 import { GUARD_TTL_MS, guardGraceMs, NETGUARD_FILE, parseGuardAnswer, type Stopped } from "../../../lib/computer/netguard";
-import { captureScreen, ComputerError, ensureScreen, raiseBrowser, shellQuote, toolIo } from "../../../lib/computer/runtime";
+import { ComputerError, shellQuote, toolHands } from "../../../lib/hands";
 import { COMPUTER_BIN } from "../../../lib/computer/script";
 import {
   allocateScreen,
@@ -214,12 +214,12 @@ async function currentScreen(ctx: ToolContext, binding: SessionBinding) {
 async function readyScreen(ctx: ToolContext, n: number, recorded: ServiceState): Promise<void> {
   const ready = readyScreens.get(ctx.session.id);
   if (ready !== undefined && ready.n === n && Date.now() - ready.at < SCREEN_TRUSTED_MS) return;
-  const io = await toolIo(ctx);
+  const hands = await toolHands(ctx);
   try {
     if (recorded !== "on") await setBrowserState(n, "starting");
-    const started = await ensureScreen(io, n);
+    const started = await hands.screen.ensure(n);
     // Someone may have left the file manager or a terminal over the browser.
-    await raiseBrowser(io, n).catch(() => undefined);
+    await hands.browser.raise(n).catch(() => undefined);
     if (started.started || recorded !== "on") await setBrowserState(n, "on");
     await touchScreen(n);
     readyScreens.set(ctx.session.id, { n, at: Date.now() });
@@ -338,7 +338,7 @@ async function guarded(
     unwatched: reason,
   });
   if (tab === null) return unwatched("this run's tab could not be found");
-  const io = await toolIo(ctx);
+  const io = (await toolHands(ctx)).shell;
   const program = shellQuote(`${COMPUTER_BIN}/${NETGUARD_FILE}`);
   const armed = parseGuardAnswer<{ id: string }>(
     (await io.run(`node ${program} arm ${cdp} ${shellQuote(tab)} ${GUARD_TTL_MS}`, { timeoutMs: 20_000 }).catch((error: unknown) => ({ stdout: JSON.stringify({ ok: false, error: String(error) }) }))).stdout,
@@ -375,7 +375,7 @@ export async function refreshScreen(ctx: ToolContext): Promise<void> {
     const binding = await sessionBinding(workspaceId, ctx.session.id);
     if (binding === null) return;
     // This Bot's own tab, so its thumbnail shows its work even while another Bot's tab is on screen.
-    const shot = await captureScreen(await toolIo(ctx), binding.n, 55, binding.targetId);
+    const shot = await (await toolHands(ctx)).screen.capture(binding.n, 55, binding.targetId);
     if (await saveScreen(workspaceId, posterKey(binding.botId), shot.bytes, shot.mediaType)) {
       await setPosterAt(binding.n, new Date().toISOString(), binding.botId);
     }

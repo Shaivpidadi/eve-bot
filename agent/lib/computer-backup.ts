@@ -3,7 +3,7 @@ import type { ToolContext } from "eve/tools";
 import { record } from "./activity";
 import { COMPUTER_NAME, COMPUTER_PATHS } from "./computer";
 import { computerMode, localComputer } from "./computer-config";
-import { type ComputerIo, exportIdentity, sandboxIo } from "./computer/runtime";
+import { sandboxHands, type ComputerIo } from "./hands";
 import { sessionBinding } from "./computer/screens";
 import { operator } from "./session";
 import { deleteDoc, readBytes, readDoc, writeBytes, writeDoc } from "./store";
@@ -227,7 +227,7 @@ async function checkpoint(ctx: ToolContext, minIntervalMs: number): Promise<void
     // identity jar first; a replacement computer's browsers start from it.
     const binding = await sessionBinding(operator(ctx).workspaceId, ctx.session.id);
     if (binding !== null) {
-      await exportIdentity(sandboxIo(computer, ctx.abortSignal), binding.n).catch(() => undefined);
+      await sandboxHands(computer, ctx.abortSignal).identity.export(binding.n).catch(() => undefined);
     }
     const generation = `gen_${Date.now().toString(36)}`;
     const archived = await computer.run({ command: archiveCommand(generation) });

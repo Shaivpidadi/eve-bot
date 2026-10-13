@@ -3,7 +3,7 @@ import { defineSandbox } from "eve/sandbox";
 
 import { COMPUTER_PATHS } from "../lib/computer";
 import { AGENT_BROWSER_INSTALL, computerBackend, computerMode } from "../lib/computer-config";
-import { installSoftware, sandboxIo } from "../lib/computer/runtime";
+import { sandboxHands } from "../lib/hands";
 import { COMPUTER_SOFTWARE_REVISION } from "../lib/computer/script";
 
 /**
@@ -48,7 +48,7 @@ export default defineSandbox({
       // Bakes the browser, display, terminal and agent-browser into the template
       // so the first job does not wait for the install. Computers that already
       // exist install the same software on first use.
-      await installSoftware(sandboxIo(sandbox));
+      await sandboxHands(sandbox).setup.install();
       await installAgentBrowser(sandbox, AGENT_BROWSER_INSTALL);
     } catch (error) {
       console.warn(

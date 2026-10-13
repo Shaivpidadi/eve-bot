@@ -46,7 +46,7 @@ Two helpers every track needs, built first:
 | D0. Stranded runs | [in-progress] | 2/3 |
 | D1. The job record as the session log | [in-progress] | 5/6 |
 | D2. A workspace that follows its owner | [in-progress] | 3/4 |
-| D3. Thin hands | [to-do] | 0/4 |
+| D3. Thin hands | [in-progress] | 1/4 |
 | D4. One Workflow world | [to-do] | 0/2 |
 | D5. Rewind | [to-do] | 0/4 |
 
@@ -285,7 +285,7 @@ connectors and backups, and open jobs are picked up by the watchdog there.
   not (live runs, the computer unless its backup is current), and the two commands.
 - **Done when:** the doc exists and the link check passes.
 
-## D3. Thin hands `[to-do]`
+## D3. Thin hands `[in-progress]`
 
 The brain needs five things from a machine: run a command, move files,
 show a screen, drive a browser, hand a screen to a person. Today those are
@@ -293,25 +293,26 @@ spread across `computer/runtime.ts`, `computer/control.ts`, `computer/script.ts`
 and the teammate's `lib/browser.ts`, all assuming Linux. This track puts them
 behind one interface with one implementation, then tries a second machine.
 
-### D3.1 The `Hands` interface `[to-do]`
+### D3.1 The `Hands` interface `[done]`
 
 - **Files:** `agent/lib/hands/types.ts` (new), `agent/lib/hands/linux.ts` (new, wraps today's
   code), `agent/lib/hands/index.ts` (`handsFor(kind)`), callers in `computer/runtime.ts`,
   `computer/control.ts`, `teammate/lib/browser.ts`, `tests/hands.test.ts`.
-- `[to-do]` D3.1.1 Types: `Shell` (`run`, `spawn`, kill a run's group), `Files` (`read`, `write`,
+- `[done]` D3.1.1 (`Handover` left out: who controls a screen is a store record, not a machine operation; `setup` added for install, ensure and recover) Types: `Shell` (`run`, `spawn`, kill a run's group), `Files` (`read`, `write`,
   `list`, `remove`), `Screen` (`ensure(n)`, `capture(n, target?)`, `liveUrl(n)`, `keepAlive`),
   `Browser` (`ensure(n)`, `activate(n, target)`, `devtoolsUrl(n)`, identity `export`/`sync`),
   `Handover` (`grant(n, by, until)`, `release(n)`). Every method takes the `ComputerIo` it
   needs, so console routes and teammate tools share the implementation.
-- `[to-do]` D3.1.2 `linux.ts` implements all five by delegating to the existing functions. No
+- `[done]` D3.1.2 `linux.ts` implements all five by delegating to the existing functions. No
   behaviour change; callers import from `hands/` instead of the old modules.
-- `[to-do]` D3.1.3 A contract test: `tests/hands.test.ts` runs the same suite against a fake
+- `[done]` D3.1.3 (the Linux hands run against a fake machine that answers like the script; the Docker variant was checked by hand instead, below) A contract test: `tests/hands.test.ts` runs the same suite against a fake
   hands (in memory) and, when `HANDS_DOCKER=1`, against the Linux implementation on a
   Docker computer: run echoes, a file round-trips, a screen captures a PNG, activate on an
   unknown target fails cleanly.
 - **Tests:** existing `shell.test.ts`, `screens.test.ts`, `page.test.ts` keep passing; the
   contract test passes on the fake in CI and on Docker locally.
-- **Done when:** no caller outside `hands/` imports the runtime script's command names.
+- **Live check (13 Oct 2026, local Docker computer):** through the console routes, now on the hands: list `/workspace`, upload a file, read it back, delete it with confirmation (404 after), start HQ's screen (VNC URL returned). The frame route reached the machine, which answered "that tab is gone" for a tab remembered from before the container stopped: correct, and a stale-tab case for track S.
+- **Done when:** no caller outside `hands/` imports the runtime script's command names. Holds: only `computer/shell.ts` and `computer/control.ts`, the Linux implementation's own modules, still import `computer/runtime`.
 
 ### D3.2 Kinds and capabilities `[to-do]`
 
@@ -464,7 +465,7 @@ D1 and the backup generations.
 3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[in-progress]` (live run pending a model credential)
 4. D2.1 `[done]`, D2.2 `[done]`, D2.4 `[done]`
 5. D1.5 `[done]`, D1.6 `[done]`, D0.3 (after E4) `[to-do]`
-6. D3.1, D3.2 `[to-do]`
+6. D3.1 `[done]`, D3.2 `[to-do]`
 7. D4.1, D4.2 `[to-do]`
 8. D5.1, D5.2 `[to-do]`
 9. D3.3, D3.4, D5.3, D5.4, D2.3 `[to-do]`

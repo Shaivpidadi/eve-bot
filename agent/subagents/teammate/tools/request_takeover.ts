@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
 
-import { syncIdentity, toolIo } from "../../../lib/computer/runtime";
+import { toolHands } from "../../../lib/hands";
 import { finishHandover, liveControl, sessionBinding, setControl, teamScreen } from "../../../lib/computer/screens";
 import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
@@ -44,7 +44,7 @@ export default defineTool({
     const personSaid = await finishHandover(n);
     try {
       // Whatever they signed in to goes into the team's jar, which backups carry.
-      await syncIdentity(await toolIo(ctx), n);
+      await (await toolHands(ctx)).identity.sync(n);
     } catch {
       // The sign-in still holds in this browser.
     }
