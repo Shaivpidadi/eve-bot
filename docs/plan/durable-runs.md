@@ -44,7 +44,7 @@ Two helpers every track needs, built first:
 | --- | --- | --- |
 | E. eve 0.78 upgrade (prerequisite, see backlog) | [to-do] | 0/7 |
 | D0. Stranded runs | [in-progress] | 2/3 |
-| D1. The job record as the session log | [in-progress] | 3/6 |
+| D1. The job record as the session log | [in-progress] | 4/6 |
 | D2. A workspace that follows its owner | [in-progress] | 3/4 |
 | D3. Thin hands | [to-do] | 0/4 |
 | D4. One Workflow world | [to-do] | 0/2 |
@@ -192,17 +192,18 @@ facts a run produced, written into the job record under the fence.
 - **Eval results:** `npm run metrics -- --resume` `[done]`; numbers `[to-do]`.
 - **Done when:** the QA check passes on Vercel Sandbox and on Docker, and the ratio is recorded.
 
-### D1.5 A note to self `[to-do]`
+### D1.5 A note to self `[done]`
 
 - **Files:** `agent/subagents/teammate/tools/log_progress.ts` (a `kind: "decision"` input),
   `instructions.md`.
-- `[to-do]` D1.5.1 `log_progress` takes `kind: "progress" | "decision"`; decisions are rendered
+- `[done]` D1.5.1 `log_progress` takes `kind: "progress" | "decision"`; decisions are rendered
   first in the brief's replay. Instructions ask for a decision entry when the plan changes
   or a step is skipped on purpose.
-- `[to-do]` D1.5.2 Jev watch: the existing close review records whether the journal's
+- `[done]` D1.5.2 Jev watch: the existing close review records whether the journal's
   decisions match the result's summary (observation only, no gate).
-- **Eval:** share of jobs with at least one `decision` entry; Jev agreement rate. Recorded,
-  no target yet.
+- **Eval:** share of jobs with at least one `decision` entry (`npm run metrics` prints it)
+  `[done]`; Jev agreement rate (`decisionsAgree` on completion shadows, `npm run jev:report`)
+  `[done]`. Numbers `[to-do]`: need jobs run after this change.
 - **Done when:** the brief's replay leads with why, then what.
 
 ### D1.6 The console shows it `[to-do]`
@@ -462,7 +463,7 @@ D1 and the backup generations.
 2. D0.1 `[done]`, D0.2 `[done]` (QA check written, not yet run live: needs a model and `BOT_QA=1`)
 3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[in-progress]` (live run pending a model credential)
 4. D2.1 `[done]`, D2.2 `[done]`, D2.4 `[done]`
-5. D1.5, D1.6, D0.3 (after E4) `[to-do]`
+5. D1.5 `[done]`, D1.6, D0.3 (after E4) `[to-do]`
 6. D3.1, D3.2 `[to-do]`
 7. D4.1, D4.2 `[to-do]`
 8. D5.1, D5.2 `[to-do]`

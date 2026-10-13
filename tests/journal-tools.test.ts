@@ -113,3 +113,30 @@ describe("the teammate's journal", () => {
     expect(all.every((job) => (job.journal ?? []).length === 0)).toBe(true);
   });
 });
+
+describe("decisions", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+  });
+
+  it("are journaled as decisions and read first by the next run", async () => {
+    const { job, read } = await running();
+    const logProgress = await tool("log_progress");
+    await logProgress.execute({ jobId: job.id, note: "Read the inbox" }, ctxFor("sess_A"));
+    await logProgress.execute({ jobId: job.id, note: "Use the CSV export, the list view paginates at 50", kind: "decision" }, ctxFor("sess_A"));
+    const journal = (await read()).journal ?? [];
+    expect(journal.map((line) => line.kind)).toEqual(["progress", "decision"]);
+    const { renderJournal } = await import("../agent/lib/journal");
+    const text = renderJournal(journal);
+    expect(text.indexOf("Decisions so far")).toBeLessThan(text.indexOf("Steps:"));
+  });
+
+  it("are put to Jev at the close, only when there are some", async () => {
+    const { completionQuestions } = await import("../agent/lib/jev-watch");
+    expect(Object.keys(completionQuestions(["A list"]))).toEqual(["overall", "criterion0"]);
+    const withDecisions = completionQuestions(["A list"], ["Use the CSV export"]);
+    expect(Object.keys(withDecisions)).toEqual(["overall", "decisions", "criterion0"]);
+    expect(withDecisions.decisions?.instructions).toContain('"Use the CSV export"');
+  });
+});

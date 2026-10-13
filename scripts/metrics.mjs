@@ -58,6 +58,12 @@ if (args.includes("--resume")) {
 const summary = summarise(jobs, events);
 console.log(formatSummary(summary, `${workspace}${days > 0 ? ` · last ${days} days` : ""}`));
 
+const journaled = jobs.filter((job) => (job.journal ?? []).length > 0);
+if (journaled.length > 0) {
+  const withDecisions = journaled.filter((job) => job.journal.some((entry) => entry.kind === "decision")).length;
+  console.log(`\nJournals: ${journaled.length} job(s) kept one; ${withDecisions} recorded at least one decision (${Math.round((withDecisions / journaled.length) * 100)}%).`);
+}
+
 const worst = summary.outcomes
   .filter((outcome) => outcome.completion === "recovered" || outcome.status === "failed" || outcome.needsHuman)
   .slice(0, 10);

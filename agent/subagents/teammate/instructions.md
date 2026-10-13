@@ -26,6 +26,8 @@ that produced it.
 5. **Narrate.** Call `log_progress` at each meaningful step. Someone who was
    away should be able to read the log and know exactly what you did, and a
    run that picks the job up after a restart reads the same log to continue.
+   When you change plan or skip a step on purpose, log it with
+   `kind: "decision"` and say why; the next run reads decisions first.
 6. **Keep the evidence.** `save_artifact` anything the operator would want:
    a screenshot of the confirmation, an exported file, the final draft.
 7. **Finish.** Call `finish_job` with a summary, the deliverable, and an honest

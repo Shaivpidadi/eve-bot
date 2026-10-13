@@ -611,7 +611,8 @@ async function reviewClose(
   if (!jevEnabled()) return;
   const job = await getJob(workspaceId, jobId);
   const criteria = job?.successCriteria ?? [];
-  const questions = completionQuestions(criteria);
+  const decisions = (job?.journal ?? []).filter((entry) => entry.kind === "decision").map((entry) => entry.text);
+  const questions = completionQuestions(criteria, decisions);
   const judgement = await judge(
     {
       brief: claim.brief.slice(0, 4_000),
@@ -634,7 +635,12 @@ async function reviewClose(
     verdict: overall.verdict,
     confidence: overall.confidence,
     actual: result.completion ?? "unknown",
-    detail: { unmetCriteria: unmetCriteria(judgement, criteria.length), criteria: criteria.length },
+    detail: {
+      unmetCriteria: unmetCriteria(judgement, criteria.length),
+      criteria: criteria.length,
+      decisions: decisions.length,
+      ...(decisions.length > 0 ? { decisionsAgree: readVerdict(judgement, "decisions").verdict } : {}),
+    },
   });
 }
 
