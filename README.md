@@ -45,11 +45,26 @@ reports back. The Bot does the work on the **team's computer**, a persistent
 Linux machine with Chrome, a terminal, and files, and stops for you only when
 a step needs a person: a sign-in, a CAPTCHA, an email about to go out.
 
-```
-you ──▶ HQ ──assign──▶ job queue ──dispatch──▶ Bot ──▶ browser + shell + files
-         │                  ▲                   │
-         │                  └── waits until due ┤
-         └──◀ result, or an approval you sign ──┘
+```mermaid
+flowchart LR
+    you([You])
+    hq[HQ]
+    queue[(Job queue)]
+    bot[Bot]
+    memory[(Memory)]
+    computer[Team computer<br/>browser · shell · files]
+    apps[Connectors<br/>Linear · Notion · GitHub · any MCP]
+
+    you -- message --> hq
+    hq -- brief --> queue
+    queue -- dispatch, when due --> bot
+    hq -. recall, remember .- memory
+    memory -. recall, remember .- bot
+    bot --> computer
+    bot --> apps
+    bot -- result --> hq
+    hq -- report --> you
+    bot -. sign-in, CAPTCHA, approval .-> you
 ```
 
 Jobs survive restarts and redeploys. Memory forms on its own. Everything a Bot
