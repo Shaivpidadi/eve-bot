@@ -102,3 +102,35 @@ export function filesWritten(journal: readonly JournalEntry[]): string[] {
   }
   return [...seen];
 }
+
+/** How many of the latest lines the brief replays. */
+export const REPLAY_LINES = 30;
+
+/**
+ * "Where the last run got to", for the next run's brief: why the earlier runs
+ * chose what they did, the latest steps one line each, the page left open,
+ * the files written, and what a person was asked and said. Empty for a
+ * journal with nothing in it.
+ */
+export function renderJournal(journal: readonly JournalEntry[], options: { readonly limit?: number } = {}): string {
+  if (journal.length === 0) return "";
+  const limit = options.limit ?? REPLAY_LINES;
+  const decisions = journal.filter((entry) => entry.kind === "decision").slice(-8);
+  const recent = journal.slice(-limit);
+  const skipped = journal.length - recent.length;
+  const page = lastPage(journal);
+  const files = filesWritten(journal);
+  const asked = journal.filter((entry) => entry.kind === "asked" || entry.kind === "handover").slice(-4);
+
+  const lines = [
+    "## Where the last run got to",
+    `An earlier run of this job stopped before it finished. This is what it recorded (${journal.length} steps). Continue from here: do not redo a step listed below unless the page or file shows it did not land.`,
+  ];
+  if (decisions.length > 0) lines.push("", "Decisions so far:", ...decisions.map((entry) => `- ${entry.text}`));
+  lines.push("", skipped > 0 ? `Last ${recent.length} steps (${skipped} earlier ones not shown):` : "Steps:");
+  recent.forEach((entry, index) => lines.push(`${skipped + index + 1}. [${entry.kind}] ${entry.text}`));
+  if (page !== null) lines.push("", `Open page: ${page.url}`);
+  if (files.length > 0) lines.push("", `Files written: ${files.slice(-12).join(", ")}`);
+  if (asked.length > 0) lines.push("", "Asked and answered:", ...asked.map((entry) => `- ${entry.text}`));
+  return lines.join("\n");
+}

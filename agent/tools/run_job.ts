@@ -487,6 +487,12 @@ async function claimForRun(
   });
   if (!admission.admitted) return { ok: false, reason: admission.reason, retryAt: admission.retryAt, title: claimed.job.title };
 
+  // A run that inherits a journal continues it; the console and the metrics read where from.
+  const resumedFrom = (claimed.job.journal ?? []).length;
+  if ((claimed.job.resumedFrom ?? 0) !== resumedFrom) {
+    await patchJob(workspaceId, jobId, (current) => ({ ...current, resumedFrom }));
+  }
+
   const effort = claimed.job.effort ?? DEFAULT_EFFORT;
   // A job a person sent back carries their note until it closes.
   const revising = Boolean(claimed.job.feedback);
@@ -497,7 +503,10 @@ async function claimForRun(
     jobId,
     text: revising
       ? `${bot.name} is revising "${claimed.job.title}" (attempt ${claimed.job.attempts}, ${effort} effort).`
-      : `${bot.name} started "${claimed.job.title}" (attempt ${claimed.job.attempts}, ${effort} effort).`,
+      : resumedFrom > 0
+        ? `${bot.name} is continuing "${claimed.job.title}" from step ${resumedFrom} (attempt ${claimed.job.attempts}, ${effort} effort).`
+        : `${bot.name} started "${claimed.job.title}" (attempt ${claimed.job.attempts}, ${effort} effort).`,
+    ...(resumedFrom > 0 ? { data: { resumedFrom } } : {}),
   });
 
   return {

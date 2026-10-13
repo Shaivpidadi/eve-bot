@@ -1,3 +1,4 @@
+import { journalOf, renderJournal } from "./journal";
 import { DEFAULT_EFFORT } from "./models";
 import { describeSchedule } from "./schedule";
 import type { Bot, Job } from "./types";
@@ -46,6 +47,8 @@ export function renderBrief(bot: Bot, job: Job, run: { readonly token: string })
             : `${job.result.summary}\n\n${job.result.deliverable.slice(0, 2_000)}`,
         ].join("\n")
       : null,
+    // A run that follows another on the same job continues it rather than starting over.
+    journalOf(job).length > 0 ? renderJournal(journalOf(job)) : null,
     job.successCriteria.length > 0
       ? ["## Done means", ...job.successCriteria.map((item) => `- ${item}`)].join("\n")
       : null,

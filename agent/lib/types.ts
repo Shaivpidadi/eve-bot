@@ -140,6 +140,8 @@ export interface Job {
    * Absent on jobs from before the journal.
    */
   journal?: JournalEntry[];
+  /** How many journal lines the latest run started from; 0 or absent for a run that started fresh. */
+  resumedFrom?: number;
   lastRunAt: string | null;
   /**
    * How the job was cancelled, once it was: `id` is the cancelling call's own

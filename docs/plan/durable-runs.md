@@ -44,7 +44,7 @@ Two helpers every track needs, built first:
 | --- | --- | --- |
 | E. eve 0.78 upgrade (prerequisite, see backlog) | [to-do] | 0/7 |
 | D0. Stranded runs | [in-progress] | 2/3 |
-| D1. The job record as the session log | [in-progress] | 2/6 |
+| D1. The job record as the session log | [in-progress] | 3/6 |
 | D2. A workspace that follows its owner | [to-do] | 0/4 |
 | D3. Thin hands | [to-do] | 0/4 |
 | D4. One Workflow world | [to-do] | 0/2 |
@@ -153,22 +153,21 @@ facts a run produced, written into the job record under the fence.
   a stubbed browser leaves `page` then `progress` in order.
 - **Done when:** a finished job's journal reads as a short diary a person could follow.
 
-### D1.3 The brief replays it `[to-do]`
+### D1.3 The brief replays it `[done]`
 
 - **Files:** `agent/lib/brief.ts`, `agent/lib/journal.ts` (`renderJournal`),
   `agent/subagents/teammate/instructions.md`, `tests/brief.test.ts`.
-- `[to-do]` D1.3.1 `renderJournal(entries, { limit })` renders "## Where the last run got to":
+- `[done]` D1.3.1 `renderJournal(entries, { limit })` renders "## Where the last run got to":
   the last 30 entries as one line each, then "Open page: <url>", "Files written: …",
   "Asked and answered: …". Empty journal renders nothing.
-- `[to-do]` D1.3.2 `renderBrief` includes it when `job.attempts > 1` or `job.feedback` is set,
+- `[done]` D1.3.2 `renderBrief` (included whenever the job has a journal, which only an earlier run can have written) includes it when `job.attempts > 1` or `job.feedback` is set,
   after the sent-back section and before the result-so-far.
-- `[to-do]` D1.3.3 Teammate instructions: "If the brief says where the last run got to, open
+- `[done]` D1.3.3 Teammate instructions: "If the brief says where the last run got to, open
   that page and continue; do not redo listed steps unless the page says they did not land."
-- `[to-do]` D1.3.4 The run's first `progress` entry after a resume says "continued from
+- `[done]` D1.3.4 (the `job.started` line says "continuing … from step N") The run's first `progress` entry after a resume says "continued from
   step N" with N the journal length at claim, and `run_job` records `resumedFrom: N` on the
   job for the console.
-- **Tests:** unit: render with 0, 5, 300 entries; brief with and without journal. Turn
-  test: a teammate briefed with a journal whose last entry is `page` calls `page_get` for
+- **Tests:** unit `[done]` (`tests/brief.test.ts`). Turn test `[to-do]`, folded into D1.4's live check: a teammate briefed with a journal whose last entry is `page` calls `page_get` for
   that URL first (stub model scripted to follow instructions, asserting the tool order).
 - **Done when:** a re-run's brief carries the diary and the Bot's first action continues it.
 
@@ -453,7 +452,7 @@ D1 and the backup generations.
 
 1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[done]` (`agent/lib/qa.ts`, routes in `ops.ts`, `tests/qa.test.ts`)
 2. D0.1 `[done]`, D0.2 `[done]` (QA check written, not yet run live: needs a model and `BOT_QA=1`)
-3. D1.1 `[done]`, D1.2 `[done]`, D1.3, D1.4 `[to-do]`
+3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[to-do]`
 4. D2.1, D2.2, D2.4 `[to-do]`
 5. D1.5, D1.6, D0.3 (after E4) `[to-do]`
 6. D3.1, D3.2 `[to-do]`
