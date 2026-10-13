@@ -1,7 +1,7 @@
 "use client";
 
 import type { InputRequest, InputResolution } from "eve/client";
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { AskCard } from "./ask-card";
 import { Avatar } from "./avatar";
@@ -242,6 +242,72 @@ export function Transcript({
   );
 }
 
+/** One line of a job's journal, as the server keeps it (see `agent/lib/journal.ts`). */
+interface JournalLine {
+  readonly at: string;
+  readonly runToken: string;
+  readonly kind: "progress" | "decision" | "page" | "file" | "artifact" | "asked" | "handover" | "error";
+  readonly text: string;
+  readonly data?: Readonly<Record<string, string | number | boolean | null>>;
+}
+
+const JOURNAL_WORDS: Readonly<Record<JournalLine["kind"], string>> = {
+  progress: "Did",
+  decision: "Decided",
+  page: "Opened",
+  file: "Wrote",
+  artifact: "Saved",
+  asked: "Asked",
+  handover: "Back",
+  error: "Failed",
+};
+
+/**
+ * A job's journal, read when its steps are opened and again while the job
+ * is still going. Null until read, or when the job has none (older jobs): the
+ * feed's lines stand in.
+ */
+function useJournal(jobId: string | null, open: boolean, live: boolean): { lines: readonly JournalLine[]; resumedFrom: number } | null {
+  const [journal, setJournal] = useState<{ lines: readonly JournalLine[]; resumedFrom: number } | null>(null);
+  useEffect(() => {
+    if (!open || jobId === null) return;
+    let stopped = false;
+    const read = async () => {
+      try {
+        const response = await api(`/bot/v1/jobs/${encodeURIComponent(jobId)}`);
+        if (!response.ok) return;
+        const body = (await response.json()) as { job?: { journal?: JournalLine[]; resumedFrom?: number } };
+        const lines = body.job?.journal ?? [];
+        if (!stopped) setJournal(lines.length === 0 ? null : { lines, resumedFrom: body.job?.resumedFrom ?? 0 });
+      } catch {
+        // The feed's lines stay.
+      }
+    };
+    void read();
+    const timer = live ? setInterval(read, 5_000) : undefined;
+    return () => {
+      stopped = true;
+      if (timer !== undefined) clearInterval(timer);
+    };
+  }, [jobId, open, live]);
+  return journal;
+}
+
+/** A page line links to the page; the rest are text. The label already says the verb, so a line that repeats it drops it. */
+function JournalText({ line }: { line: JournalLine }) {
+  const word = JOURNAL_WORDS[line.kind];
+  const text = line.text.startsWith(`${word} `) ? line.text.slice(word.length + 1) : line.text;
+  const url = line.kind === "page" && typeof line.data?.url === "string" ? line.data.url : null;
+  if (url === null || !/^https?:\/\//.test(url)) return <span>{text}</span>;
+  return (
+    <span>
+      <a href={url} target="_blank" rel="noreferrer noopener">
+        {text}
+      </a>
+    </span>
+  );
+}
+
 /** The steps a Bot logged for one job, folded into a line that opens. */
 function StepsBlock({
   block,
@@ -258,7 +324,9 @@ function StepsBlock({
   if (latest === undefined) return null;
   const title =
     block.events.map((event) => /"([^"]+)"/.exec(event.text)?.[1]).find((value) => value !== undefined) ?? "Work";
-  const count = block.events.length;
+  const live = !["job.done", "job.failed", "job.cancelled"].includes(latest.kind);
+  const journal = useJournal(block.jobId, open, live);
+  const count = journal?.lines.length ?? block.events.length;
 
   return (
     <div className={open ? "steps open" : "steps"}>
@@ -270,7 +338,20 @@ function StepsBlock({
         </span>
         <Icon name="chev" size={14} className="chev" />
       </button>
-      {open ? (
+      {open && journal !== null ? (
+        <ol className="steps-list">
+          {journal.lines.map((line, index) => (
+            <JournalRow key={`${line.at}:${index}`} line={line} resumedHere={journal.resumedFrom > 0 && index === journal.resumedFrom} />
+          ))}
+          {latest.kind === "job.done" || latest.kind === "job.failed" || latest.kind === "job.cancelled" ? (
+            <li className={latest.kind === "job.failed" ? "bad" : latest.kind === "job.done" ? "good" : undefined}>
+              <span className="k">{STEP_WORDS[latest.kind] ?? "Did"}</span>
+              <span>{latest.text}</span>
+              <time>{clock(new Date(latest.at))}</time>
+            </li>
+          ) : null}
+        </ol>
+      ) : open ? (
         <ol className="steps-list">
           {block.events.map((event) => (
             <li
@@ -285,6 +366,23 @@ function StepsBlock({
         </ol>
       ) : null}
     </div>
+  );
+}
+
+function JournalRow({ line, resumedHere }: { line: JournalLine; resumedHere: boolean }) {
+  return (
+    <>
+      {resumedHere ? (
+        <li className="resumed" role="separator">
+          <span>Continued from here after a restart</span>
+        </li>
+      ) : null}
+      <li className={line.kind === "error" ? "bad" : line.kind === "decision" ? "decision" : undefined}>
+        <span className="k">{JOURNAL_WORDS[line.kind] ?? "Did"}</span>
+        <JournalText line={line} />
+        <time>{clock(new Date(line.at))}</time>
+      </li>
+    </>
   );
 }
 

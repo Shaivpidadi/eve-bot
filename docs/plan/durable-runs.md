@@ -44,7 +44,7 @@ Two helpers every track needs, built first:
 | --- | --- | --- |
 | E. eve 0.78 upgrade (prerequisite, see backlog) | [to-do] | 0/7 |
 | D0. Stranded runs | [in-progress] | 2/3 |
-| D1. The job record as the session log | [in-progress] | 4/6 |
+| D1. The job record as the session log | [in-progress] | 5/6 |
 | D2. A workspace that follows its owner | [in-progress] | 3/4 |
 | D3. Thin hands | [to-do] | 0/4 |
 | D4. One Workflow world | [to-do] | 0/2 |
@@ -206,15 +206,15 @@ facts a run produced, written into the job record under the fence.
   `[done]`. Numbers `[to-do]`: need jobs run after this change.
 - **Done when:** the brief's replay leads with why, then what.
 
-### D1.6 The console shows it `[to-do]`
+### D1.6 The console shows it `[done]`
 
-- **Files:** `src/console/transcript.tsx` (job card), `src/console/panel.tsx`,
+- **Files:** `src/console/transcript.tsx` (the job's steps block in a Bot's thread), `src/app/globals.css`,
   `agent/channels/ops.ts` (`GET /bot/v1/jobs/:id` includes `journal`, `resumedFrom`).
-- `[to-do]` D1.6.1 The job card gets a "Steps" disclosure: the journal as a timeline with
+- `[done]` D1.6.1 (the existing steps block reads the journal when opened, every 5 s while the job runs) The job card gets a "Steps" disclosure: the journal as a timeline with
   icons per kind, the `page` entries as links, `error` entries muted.
-- `[to-do]` D1.6.2 A resumed run shows a divider "continued from step N after a restart"
+- `[done]` D1.6.2 A resumed run shows a divider "continued from step N after a restart"
   at the right place.
-- `[to-do]` D1.6.3 QA `qa/checks/jobs.mjs` asserts the job route returns `journal` and the
+- `[to-do]` D1.6.3 (the resume check already reads the route; an order assertion is still to add) QA `qa/checks/jobs.mjs` asserts the job route returns `journal` and the
   timeline order matches.
 - **Done when:** a person can read what a Bot did while they were away from the card alone.
 
@@ -463,7 +463,7 @@ D1 and the backup generations.
 2. D0.1 `[done]`, D0.2 `[done]` (QA check written, not yet run live: needs a model and `BOT_QA=1`)
 3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[in-progress]` (live run pending a model credential)
 4. D2.1 `[done]`, D2.2 `[done]`, D2.4 `[done]`
-5. D1.5 `[done]`, D1.6, D0.3 (after E4) `[to-do]`
+5. D1.5 `[done]`, D1.6 `[done]`, D0.3 (after E4) `[to-do]`
 6. D3.1, D3.2 `[to-do]`
 7. D4.1, D4.2 `[to-do]`
 8. D5.1, D5.2 `[to-do]`
