@@ -277,3 +277,188 @@ connectors and backups, and open jobs are picked up by the watchdog there.
   not (live runs, the computer unless its backup is current), and the two commands.
 - **Done when:** the doc exists and the link check passes.
 
+## D3. Thin hands `[to-do]`
+
+The brain needs five things from a machine: run a command, move files,
+show a screen, drive a browser, hand a screen to a person. Today those are
+spread across `computer/runtime.ts`, `computer/control.ts`, `computer/script.ts`
+and the teammate's `lib/browser.ts`, all assuming Linux. This track puts them
+behind one interface with one implementation, then tries a second machine.
+
+### D3.1 The `Hands` interface `[to-do]`
+
+- **Files:** `agent/lib/hands/types.ts` (new), `agent/lib/hands/linux.ts` (new, wraps today's
+  code), `agent/lib/hands/index.ts` (`handsFor(kind)`), callers in `computer/runtime.ts`,
+  `computer/control.ts`, `teammate/lib/browser.ts`, `tests/hands.test.ts`.
+- `[to-do]` D3.1.1 Types: `Shell` (`run`, `spawn`, kill a run's group), `Files` (`read`, `write`,
+  `list`, `remove`), `Screen` (`ensure(n)`, `capture(n, target?)`, `liveUrl(n)`, `keepAlive`),
+  `Browser` (`ensure(n)`, `activate(n, target)`, `devtoolsUrl(n)`, identity `export`/`sync`),
+  `Handover` (`grant(n, by, until)`, `release(n)`). Every method takes the `ComputerIo` it
+  needs, so console routes and teammate tools share the implementation.
+- `[to-do]` D3.1.2 `linux.ts` implements all five by delegating to the existing functions. No
+  behaviour change; callers import from `hands/` instead of the old modules.
+- `[to-do]` D3.1.3 A contract test: `tests/hands.test.ts` runs the same suite against a fake
+  hands (in memory) and, when `HANDS_DOCKER=1`, against the Linux implementation on a
+  Docker computer: run echoes, a file round-trips, a screen captures a PNG, activate on an
+  unknown target fails cleanly.
+- **Tests:** existing `shell.test.ts`, `screens.test.ts`, `page.test.ts` keep passing; the
+  contract test passes on the fake in CI and on Docker locally.
+- **Done when:** no caller outside `hands/` imports the runtime script's command names.
+
+### D3.2 Kinds and capabilities `[to-do]`
+
+- **Files:** `agent/lib/hands/kinds.ts`, `agent/lib/computer-backup.ts` (manifest `kind`,
+  `capabilities`), `agent/channels/ops.ts` (`GET /bot/v1/computer` reports them),
+  `src/console/panel.tsx` (the Team computer card).
+- `[to-do]` D3.2.1 A kind is `{ id: "vercel-linux" | "docker-linux" | "microsandbox-linux" | "mac-ssh",
+  capabilities: { screen, browser, handover, fence: "iptables" | "nftables" | "landlock" | "none" } }`.
+- `[to-do]` D3.2.2 The brief tells the teammate which capabilities its computer has; the
+  browser tools refuse with a plain message when `browser` is false, and HQ's assign step
+  routes browser work only to a kind that has it (one computer today, so this is a check,
+  not a scheduler).
+- `[to-do]` D3.2.3 Backups carry the kind; the restore rule compares kinds, not only `arch`.
+- **Tests:** unit: capability gating in the browser tools; backup restore matrix (same kind,
+  other kind, unknown kind). QA: `GET /bot/v1/computer` names a kind.
+- **Done when:** the console names the computer's kind and what it can do.
+
+### D3.3 Spike: a Mac as hands, shell and files only `[to-do]`
+
+- **Files:** `agent/lib/hands/mac-ssh.ts`, `agent/lib/computer-config.ts`
+  (`BOT_COMPUTER=mac-ssh`, `BOT_MAC_SSH=user@host`, `BOT_MAC_SSH_KEY`), a custom eve
+  `SandboxBackend` in `agent/sandbox/mac.ts`, `docs/research/mac-hands.md` for the findings.
+- `[to-do]` D3.3.1 The backend: `create` opens an SSH control master with the `ssh` CLI (no
+  new dependency), `run` executes `bash -lc` under a per-run process group, files move with
+  `cat` over the same connection; `/workspace` maps to `$HOME/eve-workspace`.
+- `[to-do]` D3.3.2 Capabilities: `screen: false, browser: false, handover: false, fence: "none"`.
+  Without a fence the shell runs only with `BOT_SHELL_ISOLATION=off` semantics (every
+  command gated), which the kind declares.
+- `[to-do]` D3.3.3 A job that needs no browser (a file transform, a script) finishes on the
+  Mac; the computer backup takes and restores its archive under the new kind.
+- **Tests:** the contract test with `HANDS_MAC=user@host`; unit: SSH argument building,
+  process-group kill.
+- **Eval:** cold start to first command, command round-trip latency, both recorded in the
+  findings doc against Docker's numbers.
+- **Done when:** the findings doc says whether a browser on the Mac is worth a track.
+
+### D3.4 Decision record `[to-do]`
+
+- `[to-do]` D3.4.1 `docs/decisions/0003-hands.md`: the interface, the kinds, what a Mac
+  browser would need (Chrome over DevTools, a VNC screen, a macOS fence), and whether to
+  do it.
+- **Done when:** the record is written and linked from the README's docs table.
+
+## D4. One Workflow world for several brains `[to-do]`
+
+eve lets a self-hosted agent pick a Workflow world package. If a laptop and
+a server share one world, an idle session started by one could be picked up
+by the other. Experimental in eve, and only idle sessions move even on
+Vercel, so this is a spike with a written answer, not a feature.
+
+### D4.1 The spike `[to-do]`
+
+- **Files:** `docker-compose.yml` (a `postgres` profile), `agent/agent.ts`
+  (`experimental.workflow.world` from `BOT_WORKFLOW_WORLD`), `docs/research/shared-world.md`.
+- `[to-do]` D4.1.1 Install `@workflow/world-postgres` matching eve's `@workflow/*` line, run
+  Postgres from the compose profile, point `npm run dev` at it, confirm a session runs.
+- `[to-do]` D4.1.2 Build with `npm run build`, start `npm start` against the same world, send a
+  message to the session the dev server created. Record what happens: picked up, refused
+  (stranded, 409), or corrupted.
+- `[to-do]` D4.1.3 Same with the computer: does the sandbox reconnect record survive, does
+  the second process reattach the Docker container, does the backup restore cover the gap.
+- `[to-do]` D4.1.4 Cost and operations: what Postgres needs (size after a day of jobs, vacuum),
+  how `npm run reset` clears it.
+- **Tests:** none beyond the spike's own script `scripts/spike-world.mjs`, kept.
+- **Eval:** number of sessions that moved versus started fresh across five restarts; time
+  to first turn after a move.
+- **Done when:** the findings doc answers "can a conversation move" with numbers.
+
+### D4.2 Decision record `[to-do]`
+
+- `[to-do]` D4.2.1 `docs/decisions/0002-workflow-world.md`: keep the local world, adopt
+  Postgres for standalone, or wait for eve. If adopted, the setup script gains the option.
+- **Done when:** the decision is written and linked.
+
+## D5. Rewind `[to-do]`
+
+Beyond "continue from the last recorded step" (D1): a point in the job's
+journal a person can choose, with the computer's files put back as they
+were at that point, and a new run briefed with the journal up to it. Needs
+D1 and the backup generations.
+
+### D5.1 Generations tied to journal entries `[to-do]`
+
+- **Files:** `agent/lib/computer-backup.ts` (`checkpointComputer({ reason, journalIndex })`,
+  generation list `computer/<name>/generations.json`), `agent/lib/journal.ts` (entry gets
+  `generation?`), `agent/lib/computer/snapshot.ts` (new).
+- `[to-do]` D5.1.1 On Vercel Sandbox use the SDK's snapshot (`@vercel/sandbox` exports
+  `Snapshot`): a snapshot per `decision` entry and before each outward action
+  (`send_email`, a connector change, a gated browser click once approved). On Docker and
+  microsandbox, a tar archive as today. Both named by job id and journal index.
+- `[to-do]` D5.1.2 Retention: keep the last 10 generations per job and every generation
+  the journal still references; a job's close prunes to the final one. Size and count on
+  the Usage sheet's budget card (`BOT_BACKUP_MAX_MB` already caps one archive).
+- `[to-do]` D5.1.3 Taking a generation must not block the Bot for long: snapshots are async
+  on Vercel; the tar path runs with a 60-second cap and skips with a journal `error` when
+  it cannot.
+- **Tests:** unit: generation naming, retention pruning, journal reference. Live: a job on
+  Vercel Sandbox produces snapshots the dashboard lists; on Docker, archives in the store.
+- **Eval:** seconds added per checkpoint (target under 5 on Docker, under 2 on Vercel),
+  storage per job (recorded).
+- **Done when:** every decision in a journal has a generation behind it.
+
+### D5.2 "Rewind to here" on a job `[to-do]`
+
+- **Files:** `agent/lib/jobs.ts` (`rewindJob(workspaceId, jobId, index)`), `agent/channels/ops.ts`
+  (`POST /bot/v1/jobs/:id/rewind`), `agent/lib/computer-backup.ts` (`restoreGeneration`),
+  `agent/tools/run_job.ts` (a claim that carries `rewindTo`), `src/console/transcript.tsx`.
+- `[to-do]` D5.2.1 `rewindJob`: cancel the live run through `cancelJobRun`, truncate the
+  journal to `index` (keeping the dropped tail under `journal.rewound[]` for the record),
+  set status `queued`, record `job.rewound` in the feed, and restore the generation named
+  by the entry before `index` (or the job's first generation).
+- `[to-do]` D5.2.2 The next run's brief says "Rewound to step N on <date> by <who>; the
+  computer's files are as they were then" and replays the journal up to N.
+- `[to-do]` D5.2.3 Outward actions after the rewind point are listed in the brief as "already
+  done, do not repeat" when the action ledger shows a receipt (an email sent cannot be
+  unsent); the journal keeps their entries marked `kept`.
+- `[to-do]` D5.2.4 Console: "Rewind to here" on a journal entry, with a confirm sheet that
+  names what will be undone and what cannot be.
+- **Tests:** unit: truncate and keep rules, ledger scan; QA: `qa/checks/rewind.mjs` runs a
+  job that writes two files, rewinds to between them, expects the first file present and
+  the second gone, and the journal to show the rewind.
+- **Eval:** rewind round-trip time (click to new run's first step); files restored exactly
+  (a checksum list taken at the generation).
+- **Done when:** the QA check passes on Vercel Sandbox and Docker.
+
+### D5.3 Rewind a conversation `[to-do]`
+
+- **Files:** `agent/channels/ops.ts` (`POST /bot/v1/rooms/:room/fork`), `agent/lib/roomstate.ts`,
+  `src/console/transcript.tsx` ("Branch from here" on a message).
+- `[to-do]` D5.3.1 Fork: start a fresh session for the room (as recover does) seeded through
+  a `session.started` dynamic instruction with the transcript up to the chosen index
+  (eve's `transcriptReducer` after E4), and keep the old session readable under a "before
+  the branch" divider.
+- `[to-do]` D5.3.2 Jobs started after the branch point stay as they are; the divider lists
+  them so nothing silently continues.
+- **Tests:** turn test: a forked session's first turn sees the earlier transcript and not
+  the messages after the index. QA: `qa/checks/fork.mjs`.
+- **Done when:** a person can take a thread back to a message and go a different way.
+
+### D5.4 Write it down `[to-do]`
+
+- `[to-do]` D5.4.1 README "What you get" gains one bullet on rewind; `docs/safety.md`
+  says what a rewind cannot undo; `docs/configuration.md` lists the retention knobs.
+- **Done when:** the docs render and the link check passes.
+
+## Order of work
+
+1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[to-do]`
+2. D0.1, D0.2 `[to-do]`
+3. D1.1, D1.2, D1.3, D1.4 `[to-do]`
+4. D2.1, D2.2, D2.4 `[to-do]`
+5. D1.5, D1.6, D0.3 (after E4) `[to-do]`
+6. D3.1, D3.2 `[to-do]`
+7. D4.1, D4.2 `[to-do]`
+8. D5.1, D5.2 `[to-do]`
+9. D3.3, D3.4, D5.3, D5.4, D2.3 `[to-do]`
+
+Update the status board at the top with each commit.
