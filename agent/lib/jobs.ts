@@ -1,6 +1,7 @@
 import { record } from "./activity";
 import { buildId } from "./build";
 import { newId } from "./ids";
+import { appended, journalOf, type NewEntry } from "./journal";
 import { getBot, patchBot } from "./bots";
 import { DEFAULT_EFFORT, type JobEffort } from "./models";
 import { describeSchedule, nextRun, type Schedule } from "./schedule";
@@ -738,6 +739,20 @@ export async function attachArtifact(
       ? null
       : { ...job, artifacts: [...job.artifacts, artifact] },
   );
+}
+
+/**
+ * Adds a line to the job's journal, as the run bound to `sessionId`. A run
+ * that no longer owns the job writes nothing; a line already there (a
+ * replayed step, or a write that landed and came back as a conflict) is not
+ * written twice. Returns the check so a tool can tell the model when it has
+ * been superseded.
+ */
+export async function appendJournal(workspaceId: string, jobId: string, sessionId: string, entry: NewEntry): Promise<RunCheck> {
+  return patchJobAsRun(workspaceId, jobId, sessionId, (job, run) => {
+    const journal = appended(journalOf(job), run, entry);
+    return journal === null ? null : { ...job, journal };
+  });
 }
 
 /**

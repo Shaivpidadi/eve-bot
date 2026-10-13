@@ -2,6 +2,7 @@ import type { Usage } from "./usage";
 /** Everything Bot persists. One file so the shape of the product is readable in one place. */
 
 import type { JobEffort } from "./models";
+import type { JournalEntry } from "./journal";
 import type { Schedule } from "./schedule";
 
 export type BotStatus = "active" | "paused";
@@ -132,6 +133,13 @@ export interface Job {
   feedback?: string | null;
   error: string | null;
   artifacts: JobArtifact[];
+  /**
+   * What the job's runs did, in order: progress, decisions, pages opened,
+   * files and artifacts written, questions asked. Written under the run fence
+   * (see `lib/journal.ts`); a fresh run reads it in its brief and continues.
+   * Absent on jobs from before the journal.
+   */
+  journal?: JournalEntry[];
   lastRunAt: string | null;
   /**
    * How the job was cancelled, once it was: `id` is the cancelling call's own
