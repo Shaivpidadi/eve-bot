@@ -45,7 +45,7 @@ Two helpers every track needs, built first:
 | E. eve 0.78 upgrade (prerequisite, see backlog) | [to-do] | 0/7 |
 | D0. Stranded runs | [in-progress] | 2/3 |
 | D1. The job record as the session log | [in-progress] | 3/6 |
-| D2. A workspace that follows its owner | [to-do] | 0/4 |
+| D2. A workspace that follows its owner | [in-progress] | 2/4 |
 | D3. Thin hands | [to-do] | 0/4 |
 | D4. One Workflow world | [to-do] | 0/2 |
 | D5. Rewind | [to-do] | 0/4 |
@@ -217,25 +217,25 @@ facts a run produced, written into the job record under the fence.
   timeline order matches.
 - **Done when:** a person can read what a Bot did while they were away from the card alone.
 
-## D2. A workspace that follows its owner `[to-do]`
+## D2. A workspace that follows its owner `[in-progress]`
 
 Runs do not move (they live in the Workflow world). Everything else can:
 documents and bytes under the store prefix. After this track a workspace
 exported from Vercel opens on a laptop with its roster, jobs, memory,
 connectors and backups, and open jobs are picked up by the watchdog there.
 
-### D2.1 Export `[to-do]`
+### D2.1 Export `[done]`
 
 - **Files:** `scripts/export.mjs`, `agent/lib/store/transfer.ts` (new), `tests/transfer.test.ts`,
   `package.json` (`"export": "node scripts/export.mjs"`).
-- `[to-do]` D2.1.1 `transfer.ts`: `listAll(kv)` walks every key under the prefix (docs and
+- `[done]` D2.1.1 (format is gzipped NDJSON rather than tar: no new dependency, and `gunzip | head` shows the contents) `transfer.ts`: `listAll(kv)` walks every key under the prefix (docs and
   bytes; `kv.list` covers both, bytes read with `getBytes`), `exportTo(kv, writable)`
   streams a tar.gz: `manifest.json` (prefix, store driver, eve-bot version, exported at,
   counts) then one file per key under `docs/` or `bytes/`, keys percent-encoded.
-- `[to-do]` D2.1.2 Sealed connector keys and OAuth tokens are included as stored (they are
+- `[done]` D2.1.2 (the computer access key they are sealed with goes along; `--no-secrets` drops all three) Sealed connector keys and OAuth tokens are included as stored (they are
   sealed to the workspace secret, which is an env var the owner carries; the manifest says
   so). `--no-secrets` leaves them out.
-- `[to-do]` D2.1.3 `scripts/export.mjs --out <file> [--workspace <id>] [--no-secrets]` reads
+- `[done]` D2.1.3 `scripts/export.mjs --out <file> [--workspace <id>] [--no-secrets]` reads
   the same env as the server (`.env`, `.env.local`, or pulled Vercel env), prints counts.
 - **Tests:** unit: memory store with 50 docs and 3 byte objects round-trips through a tar
   buffer with identical bytes; a key with `/` and `%` in it survives. Keys outside the
@@ -243,25 +243,31 @@ connectors and backups, and open jobs are picked up by the watchdog there.
 - **Done when:** `npm run export -- --out ws.tgz` on a Vercel-linked checkout produces an
   archive whose manifest counts match a `kv.list` of the store.
 
-### D2.2 Import `[to-do]`
+### D2.2 Import `[done]`
 
 - **Files:** `scripts/import.mjs`, `agent/lib/store/transfer.ts` (`importFrom`), tests.
-- `[to-do]` D2.2.1 `importFrom(kv, readable, { onConflict: "replace" | "skip" | "fail", dryRun })`
+- `[done]` D2.2.1 `importFrom(kv, readable, { onConflict: "replace" | "skip" | "fail", dryRun })`
   writes every entry; `dryRun` prints what would change. Version mismatch between archive
   and code is a warning, not a refusal (the store reads old shapes lazily).
-- `[to-do]` D2.2.2 Jobs with an open lease are rewritten with `lease: null`, `status` kept,
+- `[done]` D2.2.2 Jobs with an open lease are rewritten with `lease: null`, `status` kept,
   and a `job.moved` feed line, so the watchdog re-dispatches them and D1's journal lets the
   new run continue. Rooms' session ids are cleared (`roomstate`), so the console starts
   fresh sessions and says so once per room.
-- `[to-do]` D2.2.3 Backup archives are imported but the manifest's `arch` and kind rules in
+- `[done]` D2.2.3 Backup archives are imported but the manifest's `arch` and kind rules in
   `computer-backup.ts` still decide whether they restore onto the new computer.
-- `[to-do]` D2.2.4 `scripts/import.mjs --in <file> [--dry-run] [--on-conflict …]`.
+- `[done]` D2.2.4 `scripts/import.mjs --in <file> [--dry-run] [--on-conflict …]`.
 - **Tests:** unit: export from memory, import into fs, every doc equal; conflict modes;
   open-lease rewrite; dry run writes nothing. QA: `qa/checks/transfer.mjs` runs on a
   scratch deployment: seed roster and memory, export, `npm run reset`, import, expect the
   roster and memory back and the open job re-dispatched.
 - **Eval:** fidelity = docs equal after round trip / docs exported (target 1.0), and time to
   first re-dispatch after import (target under one tick).
+- **Eval results (13 Oct 2026, the local dev store, fs → fs):** 209 keys (205 documents, 4 binary
+  objects, 757 KB gzipped). 206 byte-identical, 3 changed as designed (one open job's lease,
+  two rooms' sessions), 0 missing, 1 added (the `job.moved` feed line). Fidelity 1.0 for
+  everything that is meant to move. Dry run wrote 0 files. Re-dispatch time `[to-do]`: needs a
+  server with a model. The QA `transfer.mjs` check `[to-do]` (needs a scratch deployment
+  to reset); the unit round trip covers the same ground against the memory driver.
 - **Done when:** a workspace moves Vercel → laptop → Vercel with nothing lost but live runs.
 
 ### D2.3 Route for hosted deployments `[to-do]`
@@ -455,7 +461,7 @@ D1 and the backup generations.
 1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[done]` (`agent/lib/qa.ts`, routes in `ops.ts`, `tests/qa.test.ts`)
 2. D0.1 `[done]`, D0.2 `[done]` (QA check written, not yet run live: needs a model and `BOT_QA=1`)
 3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[in-progress]` (live run pending a model credential)
-4. D2.1, D2.2, D2.4 `[to-do]`
+4. D2.1 `[done]`, D2.2 `[done]`, D2.4 `[to-do]`
 5. D1.5, D1.6, D0.3 (after E4) `[to-do]`
 6. D3.1, D3.2 `[to-do]`
 7. D4.1, D4.2 `[to-do]`

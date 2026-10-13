@@ -24,6 +24,7 @@ const STEP_WORDS: Readonly<Record<string, string>> = {
   "job.cancelled": "Cancelled",
   "job.crashed": "Crashed",
   "job.stranded": "Restarted",
+  "job.moved": "Moved",
   "job.learned": "Learned",
 };
 
