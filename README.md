@@ -82,7 +82,7 @@ Same code, two homes.
 | Storage and memory | Vercel Blob | disk |
 | Schedules | Vercel Cron | the server's own cron |
 | Web search | eve's, through AI Gateway | your SearXNG, or Brave, Tavily, Exa |
-| Costs | billed by Vercel | whatever your endpoint charges; caps still hold |
+| Costs | model usage at provider prices through AI Gateway, plus Sandbox and Blob on your Vercel plan | free with Ollama or LM Studio on your own hardware; per token on OpenRouter or any hosted API. Spend caps hold either way |
 
 ### Vercel
 
