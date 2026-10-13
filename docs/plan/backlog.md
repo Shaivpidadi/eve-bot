@@ -157,14 +157,117 @@ Recommendation: extend the SVG system first (A1 to A8), keep a Rive spike
       runtime's size and the file's, and whether its colours can follow the
       theme. Decide whether it earns a place.
 
+## E. eve 0.58.1 to 0.78.0
+
+Twenty minor versions in six weeks (0.78.0 shipped 13 Oct 2026). Not a
+dependency bump: 0.69 replaced the task model `run_job` is built on, and
+0.67 and 0.68 changed things the cancel path and the console rely on. Do
+this before D1, which edits the same files. Sized at three to five days with
+the test and QA suites green at the end.
+
+What changes for us, from the changelog and the 0.78 docs:
+
+| Area | 0.58 | 0.78 | Where it bites |
+| --- | --- | --- | --- |
+| Background runs | `execution: "background"` | `task(input, ctx)`; receipt at once, result as a `task.result` message; the turn stays open (`turn.waiting`, `on: "tasks"`) while tasks work, and steering messages still get replies | `agent/tools/run_job.ts`, the room store and watchdog that read `turn.completed` and `session.waiting` |
+| Delegation | `ctx.agent("teammate", { message })` returns the output | `ctx.agent("teammate").send(brief, { signal })` then `result()` gives `{ data, message, status }` | `run_job.ts` (`working`, `salvageResult`) |
+| Reserved names | our `agent/tools/task_cancel.ts` disables eve's | `task_cancel` and `task_wait` are reserved (`eve__task_cancel`); a tool by that name fails the build; the `eve` namespace is reserved | delete the override, re-check the "deaf HQ" it worked around |
+| Stopping a Bot | the `fence` hook throws in `step.started` | a throwing hook no longer fails the turn; hooks call `ctx.cancel()` instead | `teammate/hooks/fence.ts`, `lib/stops.ts`, `tests/turn-stop.test.ts` |
+| Subagent events | `subagent.called/started/completed/event` | `task.started`, `task.settled`, `agent.started`; `session.agent(started).stream()` | usage hooks, ops routes, console projections |
+| Stranded sessions | silently stuck after an upgrade | `409 session_stranded`; `reset()` ends it; `ctx.session.predecessor` names the old session and `transcriptReducer()` folds its transcript | the watchdog's recover path can now carry the conversation over |
+| Memory capture | provider `capture` never ran (no history on `turn.completed`) | restored (0afae69): providers get the settled history | decide whether hooks stay or capture moves back to the provider |
+| Jev | `experimental_evaluate` from `ai` | `decide` and `decisionModel` (ai 7.0.128+); eve needs ai 7.0.137+ | `agent/lib/jev.ts` |
+| Sandbox provider handles | `delete()`, `stop()`, `shutdown()`, `captureState`, `useSessionFn` | `onSandboxStop()`, `onRuntimeShutdown()`, `onSandboxDelete()`, `onSessionEnd()` | `agent/lib/computer.ts` (`sharedComputer`) |
+| `bash` output | `{ exitCode, stdout, stderr }` | `status: "running" \| "completed"`, `exitCode` only when completed; long commands return early with a pid | our bash wrappers and the shell fence |
+| Connection tools | `connection_search`, `connection_execute` | `eve__search`, `eve__tool`; calls named `<connection>__<tool>` | `instructions/connectors.ts`, teammate instructions, `catalog.ts`, the reviewed-reads logic |
+| Run modes | child sessions in conversation mode | modes removed; every session parks after a turn; `outputSchema` per turn only | `run_job.ts`, fence comments |
+| Local dev | quarantined runs | `eve dev` cancels runs whose snapshots are gone and says why | D0 gets easier |
+| Compaction | event log grows for ever | an idle session moves to a fresh run after compaction | long HQ threads |
+| Web search | | `webSearch({ provider: "native" })` uses the vendor's search on Gateway | optional |
+
+- [ ] **E1 (S)** Branch, bump `eve` to 0.78.0, `ai` to 7.0.139, `@agent-browser/eve`
+      to 0.39.0, run `npm run typecheck`, list every error by file. Done: the
+      list is in the PR description.
+- [ ] **E2 (M)** `run_job` on the task model: `task()`, `ctx.agent().send()`,
+      result reading, the sign-off `ctx.ask` from a task (stays open across
+      messages), the heartbeat loop against `turn.waiting`. Done: a job runs,
+      parks for sign-off, is approved, closes once.
+- [ ] **E3 (M)** Cancel and fence: `ctx.cancel()` in the fence hook, delete the
+      `task_cancel` override, re-test the cancel paths (`tests/turn-stop`,
+      `cancel.test`), re-check the "HQ goes deaf after task cancel" note.
+- [ ] **E4 (M)** Console and watchdog on stream version 26: `turn.waiting`,
+      `task.*`, `agent.started`, `409 session_stranded`; recover carries the
+      old transcript via `predecessor`. Done: a held turn shows as "working on
+      N jobs", not as wedged; a stranded room recovers with its history.
+- [ ] **E5 (S)** Jev on `decide`; sandbox handle hooks in `sharedComputer`;
+      bash output `status`; connection tool names in instructions and catalog.
+- [ ] **E6 (S)** Memory: try provider capture again now that history arrives;
+      keep the hooks if the provider still misses job turns.
+- [ ] **E7 (M)** Full pass: `npm test`, `npm run qa` with `QA_JOBS=1` against a
+      scratch deployment, a manual job on Vercel Sandbox and on Docker, a
+      sign-in takeover, a connector call with approval. Update the safety doc
+      where behaviour moved.
+
+## S. Each Bot on its own screen
+
+Today a workspace has one screen and one browser (`lib/computer/screens.ts`:
+"A workspace has one screen"), chosen so sign-ins carry across Bots. Each
+Bot has its own tab, tracked in `BotTab`, and `activate` brings a Bot's tab
+to the front for takeover. Every thread shows that one screen, so two Bots
+at work look like one browser flipping between tabs, and switching threads
+reconnects the live view each time. The pool already supports several
+screens per machine (`MAX_SCREENS`, default 4, up to 9), and the table once
+held one screen per Bot, so the machinery for the other design is there.
+
+- [ ] **S1 (M)** A Bot's thread shows its own tab. Posters are captured per
+      target (the script already supports it), so each thread's thumbnail is
+      that Bot's page, not whoever is in front; HQ's desk shows the front tab.
+      Done: two Bots working show two different thumbnails.
+- [ ] **S2 (M)** Smooth switching: one live connection per screen kept while
+      the console is open, poster crossfades to live instead of
+      "Connecting…", posters prefetched for every working Bot, and opening a
+      thread brings that Bot's tab to the front only when a person takes over.
+- [ ] **S3 (L)** A screen per working Bot: its own display and Chrome, the
+      profile seeded from the identity jar at start and exported back at the
+      end so sign-ins still carry across. The pool caps concurrency (a fifth
+      Bot waits or shares). Done: the Team computer card shows one mini screen
+      per working Bot, and takeover opens the right one.
+- [ ] **S4 (S)** Resource check for S3 on Vercel Sandbox and Docker: memory
+      per Chrome, `BOT_SANDBOX_VCPUS`, what happens at the cap. Written down
+      before S3 starts.
+
+## H. Hiring without the mess
+
+Today "New Bot" is a three-field form (name, job, a 20-character minimum
+persona) and HQ hires only when asked. Hiring several Bots means filling it
+several times, each lands in an empty thread, and there is no guidance on
+what a good persona is.
+
+- [ ] **H1 (M)** Templates: Researcher, Inbox triage, Sales follow-up, QA,
+      Ops monitor, Custom, each with role, persona, emoji and skills filled
+      in and editable, plus a live avatar preview and name suggestions. The
+      form becomes two steps: pick, then adjust.
+- [ ] **H2 (M)** "Describe your team": one text box, HQ proposes a roster on
+      a card (name, role, one-line persona each), approve all or some, and
+      `POST /bot/v1/bots/batch` creates them in one go.
+- [ ] **H3 (S)** A new Bot introduces itself: its thread opens with a short
+      hello in its own voice and one suggested first job, so no thread starts
+      empty.
+- [ ] **H4 (S)** Clone and edit from any Bot's menu (today's duplicate, with
+      the form open on the copy).
+- [ ] **H5 (S)** Form polish: inline validation, duplicate-name check before
+      submit, keyboard flow, the dialog on a sheet like Memory and Connectors.
+
 ## Suggested first week
 
-In order, with what each day leaves behind if the week ends there:
+The eve upgrade goes first because D1 edits the same files and because
+0.76 gives the watchdog a way to keep a conversation across a recovery.
 
-1. D1.1, D1.2 (the journal and the brief that replays it)
-2. D1.4, D0.2 (prove a kill mid-job continues; local rebuilds re-dispatch)
-3. A1, A2 (mood vocabulary and the expression layer)
-4. A3, A4, A5 (transitions, liveness, speaking)
-5. D2.1 (export and import), A7 (needs-you)
+1. E1, E2 (bump, typecheck, `run_job` on the task model)
+2. E3, E4 (cancel and fence, console on stream 26)
+3. E5, E6, E7 (the small migrations, memory, the full pass)
+4. D1.1, D1.2 (the journal and the brief that replays it)
+5. D0.2, S1 (local rebuilds re-dispatch; each Bot's thread shows its own tab)
 
-Left for later: D1.3, D1.5, D2.2, D2.3, D3, D4, D5, A6, A8, A9.
+Left for later, roughly in order: A1 to A5, S2, H1, H3, D1.4, D2.1, A7, H2,
+S3, D1.3, D1.5, D2.2, D2.3, D3, D4, D5, A6, A8, A9, H4, H5.
