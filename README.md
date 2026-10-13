@@ -256,7 +256,10 @@ which also lists what each release asks of you.
 ## HTTP
 
 Everything the console does goes through `/bot/v1`, so anything else can too.
-Send `Authorization: Bearer <console token>`.
+Send `Authorization: Bearer <console token>`. The same gate guards every
+route: without the token, or Vercel's sign-in in front, a request gets a 401,
+and a deployment with neither configured refuses to serve at all. The token
+is the whole secret, so treat it like a password.
 
 ```bash
 curl -X POST localhost:3000/bot/v1/rooms/desk/messages -H 'content-type: application/json' -d '{"message":"Who is on the team?"}'
