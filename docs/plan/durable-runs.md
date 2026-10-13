@@ -45,7 +45,7 @@ Two helpers every track needs, built first:
 | E. eve 0.78 upgrade (prerequisite, see backlog) | [to-do] | 0/7 |
 | D0. Stranded runs | [in-progress] | 2/3 |
 | D1. The job record as the session log | [in-progress] | 3/6 |
-| D2. A workspace that follows its owner | [in-progress] | 2/4 |
+| D2. A workspace that follows its owner | [in-progress] | 3/4 |
 | D3. Thin hands | [to-do] | 0/4 |
 | D4. One Workflow world | [to-do] | 0/2 |
 | D5. Rewind | [to-do] | 0/4 |
@@ -278,9 +278,9 @@ connectors and backups, and open jobs are picked up by the watchdog there.
 - **Tests:** QA: the route's archive imports cleanly with the script.
 - **Done when:** the export is reachable from the console behind the gate.
 
-### D2.4 Write it down `[to-do]`
+### D2.4 Write it down `[done]`
 
-- `[to-do]` D2.4.1 `docs/updating.md` gains "Moving a workspace": what moves, what does
+- `[done]` D2.4.1 `docs/updating.md` gains "Moving a workspace": what moves, what does
   not (live runs, the computer unless its backup is current), and the two commands.
 - **Done when:** the doc exists and the link check passes.
 
@@ -461,7 +461,7 @@ D1 and the backup generations.
 1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[done]` (`agent/lib/qa.ts`, routes in `ops.ts`, `tests/qa.test.ts`)
 2. D0.1 `[done]`, D0.2 `[done]` (QA check written, not yet run live: needs a model and `BOT_QA=1`)
 3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[in-progress]` (live run pending a model credential)
-4. D2.1 `[done]`, D2.2 `[done]`, D2.4 `[to-do]`
+4. D2.1 `[done]`, D2.2 `[done]`, D2.4 `[done]`
 5. D1.5, D1.6, D0.3 (after E4) `[to-do]`
 6. D3.1, D3.2 `[to-do]`
 7. D4.1, D4.2 `[to-do]`

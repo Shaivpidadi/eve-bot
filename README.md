@@ -276,7 +276,7 @@ door, is in [docs/http.md](docs/http.md).
 | --- | --- |
 | [Configuration](docs/configuration.md) | every variable, the outbound email relay contract, and how the Bots' shell is fenced |
 | [Safety model](docs/safety.md) | run fencing, cancellation, the browser gate, connectors, budgets, and the limits |
-| [Keeping it up to date](docs/updating.md) | the sync workflow, manual syncs for older copies, and what each release asks of you |
+| [Keeping it up to date](docs/updating.md) | the sync workflow, manual syncs for older copies, moving a workspace between Vercel and your machine, and what each release asks of you |
 | [HTTP API](docs/http.md) | the console API, with curl examples |
 | [Development](docs/development.md) | running it locally, the layout, Jev, metrics, and the QA suite that drives a deployment |
 | [Decisions](docs/decisions) | design records, starting with the state store |
