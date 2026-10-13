@@ -451,7 +451,7 @@ D1 and the backup generations.
 
 ## Order of work
 
-1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[to-do]`
+1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[done]` (`agent/lib/qa.ts`, routes in `ops.ts`, `tests/qa.test.ts`)
 2. D0.1, D0.2 `[to-do]`
 3. D1.1, D1.2, D1.3, D1.4 `[to-do]`
 4. D2.1, D2.2, D2.4 `[to-do]`

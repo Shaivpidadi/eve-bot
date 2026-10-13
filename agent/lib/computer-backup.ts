@@ -3,7 +3,7 @@ import type { ToolContext } from "eve/tools";
 import { record } from "./activity";
 import { COMPUTER_NAME, COMPUTER_PATHS } from "./computer";
 import { computerMode, localComputer } from "./computer-config";
-import { exportIdentity, sandboxIo } from "./computer/runtime";
+import { type ComputerIo, exportIdentity, sandboxIo } from "./computer/runtime";
 import { sessionBinding } from "./computer/screens";
 import { operator } from "./session";
 import { deleteDoc, readBytes, readDoc, writeBytes, writeDoc } from "./store";
@@ -120,6 +120,17 @@ let restoring: Promise<void> | null = null;
 let lastCheckpointAt = 0;
 let checkpointing: Promise<void> | null = null;
 let lastFailureNoticeAt = 0;
+
+/**
+ * Makes the computer look like a replacement machine: the generation marker
+ * goes, so the next job restores the latest backup before it touches anything.
+ * For the QA suite (see `lib/qa.ts`); the files themselves are left alone.
+ */
+export async function forgetGeneration(io: Pick<ComputerIo, "run">): Promise<void> {
+  const result = await io.run(`rm -f ${MARKER_PATH}`);
+  if (result.exitCode !== 0) throw new Error(result.stderr.trim() || "could not remove the generation marker");
+  verifiedAt = 0;
+}
 
 /**
  * Restores the latest backup if this computer is a replacement. Best-effort:

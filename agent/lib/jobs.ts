@@ -7,7 +7,7 @@ import { createDoc, deleteDoc, listDocs, readDoc, store, updateDoc } from "./sto
 import type { Job, JobArtifact, JobResult, JobStatus } from "./types";
 import { describeUsage } from "./usage";
 
-const key = (workspaceId: string, jobId: string) => `jobs/${workspaceId}/${jobId}.json`;
+export const key = (workspaceId: string, jobId: string) => `jobs/${workspaceId}/${jobId}.json`;
 
 /**
  * Every unfinished job has a marker under this prefix, so the minute tick reads

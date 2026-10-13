@@ -11,6 +11,8 @@ import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
 import { cancelJobRun, describeInterruption, interruptVia, within } from "../lib/cancel";
+import { forgetGeneration } from "../lib/computer-backup";
+import { computerControl } from "../lib/computer/control";
 import { stopRunCommands } from "../lib/computer/shell";
 import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
 import { isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
@@ -22,6 +24,7 @@ import { addConnector, completeOAuth, confirmGuessedReads, disconnectOAuth, getC
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
 import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
+import { crashRun, qaEnabled } from "../lib/qa";
 import { store } from "../lib/store";
 import { usageReport } from "../lib/usage-report";
 import { versionReport } from "../lib/version";
@@ -835,6 +838,58 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         interruption: cancelled.interruption,
         note: describeInterruption(cancelled),
       });
+    }),
+
+    /**
+     * Faults for the QA suite (`lib/qa.ts`), only on a deployment that set
+     * `BOT_QA=1`; elsewhere these paths do not exist. Each makes the store look
+     * as it does after something the console cannot otherwise cause, so a
+     * check can watch the recovery.
+     */
+    POST("/bot/v1/qa/jobs/:jobId/crash", async (request, { attachSession, params }) => {
+      if (!qaEnabled()) return json({ error: "not found" }, 404);
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const crashed = await crashRun(gate.access.workspaceId, params.jobId ?? "");
+      if (!crashed.ok) return json({ error: crashed.reason }, 422);
+      // A dead process takes its sessions and its shell commands with it.
+      const interrupt = interruptVia(attachSession, "QA: the process running this job died");
+      const problems: string[] = [];
+      for (const sessionId of crashed.sessions) {
+        await interrupt(sessionId).catch((error: unknown) => {
+          problems.push(`${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
+      const commandsStopped = crashed.sessions.length === 0 ? null : await stopRunCommands(crashed.sessions).catch(() => null);
+      return json({
+        crashed: true,
+        job: { id: crashed.job.id, title: crashed.job.title, status: crashed.job.status },
+        token: crashed.token,
+        sessions: crashed.sessions,
+        interruption: crashed.sessions.length === 0 ? "no-session" : problems.length === 0 ? "interrupted" : "failed",
+        ...(problems.length === 0 ? {} : { interruptError: problems.join("; ") }),
+        commandsStopped,
+      });
+    }),
+
+    POST("/bot/v1/qa/computer/replace", async (request) => {
+      if (!qaEnabled()) return json({ error: "not found" }, 404);
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      let io: Awaited<ReturnType<ReturnType<typeof computerControl>["io"]>>;
+      try {
+        io = await computerControl().io();
+      } catch (error) {
+        return json({ replaced: false, error: error instanceof Error ? error.message : String(error) }, 503);
+      }
+      if (io === null) return json({ replaced: false, error: "The computer does not exist yet; it starts with the first job." }, 409);
+      await forgetGeneration(io);
+      await record({
+        workspaceId: gate.access.workspaceId,
+        kind: "computer.failed",
+        text: "QA: the computer's generation marker was removed; the next job treats it as a replacement machine and restores the backup.",
+      });
+      return json({ replaced: true });
     }),
 
     /** The team's connectors: services every Bot can use. Keys never come back out. */
