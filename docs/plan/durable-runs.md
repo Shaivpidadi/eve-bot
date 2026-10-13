@@ -347,6 +347,11 @@ behind one interface with one implementation, then tries a second machine.
 
 ### D3.3 Spike: a Mac as hands, shell and files only `[to-do]`
 
+- **Blocked (13 Oct 2026):** no Mac reachable over SSH. This Mac has Remote Login off
+  (System Settings → General → Sharing → Remote Login), which is the owner's to turn on;
+  a cloud Mac works too. The interface it would implement (D3.1) and the capability flags
+  that would switch off its screen and browser (D3.2) are in place.
+
 - **Files:** `agent/lib/hands/mac-ssh.ts`, `agent/lib/computer-config.ts`
   (`BOT_COMPUTER=mac-ssh`, `BOT_MAC_SSH=user@host`, `BOT_MAC_SSH_KEY`), a custom eve
   `SandboxBackend` in `agent/sandbox/mac.ts`, `docs/research/mac-hands.md` for the findings.
@@ -491,6 +496,8 @@ D1 and the backup generations.
 6. D3.1 `[done]`, D3.2 `[done]`
 7. D4.1 `[done]`, D4.2 `[done]`
 8. D5.1 `[done]`, D5.2 `[done]`
-9. D3.3, D3.4, D5.3, D5.4, D2.3 `[to-do]`
+9. D3.3 `[to-do]` (blocked: needs a Mac reachable over SSH), D3.4 `[to-do]` (after D3.3), D5.3 `[to-do]` (after E4), D5.4 `[done]`, D2.3 `[done]`
+
+Also waiting on track E (the eve upgrade): D0.3. Waiting on a fresh Vercel OIDC token (`npx vercel env pull`): the Vercel Sandbox runs of D1.4 and D5.2.
 
 Update the status board at the top with each commit.
