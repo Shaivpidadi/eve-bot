@@ -27,6 +27,8 @@ import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom,
 import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { crashRun, qaEnabled } from "../lib/qa";
+import { rewind } from "../lib/rewind";
+import { handsFor } from "../lib/hands";
 import { store } from "../lib/store";
 import { usageReport } from "../lib/usage-report";
 import { versionReport } from "../lib/version";
@@ -811,6 +813,39 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           journal: job.journal ?? [],
           lease: lease === null ? null : { kind: lease.kind, until: lease.until, build: lease.build ?? null },
         },
+      });
+    }),
+
+    /**
+     * "Rewind to here": takes a job back to journal step `index`. The run that
+     * held it is stopped, the job's files are restored as they were at the
+     * nearest saved point, and a fresh run is dispatched, briefed with the
+     * journal up to there and with what cannot be undone.
+     */
+    POST("/bot/v1/jobs/:jobId/rewind", async (request, { attachSession, from, params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const index = typeof body?.index === "number" ? body.index : Number.NaN;
+      const { workspaceId } = gate.access;
+      const done = await rewind({ workspaceId, jobId: params.jobId ?? "", index, by: gate.access.user }, async () => {
+        const io = await computerControl().io();
+        return io === null ? null : handsFor(io);
+      });
+      if (!done.ok) return json({ error: done.reason }, 422);
+      const { outcome } = done;
+      const interrupt = interruptVia(attachSession, `Rewound to step ${index} by ${gate.access.user}`);
+      for (const sessionId of outcome.sessions) await interrupt(sessionId).catch(() => undefined);
+      if (outcome.sessions.length > 0) await stopRunCommands(outcome.sessions).catch(() => null);
+      const dispatched = await dispatchDue(async (job, message) => {
+        await from(await addressOf(job.workspaceId, job.room)).send(message, { auth: runtimePrincipal(job.workspaceId, job.room) });
+      });
+      return json({
+        rewound: true,
+        job: { id: outcome.job.id, title: outcome.job.title, status: outcome.job.status, steps: (outcome.job.journal ?? []).length },
+        files: outcome.files,
+        kept: outcome.kept,
+        dispatched: dispatched.dispatched,
       });
     }),
 

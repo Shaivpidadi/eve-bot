@@ -755,6 +755,60 @@ export async function appendJournal(workspaceId: string, jobId: string, sessionI
   });
 }
 
+export type Rewind =
+  | {
+      ok: true;
+      /** The job as rewound: journal cut to `index`, no lease, queued to run now. */
+      job: Job;
+      /** The job as it was, for what it owned and when each step happened. */
+      before: Job;
+      /** Sessions the run that held it may still have, to stop. */
+      sessions: string[];
+    }
+  | { ok: false; reason: string };
+
+const MAX_UNDONE = 100;
+
+/**
+ * Takes a job back to journal step `index`: the run holding it is dropped
+ * (it finds itself superseded at its next look), the journal is cut to the
+ * first `index` lines with the rest kept under `rewound`, and the job is
+ * queued to run now, so the watchdog (or a sweep) hands it to a fresh run
+ * whose brief replays the journal up to there. A cancelled job stays
+ * cancelled. The computer's files are the caller's to restore.
+ */
+export async function rewindJob(workspaceId: string, jobId: string, index: number, by: string, kept: readonly string[] = []): Promise<Rewind> {
+  const outcome = { reason: `No job ${jobId} in this workspace.`, before: null as Job | null, sessions: [] as string[] };
+  const job = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
+    if (current === null) return null;
+    if (current.status === "cancelled") {
+      outcome.reason = "That job was cancelled; start it again instead of rewinding it.";
+      return null;
+    }
+    const journal = current.journal ?? [];
+    if (!Number.isInteger(index) || index < 0 || index > journal.length) {
+      outcome.reason = `There is no step ${index} to go back to; the journal has ${journal.length}.`;
+      return null;
+    }
+    outcome.before = current;
+    outcome.sessions = [...new Set([current.lease?.session, current.sessionId].filter((id): id is string => typeof id === "string" && id !== ""))];
+    const now = new Date().toISOString();
+    return stamp({
+      ...current,
+      status: "queued",
+      runAt: now,
+      lease: null,
+      error: null,
+      result: null,
+      journal: journal.slice(0, index),
+      rewound: { at: now, by, index, undone: journal.slice(index).slice(-MAX_UNDONE), ...(kept.length > 0 ? { kept: [...kept] } : {}) },
+    });
+  });
+  if (job === null || outcome.before === null) return { ok: false, reason: outcome.reason };
+  await markOpen(workspaceId, jobId);
+  return { ok: true, job, before: outcome.before, sessions: outcome.sessions };
+}
+
 /**
  * Whether a run still owns the job it is closing. Without a token the caller is
  * not a run (an operator action), so it always may. A run whose lease was taken

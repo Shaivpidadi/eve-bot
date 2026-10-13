@@ -49,6 +49,15 @@ export function renderBrief(bot: Bot, job: Job, run: { readonly token: string })
             : `${job.result.summary}\n\n${job.result.deliverable.slice(0, 2_000)}`,
         ].join("\n")
       : null,
+    job.rewound
+      ? [
+          "## Rewound",
+          `${job.rewound.by} took this job back to step ${job.rewound.index} on ${job.rewound.at.slice(0, 16).replace("T", " ")} UTC. The files this job owns are as they were at that step. Carry on from there; the steps after it were undone on purpose, so do not repeat them unless the brief still asks for them.`,
+          ...(job.rewound.kept && job.rewound.kept.length > 0
+            ? ["", "Already done and cannot be undone (do not do these again):", ...job.rewound.kept.map((line) => `- ${line}`)]
+            : []),
+        ].join("\n")
+      : null,
     // A run that follows another on the same job continues it rather than starting over.
     journalOf(job).length > 0 ? renderJournal(journalOf(job)) : null,
     job.successCriteria.length > 0

@@ -20,6 +20,7 @@ import connectors from "./checks/connectors.mjs";
 import jobs from "./checks/jobs.mjs";
 import stranded from "./checks/stranded.mjs";
 import resume from "./checks/resume.mjs";
+import rewind from "./checks/rewind.mjs";
 
 const url = process.env.QA_URL?.trim();
 const token = process.env.QA_TOKEN?.trim();
@@ -35,7 +36,7 @@ if (!url || !token) {
 const withJobs = process.env.QA_JOBS === "1";
 const concurrency = Number(process.env.QA_CONCURRENCY) || 3;
 const only = (process.env.QA_ONLY ?? "").split(",").map((part) => part.trim()).filter((part) => part !== "");
-const checks = [...access, ...roster, ...memory, ...connectors, ...(withJobs ? [...jobs, ...stranded, ...resume] : [])].filter(
+const checks = [...access, ...roster, ...memory, ...connectors, ...(withJobs ? [...jobs, ...stranded, ...resume, ...rewind] : [])].filter(
   (check) => only.length === 0 || only.some((part) => check.name.includes(part)),
 );
 

@@ -538,11 +538,16 @@ export async function restorePaths(io: ComputerIo, paths: readonly string[], arc
   const run = await io.run(PART_PRIVATE, { timeoutMs: 15_000 });
   if (run.exitCode !== 0) throw new ComputerError(`Could not prepare the restore: ${tail(run)}`, "restore");
   if (archive !== null) await io.writeBinaryFile(PART_ARCHIVE, archive);
+  const quoted = clean.map(shellQuote).join(" ");
   const result = await io.run(
     [
       "set -e",
-      `rm -rf -- ${clean.map(shellQuote).join(" ")}`,
-      archive === null ? "true" : `tar -xzf ${PART_ARCHIVE} -C / && rm -f ${PART_ARCHIVE}`,
+      `rm -rf -- ${quoted}`,
+      archive === null ? "true" : `tar -xzpf ${PART_ARCHIVE} -C / && rm -f ${PART_ARCHIVE}`,
+      // The work folders are shared with the Bots' shell user through the bot-team
+      // group (see shell-helper.ts): what comes back must be that group's to write
+      // again, not the computer user's alone.
+      `if getent group bot-team >/dev/null 2>&1; then for p in ${quoted}; do [ -e "$p" ] || continue; chgrp -R bot-team "$p" 2>/dev/null || true; chmod -R g+rwX "$p" 2>/dev/null || true; find "$p" -type d -exec chmod g+s {} + 2>/dev/null || true; done; fi`,
     ].join("\n"),
     { timeoutMs },
   );

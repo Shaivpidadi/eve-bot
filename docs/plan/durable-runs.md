@@ -48,7 +48,7 @@ Two helpers every track needs, built first:
 | D2. A workspace that follows its owner | [in-progress] | 3/4 |
 | D3. Thin hands | [in-progress] | 2/4 |
 | D4. One Workflow world | [done] | 2/2 |
-| D5. Rewind | [in-progress] | 1/4 |
+| D5. Rewind | [in-progress] | 2/4 |
 
 ## D0. Stranded runs `[in-progress]`
 
@@ -430,28 +430,36 @@ D1 and the backup generations.
   storage per job (recorded).
 - **Done when:** every decision in a journal has a generation behind it.
 
-### D5.2 "Rewind to here" on a job `[to-do]`
+### D5.2 "Rewind to here" on a job `[done]`
 
 - **Files:** `agent/lib/jobs.ts` (`rewindJob(workspaceId, jobId, index)`), `agent/channels/ops.ts`
   (`POST /bot/v1/jobs/:id/rewind`), `agent/lib/computer-backup.ts` (`restoreGeneration`),
   `agent/tools/run_job.ts` (a claim that carries `rewindTo`), `src/console/transcript.tsx`.
-- `[to-do]` D5.2.1 `rewindJob`: cancel the live run through `cancelJobRun`, truncate the
+- `[done]` D5.2.1 (the old run is superseded and its sessions stopped rather than the job cancelled; restore is in `lib/rewind.ts`) `rewindJob`: cancel the live run through `cancelJobRun`, truncate the
   journal to `index` (keeping the dropped tail under `journal.rewound[]` for the record),
   set status `queued`, record `job.rewound` in the feed, and restore the generation named
   by the entry before `index` (or the job's first generation).
-- `[to-do]` D5.2.2 The next run's brief says "Rewound to step N on <date> by <who>; the
+- `[done]` D5.2.2 The next run's brief says "Rewound to step N on <date> by <who>; the
   computer's files are as they were then" and replays the journal up to N.
-- `[to-do]` D5.2.3 Outward actions after the rewind point are listed in the brief as "already
+- `[done]` D5.2.3 (emails from the action ledger; connector changes are not in the ledger yet) Outward actions after the rewind point are listed in the brief as "already
   done, do not repeat" when the action ledger shows a receipt (an email sent cannot be
   unsent); the journal keeps their entries marked `kept`.
-- `[to-do]` D5.2.4 Console: "Rewind to here" on a journal entry, with a confirm sheet that
+- `[done]` D5.2.4 (inline confirmation on the journal line; the divider then reads "Rewound to here by …") Console: "Rewind to here" on a journal entry, with a confirm sheet that
   names what will be undone and what cannot be.
 - **Tests:** unit: truncate and keep rules, ledger scan; QA: `qa/checks/rewind.mjs` runs a
   job that writes two files, rewinds to between them, expects the first file present and
   the second gone, and the journal to show the rewind.
 - **Eval:** rewind round-trip time (click to new run's first step); files restored exactly
   (a checksum list taken at the generation).
-- **Done when:** the QA check passes on Vercel Sandbox and Docker.
+- **Live result (Docker, 13 Oct 2026):** `qa/checks/rewind.mjs` passed in 135 s: rewound to step 3,
+  files from the decision's saved point, `a` there and `b` gone straight after, the job then
+  finished with `b` written once. The decision's saved point took under a second (200 bytes);
+  the start point covered an empty folder (0 bytes).
+- **Defect found and fixed by the live run:** the first restore extracted as the computer's
+  user, so the Bot's folder came back without the `bot-team` group's write bit and the Bot's
+  shell could not write in it (the Bot reported it and blocked). Restore now keeps the
+  archive's permissions and re-applies the shared-folder rules.
+- **Done when:** the QA check passes on Vercel Sandbox and Docker. Docker done; Vercel Sandbox waits on a fresh OIDC token.
 
 ### D5.3 Rewind a conversation `[to-do]`
 
@@ -482,7 +490,7 @@ D1 and the backup generations.
 5. D1.5 `[done]`, D1.6 `[done]`, D0.3 (after E4) `[to-do]`
 6. D3.1 `[done]`, D3.2 `[done]`
 7. D4.1 `[done]`, D4.2 `[done]`
-8. D5.1 `[done]`, D5.2 `[to-do]`
+8. D5.1 `[done]`, D5.2 `[done]`
 9. D3.3, D3.4, D5.3, D5.4, D2.3 `[to-do]`
 
 Update the status board at the top with each commit.

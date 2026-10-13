@@ -300,6 +300,12 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .steps-list li time { color: var(--faint); font-size: 10.5px; flex: none; font-variant-numeric: tabular-nums; }
 .steps-list li.bad .k { color: var(--bad); }
 .steps-list li.good .k { color: var(--ok); }
+.steps-list li .rewind { flex: none; visibility: hidden; border: 0; background: none; padding: 0 4px; font: inherit; font-size: 11px; color: var(--faint); cursor: pointer; }
+.steps-list li:hover .rewind, .steps-list li .rewind:focus-visible { visibility: visible; }
+.steps-list li .rewind:hover { color: var(--text); text-decoration: underline; }
+.steps-list li.rewind-ask { align-items: center; gap: 8px; padding: 6px 8px; margin: 2px 0; border-radius: 6px; background: var(--bg-2, rgba(127,127,127,.08)); color: var(--text); }
+.steps-list li.rewind-ask button { flex: none; font: inherit; font-size: 11.5px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line-2); background: none; color: var(--text); cursor: pointer; }
+.steps-list li.rewind-ask button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
 .screen-kind { color: var(--faint); }
 .steps-list li.decision .k { color: var(--accent, var(--text)); }
 .steps-list li a { color: inherit; text-decoration: underline; text-decoration-color: var(--faint); }

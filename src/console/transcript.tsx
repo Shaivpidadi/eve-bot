@@ -25,6 +25,7 @@ const STEP_WORDS: Readonly<Record<string, string>> = {
   "job.crashed": "Crashed",
   "job.stranded": "Restarted",
   "job.moved": "Moved",
+  "job.rewound": "Rewound",
   "job.learned": "Learned",
 };
 
@@ -267,8 +268,8 @@ const JOURNAL_WORDS: Readonly<Record<JournalLine["kind"], string>> = {
  * is still going. Null until read, or when the job has none (older jobs): the
  * feed's lines stand in.
  */
-function useJournal(jobId: string | null, open: boolean, live: boolean): { lines: readonly JournalLine[]; resumedFrom: number } | null {
-  const [journal, setJournal] = useState<{ lines: readonly JournalLine[]; resumedFrom: number } | null>(null);
+function useJournal(jobId: string | null, open: boolean, live: boolean): { lines: readonly JournalLine[]; resumedFrom: number; rewoundBy: string | null } | null {
+  const [journal, setJournal] = useState<{ lines: readonly JournalLine[]; resumedFrom: number; rewoundBy: string | null } | null>(null);
   useEffect(() => {
     if (!open || jobId === null) return;
     let stopped = false;
@@ -276,9 +277,11 @@ function useJournal(jobId: string | null, open: boolean, live: boolean): { lines
       try {
         const response = await api(`/bot/v1/jobs/${encodeURIComponent(jobId)}`);
         if (!response.ok) return;
-        const body = (await response.json()) as { job?: { journal?: JournalLine[]; resumedFrom?: number } };
+        const body = (await response.json()) as { job?: { journal?: JournalLine[]; resumedFrom?: number; rewound?: { by: string; index: number } } };
         const lines = body.job?.journal ?? [];
-        if (!stopped) setJournal(lines.length === 0 ? null : { lines, resumedFrom: body.job?.resumedFrom ?? 0 });
+        const rewound = body.job?.rewound;
+        const resumedFrom = body.job?.resumedFrom ?? 0;
+        if (!stopped) setJournal(lines.length === 0 ? null : { lines, resumedFrom, rewoundBy: rewound !== undefined && rewound.index === resumedFrom ? rewound.by : null });
       } catch {
         // The feed's lines stay.
       }
@@ -341,7 +344,13 @@ function StepsBlock({
       {open && journal !== null ? (
         <ol className="steps-list">
           {journal.lines.map((line, index) => (
-            <JournalRow key={`${line.at}:${index}`} line={line} resumedHere={journal.resumedFrom > 0 && index === journal.resumedFrom} />
+            <JournalRow
+              key={`${line.at}:${index}`}
+              line={line}
+              resumedHere={journal.resumedFrom > 0 && index === journal.resumedFrom ? (journal.rewoundBy === null ? "Continued from here after a restart" : `Rewound to here by ${journal.rewoundBy}`) : null}
+              undoes={journal.lines.length - (index + 1)}
+              onRewind={block.jobId === null ? null : () => rewindTo(block.jobId as string, index + 1)}
+            />
           ))}
           {latest.kind === "job.done" || latest.kind === "job.failed" || latest.kind === "job.cancelled" ? (
             <li className={latest.kind === "job.failed" ? "bad" : latest.kind === "job.done" ? "good" : undefined}>
@@ -369,19 +378,75 @@ function StepsBlock({
   );
 }
 
-function JournalRow({ line, resumedHere }: { line: JournalLine; resumedHere: boolean }) {
+/** Takes a job back to just after step `index` (1-based count of steps kept). */
+async function rewindTo(jobId: string, index: number): Promise<string> {
+  const response = await api(`/bot/v1/jobs/${encodeURIComponent(jobId)}/rewind`, { method: "POST", body: JSON.stringify({ index }) });
+  const body = (await response.json().catch(() => null)) as { error?: string; files?: { restoredFrom?: number; skipped?: string } } | null;
+  if (!response.ok) return body?.error ?? "Could not rewind.";
+  return body?.files?.restoredFrom !== undefined ? "Rewound; files restored, starting again." : `Rewound; files not restored (${body?.files?.skipped ?? "unknown"}).`;
+}
+
+function JournalRow({
+  line,
+  resumedHere,
+  undoes,
+  onRewind,
+}: {
+  line: JournalLine;
+  /** The divider above this line, where a later run picked the job up. */
+  resumedHere: string | null;
+  /** How many later steps a rewind to here would undo. */
+  undoes: number;
+  onRewind: (() => Promise<string>) | null;
+}) {
+  const [asking, setAsking] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   return (
     <>
-      {resumedHere ? (
+      {resumedHere !== null ? (
         <li className="resumed" role="separator">
-          <span>Continued from here after a restart</span>
+          <span>{resumedHere}</span>
         </li>
       ) : null}
       <li className={line.kind === "error" ? "bad" : line.kind === "decision" ? "decision" : undefined}>
         <span className="k">{JOURNAL_WORDS[line.kind] ?? "Did"}</span>
         <JournalText line={line} />
+        {onRewind !== null && undoes > 0 && !asking ? (
+          <button type="button" className="rewind" onClick={() => setAsking(true)} title="Take the job back to just after this step">
+            Rewind to here
+          </button>
+        ) : null}
         <time>{clock(new Date(line.at))}</time>
       </li>
+      {asking && onRewind !== null ? (
+        <li className="rewind-ask">
+          <span>
+            Undo the {undoes} later {undoes === 1 ? "step" : "steps"}, put this job&apos;s files back as they were, and run it again from here? Emails already sent stay sent.
+          </span>
+          <button
+            type="button"
+            className="danger"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setNote(await onRewind());
+              setBusy(false);
+              setAsking(false);
+            }}
+          >
+            {busy ? "Rewinding…" : "Rewind"}
+          </button>
+          <button type="button" disabled={busy} onClick={() => setAsking(false)}>
+            Keep
+          </button>
+        </li>
+      ) : null}
+      {note === null ? null : (
+        <li className="resumed">
+          <span>{note}</span>
+        </li>
+      )}
     </>
   );
 }

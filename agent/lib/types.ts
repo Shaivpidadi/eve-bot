@@ -142,6 +142,12 @@ export interface Job {
   journal?: JournalEntry[];
   /** How many journal lines the latest run started from; 0 or absent for a run that started fresh. */
   resumedFrom?: number;
+  /**
+   * The last time a person took the job back to an earlier step: who, when,
+   * to which step, and the journal lines that were undone (kept for the
+   * record, capped). Absent on jobs never rewound.
+   */
+  rewound?: { readonly at: string; readonly by: string; readonly index: number; readonly undone: JournalEntry[]; readonly kept?: string[] };
   lastRunAt: string | null;
   /**
    * How the job was cancelled, once it was: `id` is the cancelling call's own
@@ -205,6 +211,7 @@ export type ActivityKind =
   | "job.crashed"
   | "job.stranded"
   | "job.moved"
+  | "job.rewound"
   | "job.learned"
   | "memory.saved"
   | "input.requested"
