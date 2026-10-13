@@ -57,6 +57,13 @@ export interface JobLease {
   until: string;
   kind: JobLeaseKind;
   session?: string;
+  /**
+   * The build of the code whose process holds this lease (see `lib/build.ts`).
+   * On a local Workflow world a lease from another build is dead at once:
+   * its run cannot resume under new code. Absent on leases written before
+   * builds were recorded, which count as unknown and are judged by `until`.
+   */
+  build?: string;
 }
 
 export interface JobArtifact {

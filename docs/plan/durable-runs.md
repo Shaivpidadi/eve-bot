@@ -43,14 +43,14 @@ Two helpers every track needs, built first:
 | Track | Status | Tasks done |
 | --- | --- | --- |
 | E. eve 0.78 upgrade (prerequisite, see backlog) | [to-do] | 0/7 |
-| D0. Stranded runs | [to-do] | 0/3 |
+| D0. Stranded runs | [in-progress] | 1/3 |
 | D1. The job record as the session log | [to-do] | 0/6 |
 | D2. A workspace that follows its owner | [to-do] | 0/4 |
 | D3. Thin hands | [to-do] | 0/4 |
 | D4. One Workflow world | [to-do] | 0/2 |
 | D5. Rewind | [to-do] | 0/4 |
 
-## D0. Stranded runs `[to-do]`
+## D0. Stranded runs `[in-progress]`
 
 A code change under `eve dev` quarantines active Workflow runs; a standalone
 rebuild does the same. The job's lease then sits unexpired for up to 20
@@ -58,15 +58,15 @@ minutes, and the watchdog only runs daily by default. Vercel is not affected
 (the old deployment keeps the run alive), so every rule below applies only
 when the Workflow world is local.
 
-### D0.1 Tell a job which build holds its run `[to-do]`
+### D0.1 Tell a job which build holds its run `[done]`
 
 - **Files:** `agent/lib/types.ts` (`JobLease.build?: string`), `agent/lib/jobs.ts`
   (`claimJob`, `renewLease`), `agent/lib/build.ts` (new: `buildId()`).
-- `[to-do]` D0.1.1 `buildId()` returns a stable id for the running code: `VERCEL_DEPLOYMENT_ID`
+- `[done]` D0.1.1 `buildId()` returns a stable id for the running code: `VERCEL_DEPLOYMENT_ID`
   on Vercel, else a hash of `package.json` version plus the `.eve/dev-runtime` generation
   under `eve dev`, else the `.output` build stamp. Unit test: same process, same id;
   different stamp, different id.
-- `[to-do]` D0.1.2 `claimJob` and `renewLease` write `lease.build = buildId()`. Older
+- `[done]` D0.1.2 `claimJob`, `holdUntilDue`, `holdForSignoff` and `renewLease` write `lease.build = buildId()`. Older
   records without it are treated as "unknown build". Unit test on the lease shape.
 - **Done when:** every new `run` and `wait` lease names its build.
 
@@ -452,7 +452,7 @@ D1 and the backup generations.
 ## Order of work
 
 1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[done]` (`agent/lib/qa.ts`, routes in `ops.ts`, `tests/qa.test.ts`)
-2. D0.1, D0.2 `[to-do]`
+2. D0.1 `[done]`, D0.2 `[to-do]`
 3. D1.1, D1.2, D1.3, D1.4 `[to-do]`
 4. D2.1, D2.2, D2.4 `[to-do]`
 5. D1.5, D1.6, D0.3 (after E4) `[to-do]`

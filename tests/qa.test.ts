@@ -86,3 +86,26 @@ describe("crashRun", () => {
     expect(qaEnabled({ BOT_QA: "true" })).toBe(false);
   });
 });
+
+describe("leases name their build", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+    vi.stubEnv("BOT_BUILD_ID", "build-A");
+  });
+
+  it("on a claim, a wait, a renewal and a sign-off hold", async () => {
+    const jobs = await import("../agent/lib/jobs");
+    const job = await jobs.assignJob({ workspaceId: WORKSPACE, botId: "bot_1", requestedBy: "operator", title: "Stamped", brief: "Check." });
+    const claim = await jobs.claimJob(WORKSPACE, job.id, { token: "run_1", forMs: 60_000, status: "running", kind: "run" });
+    expect(claim.ok && claim.job.lease?.build).toBe("build-A");
+    expect(await jobs.renewLease(WORKSPACE, job.id, "run_1", 60_000)).toBe(true);
+    expect((await jobs.getJob(WORKSPACE, job.id))?.lease?.build).toBe("build-A");
+    const held = await jobs.holdForSignoff(WORKSPACE, job.id, {
+      token: "run_1",
+      forMs: 60_000,
+      result: { summary: "s", deliverable: "d", openQuestions: [], needsHuman: false },
+    });
+    expect(held && (await jobs.getJob(WORKSPACE, job.id))?.lease).toMatchObject({ kind: "signoff", build: "build-A" });
+  });
+});

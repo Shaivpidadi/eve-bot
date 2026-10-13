@@ -1,4 +1,5 @@
 import { record } from "./activity";
+import { buildId } from "./build";
 import { newId } from "./ids";
 import { getBot, patchBot } from "./bots";
 import { DEFAULT_EFFORT, type JobEffort } from "./models";
@@ -320,6 +321,7 @@ export async function claimJob(
         token: options.token,
         until: new Date(now + options.forMs).toISOString(),
         kind: options.kind,
+        build: buildId(),
       },
       lastRunAt: new Date(now).toISOString(),
       updatedAt: new Date(now).toISOString(),
@@ -381,7 +383,7 @@ export async function holdUntilDue(workspaceId: string, jobId: string, token: st
     outcome.hold = { kind: "wait", runAt: current.runAt, title: current.title };
     return stamp({
       ...current,
-      lease: { token, kind: "wait", until: new Date(startsAt + WAIT_GRACE_MS).toISOString() },
+      lease: { token, kind: "wait", until: new Date(startsAt + WAIT_GRACE_MS).toISOString(), build: buildId() },
     });
   });
   return outcome.hold;
@@ -401,7 +403,7 @@ export async function renewLease(
     if (current === null || current.lease === null || current.lease.token !== token) return null;
     return stamp({
       ...current,
-      lease: { ...current.lease, until: new Date(Date.now() + forMs).toISOString() },
+      lease: { ...current.lease, until: new Date(Date.now() + forMs).toISOString(), build: buildId() },
     });
   });
   return job !== null;
@@ -428,6 +430,7 @@ export async function holdForSignoff(
         token: input.token,
         until: new Date(Date.now() + input.forMs).toISOString(),
         kind: "signoff",
+        build: buildId(),
       },
     });
   });
