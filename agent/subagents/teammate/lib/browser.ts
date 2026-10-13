@@ -8,7 +8,7 @@ import type { ToolContext } from "eve/tools";
 import { COMPUTER_PATHS } from "../../../lib/computer";
 import { AGENT_BROWSER_INSTALL } from "../../../lib/computer-config";
 import { GUARD_TTL_MS, guardGraceMs, NETGUARD_FILE, parseGuardAnswer, type Stopped } from "../../../lib/computer/netguard";
-import { ComputerError, shellQuote, toolHands } from "../../../lib/hands";
+import { ComputerError, currentKind, lacking, shellQuote, toolHands } from "../../../lib/hands";
 import { COMPUTER_BIN } from "../../../lib/computer/script";
 import {
   allocateScreen,
@@ -254,6 +254,8 @@ export async function browser(ctx: ToolContext, args: readonly string[], options
 }
 
 async function browserCommand(ctx: ToolContext, args: readonly string[], options: { readonly guard?: boolean } = {}): Promise<BrowserResult> {
+  const missing = lacking(currentKind(), "browser");
+  if (missing !== null) return failure(new Error(missing));
   if (FORBIDDEN.has(args[0] ?? "")) {
     return failure(new Error(`"${args[0]}" is not available: the browser stays open so the team can see and use it.`));
   }

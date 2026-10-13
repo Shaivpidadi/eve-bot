@@ -1,3 +1,4 @@
+import { currentKind, describeKind } from "./hands/kinds";
 import { journalOf, renderJournal } from "./journal";
 import { DEFAULT_EFFORT } from "./models";
 import { describeSchedule } from "./schedule";
@@ -33,6 +34,7 @@ export function renderBrief(bot: Bot, job: Job, run: { readonly token: string })
       // Read back by the teammate's model choice (see models.ts); keep the format.
       `effort: ${job.effort ?? DEFAULT_EFFORT}`,
       job.requiresSignoff ? "sign-off: a human must approve the deliverable" : "sign-off: not required",
+      describeKind(currentKind()),
       "",
       job.brief.trim(),
     ].join("\n"),

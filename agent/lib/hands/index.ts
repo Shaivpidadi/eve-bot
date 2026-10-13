@@ -5,6 +5,7 @@ import { linuxHands } from "./linux";
 import type { Hands } from "./types";
 
 export type { Hands, HandsKindId } from "./types";
+export { currentKind, describeKind, KINDS, lacking, type Capabilities, type HandsKind, type HandsKindName } from "./kinds";
 export { ComputerError, isInstalling, MAX_FILE_BYTES, shellQuote, type ComputerIo, type InputEvent } from "../computer/runtime";
 
 /**

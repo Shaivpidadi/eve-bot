@@ -46,7 +46,7 @@ Two helpers every track needs, built first:
 | D0. Stranded runs | [in-progress] | 2/3 |
 | D1. The job record as the session log | [in-progress] | 5/6 |
 | D2. A workspace that follows its owner | [in-progress] | 3/4 |
-| D3. Thin hands | [in-progress] | 1/4 |
+| D3. Thin hands | [in-progress] | 2/4 |
 | D4. One Workflow world | [to-do] | 0/2 |
 | D5. Rewind | [to-do] | 0/4 |
 
@@ -314,20 +314,19 @@ behind one interface with one implementation, then tries a second machine.
 - **Live check (13 Oct 2026, local Docker computer):** through the console routes, now on the hands: list `/workspace`, upload a file, read it back, delete it with confirmation (404 after), start HQ's screen (VNC URL returned). The frame route reached the machine, which answered "that tab is gone" for a tab remembered from before the container stopped: correct, and a stale-tab case for track S.
 - **Done when:** no caller outside `hands/` imports the runtime script's command names. Holds: only `computer/shell.ts` and `computer/control.ts`, the Linux implementation's own modules, still import `computer/runtime`.
 
-### D3.2 Kinds and capabilities `[to-do]`
+### D3.2 Kinds and capabilities `[done]`
 
 - **Files:** `agent/lib/hands/kinds.ts`, `agent/lib/computer-backup.ts` (manifest `kind`,
   `capabilities`), `agent/channels/ops.ts` (`GET /bot/v1/computer` reports them),
   `src/console/panel.tsx` (the Team computer card).
-- `[to-do]` D3.2.1 A kind is `{ id: "vercel-linux" | "docker-linux" | "microsandbox-linux" | "mac-ssh",
+- `[done]` D3.2.1 (as built: `{ name, label, capabilities: { screen, browser, handover, shell } }` in `hands/kinds.ts`; the fence mode stays a runtime fact the computer reports, not a property of the kind) A kind is `{ id: "vercel-linux" | "docker-linux" | "microsandbox-linux" | "mac-ssh",
   capabilities: { screen, browser, handover, fence: "iptables" | "nftables" | "landlock" | "none" } }`.
-- `[to-do]` D3.2.2 The brief tells the teammate which capabilities its computer has; the
+- `[done]` D3.2.2 The brief tells the teammate which capabilities its computer has; the
   browser tools refuse with a plain message when `browser` is false, and HQ's assign step
   routes browser work only to a kind that has it (one computer today, so this is a check,
   not a scheduler).
-- `[to-do]` D3.2.3 Backups carry the kind; the restore rule compares kinds, not only `arch`.
-- **Tests:** unit: capability gating in the browser tools; backup restore matrix (same kind,
-  other kind, unknown kind). QA: `GET /bot/v1/computer` names a kind.
+- `[done]` D3.2.3 Backups carry the kind; the restore rule compares kinds, not only `arch`.
+- **Tests:** unit `[done]` (`tests/kinds.test.ts`): kind from configuration, capability refusal, the brief line, the restore matrix. The kind is on the board (`GET /bot/v1/state`, `computer.kind` and each member's `computer.kind`) rather than a new route; checked live: the state route names it and the panel caption reads "Team computer · Vercel Sandbox".
 - **Done when:** the console names the computer's kind and what it can do.
 
 ### D3.3 Spike: a Mac as hands, shell and files only `[to-do]`
@@ -465,7 +464,7 @@ D1 and the backup generations.
 3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[in-progress]` (live run pending a model credential)
 4. D2.1 `[done]`, D2.2 `[done]`, D2.4 `[done]`
 5. D1.5 `[done]`, D1.6 `[done]`, D0.3 (after E4) `[to-do]`
-6. D3.1 `[done]`, D3.2 `[to-do]`
+6. D3.1 `[done]`, D3.2 `[done]`
 7. D4.1, D4.2 `[to-do]`
 8. D5.1, D5.2 `[to-do]`
 9. D3.3, D3.4, D5.3, D5.4, D2.3 `[to-do]`

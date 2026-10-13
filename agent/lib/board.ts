@@ -2,6 +2,7 @@ import { recentActivity } from "./activity";
 import { listBots } from "./bots";
 import { budgetStatus, type BudgetStatus } from "./budget";
 import { computerMode, vercelCredentialsError, type ComputerMode } from "./computer-config";
+import { currentKind, type HandsKind } from "./hands/kinds";
 import {
   handoverBelongsTo,
   liveControl,
@@ -65,6 +66,8 @@ export interface MemberComputer {
   readonly control: { readonly by: string; readonly until: string } | null;
   /** When the still frame of the screen was last refreshed. */
   readonly posterAt: string | null;
+  /** Where the computer runs, for people (see `hands/kinds.ts`). */
+  readonly kind: string;
   /** This Bot is waiting for a person to do one step in the browser; on HQ, whichever Bot is. */
   readonly handover: {
     readonly reason: string;
@@ -118,6 +121,8 @@ export interface Board {
   readonly activity: readonly ActivityEvent[];
   readonly computer: {
     readonly backend: ComputerMode;
+    /** Which kind of machine it is and what it can do (see `hands/kinds.ts`). */
+    readonly kind: HandsKind;
     /** Why the computer cannot start, or its most recent failure. */
     readonly error: string | null;
   };
@@ -152,6 +157,7 @@ function sharedComputer(
     browser: screen?.browser.state ?? "off",
     control: control === null ? null : { by: control.by, until: control.until },
     posterAt: screen?.posterAt ?? null,
+    kind: currentKind().label,
     handover:
       handover === null
         ? null
@@ -214,6 +220,7 @@ export async function buildBoard(
     activity: after === undefined ? recent : recent.filter((event) => event.at >= after),
     computer: {
       backend,
+      kind: currentKind(),
       error: (backend === "vercel" ? vercelCredentialsError() : null) ?? failure?.text ?? null,
     },
     usage: {

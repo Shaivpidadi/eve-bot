@@ -3,7 +3,7 @@ import type { ToolContext } from "eve/tools";
 import { record } from "./activity";
 import { COMPUTER_NAME, COMPUTER_PATHS } from "./computer";
 import { computerMode, localComputer } from "./computer-config";
-import { sandboxHands, type ComputerIo } from "./hands";
+import { currentKind, sandboxHands, type ComputerIo, type HandsKindName } from "./hands";
 import { sessionBinding } from "./computer/screens";
 import { operator } from "./session";
 import { deleteDoc, readBytes, readDoc, writeBytes, writeDoc } from "./store";
@@ -31,6 +31,8 @@ interface Manifest {
   readonly archiveKey: string;
   /** The CPU architecture the archive was taken on (`uname -m`). Older manifests lack it. */
   readonly arch?: string;
+  /** The kind of computer it was taken on (see `hands/kinds.ts`). Older manifests lack it. */
+  readonly kind?: HandsKindName;
 }
 
 /**
@@ -132,6 +134,11 @@ export async function forgetGeneration(io: Pick<ComputerIo, "run">): Promise<voi
   verifiedAt = 0;
 }
 
+/** A backup restores onto the kind of computer it was taken on; one from before kinds were recorded restores anywhere it is found. */
+export function restoresOnto(manifest: { readonly kind?: string }, kind: HandsKindName): boolean {
+  return manifest.kind === undefined || manifest.kind === kind;
+}
+
 /**
  * Restores the latest backup if this computer is a replacement. Best-effort:
  * a failed restore is reported in the feed and the job carries on.
@@ -180,6 +187,12 @@ async function restoreIfReplaced(ctx: ToolContext): Promise<void> {
       return;
     }
     const arch = await architecture(computer);
+    const kind = currentKind();
+    if (!restoresOnto(manifest, kind.name)) {
+      verifiedAt = Date.now();
+      await noteFailure(ctx, `Skipped restoring the computer: its backup from ${manifest.at} was taken on ${manifest.kind}, and this computer is ${kind.label}.`);
+      return;
+    }
     if (manifest.arch !== undefined && arch !== null && arch !== manifest.arch) {
       // Programs in the archive would not run here; start clean instead of half-broken.
       verifiedAt = Date.now();
@@ -253,6 +266,7 @@ async function checkpoint(ctx: ToolContext, minIntervalMs: number): Promise<void
       bytes: bytes.byteLength,
       archiveKey,
       ...(arch === null ? {} : { arch }),
+      kind: currentKind().name,
     };
     await writeDoc(MANIFEST_KEY, manifest);
     if (previous !== null && previous.archiveKey !== archiveKey) await deleteDoc(previous.archiveKey);

@@ -197,6 +197,7 @@ function ScreenPreview({
   // stills instead: that way two Bots working at once each show their own tab.
   const screen = useScreen(member);
   const working = usingScreen(member, members);
+  const kind = member.computer.kind ?? null;
 
   return (
     <>
@@ -218,10 +219,11 @@ function ScreenPreview({
           <i />
         </span>
       </button>
-      <div className="screen-caption">
+      <div className="screen-caption" title={kind === null ? undefined : `Runs on ${kind}`}>
         {member.computer.browser === "on" || member.computer.posterAt === null
           ? "Team computer"
           : `Team computer · asleep, last seen ${shortWhen(member.computer.posterAt)}`}
+        {kind === null ? null : <span className="screen-kind"> · {kind}</span>}
       </div>
     </>
   );

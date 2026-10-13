@@ -300,6 +300,7 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .steps-list li time { color: var(--faint); font-size: 10.5px; flex: none; font-variant-numeric: tabular-nums; }
 .steps-list li.bad .k { color: var(--bad); }
 .steps-list li.good .k { color: var(--ok); }
+.screen-kind { color: var(--faint); }
 .steps-list li.decision .k { color: var(--accent, var(--text)); }
 .steps-list li a { color: inherit; text-decoration: underline; text-decoration-color: var(--faint); }
 .steps-list li.resumed { color: var(--faint); font-size: 11px; justify-content: center; border-top: 1px dashed var(--line-2); margin-top: 4px; padding-top: 6px; }
