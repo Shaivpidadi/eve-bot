@@ -44,7 +44,7 @@ Two helpers every track needs, built first:
 | --- | --- | --- |
 | E. eve 0.78 upgrade (prerequisite, see backlog) | [to-do] | 0/7 |
 | D0. Stranded runs | [in-progress] | 2/3 |
-| D1. The job record as the session log | [in-progress] | 5/6 |
+| D1. The job record as the session log | [done] | 6/6 |
 | D2. A workspace that follows its owner | [in-progress] | 3/4 |
 | D3. Thin hands | [in-progress] | 2/4 |
 | D4. One Workflow world | [done] | 2/2 |
@@ -92,6 +92,9 @@ when the Workflow world is local.
   re-dispatched within 90 seconds with a `job.stranded` feed line.
 - **Eval:** time from rebuild to re-dispatch, measured by the QA check, recorded here.
   Target: under 2 minutes locally (was: up to 20 minutes plus a day).
+- **Eval result (Docker, 13 Oct 2026):** `qa/checks/stranded.mjs` passed in 154 s; the next run
+  started 9.6 s after the sweep found the stranded lease. The sweep itself runs a minute after
+  a server starts, so a real rebuild re-dispatches in about 70 s.
 - **Done when:** a rebuild mid-job re-runs the job within two minutes and says so.
 
 ### D0.3 Stranded conversations `[to-do]`
@@ -108,7 +111,7 @@ Depends on E4 (eve 0.76's `409 session_stranded` and `ctx.session.predecessor`).
   through the QA route, asks a follow-up that needs the earlier answer, and expects it answered.
 - **Done when:** a recovered thread answers a follow-up that needs what was said before.
 
-## D1. The job record as the session log `[in-progress]`
+## D1. The job record as the session log `[done]`
 
 A fresh run starts from the brief. After this track it starts from where the
 last run got to. The journal is the portable half of Anthropic's session
@@ -171,7 +174,7 @@ facts a run produced, written into the job record under the fence.
   that URL first (stub model scripted to follow instructions, asserting the tool order).
 - **Done when:** a re-run's brief carries the diary and the Bot's first action continues it.
 
-### D1.4 Prove it: crash and continue `[in-progress]`
+### D1.4 Prove it: crash and continue `[done]`
 
 - **Files:** `agent/channels/ops.ts` (the `BOT_QA=1` crash route), `qa/checks/resume.mjs`,
   `qa/lib/wait.mjs`.
@@ -188,9 +191,22 @@ facts a run produced, written into the job record under the fence.
   from before, divided by entries before the crash. Computed by `npm run metrics -- --resume`
   (new flag reading `resumedFrom`). Record before (no journal: ratio 1.0 by definition) and
   after. Target: under 0.2 on the QA job, under 0.4 on a real research job.
-- `[to-do]` D1.4.4 Run both checks live with `QA_JOBS=1` on Vercel Sandbox and on Docker, and record the ratio here. Blocked locally: the only model credential in `.env.local` is a Vercel OIDC token that expired in September (`npx vercel env pull` refreshes it).
-- **Eval results:** `npm run metrics -- --resume` `[done]`; numbers `[to-do]`.
-- **Done when:** the QA check passes on Vercel Sandbox and on Docker, and the ratio is recorded.
+- `[done]` D1.4.4 (Docker) Run both checks live with `QA_JOBS=1`, and record the ratio here. Ran 13 Oct 2026 on a scratch store and a separate local computer (`BOT_COMPUTER=local`, `BOT_COMPUTER_NAME=bot-qa`) with the Gateway key in `.env`; an earlier note here said no model credential was available, which was wrong. Vercel Sandbox `[to-do]`: the Vercel OIDC token in `.env.local` expired in September (`npx vercel env pull` refreshes it).
+- **Eval results (Docker, 13 Oct 2026):**
+
+  | Check | Result | Next run started after the crash | Resumed from | File after the job |
+  | --- | --- | --- | --- | --- |
+  | resume, re-run by HQ | passed, 164 s | 5.3 s | step 2 of 5 | `first`, `second` |
+  | resume, picked up by the sweep | passed, 161 s | 4.0 s | step 2 of 5 | `first`, `second` |
+
+  `npm run metrics -- --resume`: 2 resumed runs, mean redo ratio 0.00. The ratio only sees
+  pages and files the journal recorded, and these runs wrote their file through the shell,
+  so the file's contents are the stronger evidence that nothing was redone.
+- **Finding:** the first live run showed Bots write files through the shell as often as
+  through `write_file`, so the journal sees those files only through the Bot's own progress
+  note. The check now waits for that note and judges redo by the file itself. Journaling
+  shell writes would need parsing commands; left as is.
+- **Done when:** the QA check passes on Vercel Sandbox and on Docker, and the ratio is recorded. Docker done; Vercel Sandbox waits on a fresh OIDC token.
 
 ### D1.5 A note to self `[done]`
 
@@ -461,7 +477,7 @@ D1 and the backup generations.
 
 1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[done]` (`agent/lib/qa.ts`, routes in `ops.ts`, `tests/qa.test.ts`)
 2. D0.1 `[done]`, D0.2 `[done]` (QA check written, not yet run live: needs a model and `BOT_QA=1`)
-3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[in-progress]` (live run pending a model credential)
+3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[done]` (Docker; Vercel Sandbox pending a fresh OIDC token)
 4. D2.1 `[done]`, D2.2 `[done]`, D2.4 `[done]`
 5. D1.5 `[done]`, D1.6 `[done]`, D0.3 (after E4) `[to-do]`
 6. D3.1 `[done]`, D3.2 `[done]`
