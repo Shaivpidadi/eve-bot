@@ -44,7 +44,7 @@ Two helpers every track needs, built first:
 | --- | --- | --- |
 | E. eve 0.78 upgrade (prerequisite, see backlog) | [to-do] | 0/7 |
 | D0. Stranded runs | [in-progress] | 2/3 |
-| D1. The job record as the session log | [to-do] | 0/6 |
+| D1. The job record as the session log | [in-progress] | 2/6 |
 | D2. A workspace that follows its owner | [to-do] | 0/4 |
 | D3. Thin hands | [to-do] | 0/4 |
 | D4. One Workflow world | [to-do] | 0/2 |
@@ -108,46 +108,46 @@ Depends on E4 (eve 0.76's `409 session_stranded` and `ctx.session.predecessor`).
   through the QA route, asks a follow-up that needs the earlier answer, and expects it answered.
 - **Done when:** a recovered thread answers a follow-up that needs what was said before.
 
-## D1. The job record as the session log `[to-do]`
+## D1. The job record as the session log `[in-progress]`
 
 A fresh run starts from the brief. After this track it starts from where the
 last run got to. The journal is the portable half of Anthropic's session
 log: not the model's messages (those stay in eve's Workflow journal) but the
 facts a run produced, written into the job record under the fence.
 
-### D1.1 The journal `[to-do]`
+### D1.1 The journal `[done]`
 
 - **Files:** `agent/lib/types.ts` (`JournalEntry`, `Job.journal`), `agent/lib/jobs.ts`
   (`appendJournal`), `agent/lib/journal.ts` (new: shapes, cap, rendering helpers),
   `tests/journal.test.ts`.
-- `[to-do]` D1.1.1 Shape: `{ at, runToken, kind, text, data? }` with kinds `progress`,
+- `[done]` D1.1.1 Shape: `{ at, runToken, kind, text, data? }` with kinds `progress`,
   `decision`, `page` (`url`, `title`, `targetId`), `file` (`path`, `bytes`), `artifact`
   (`id`, `name`), `asked` (`requestId`, `reason`, `answer?`), `handover` (`note`), `error`
   (`tool`, `message`). `text` is one line for a person; `data` is for the next run.
-- `[to-do]` D1.1.2 `appendJournal(workspaceId, jobId, sessionId, entry)` through
+- `[done]` D1.1.2 `appendJournal(workspaceId, jobId, sessionId, entry)` through
   `patchJobAsRun`, so a superseded run writes nothing and a replayed write is a no-op
   (same `runToken` + `at` + `kind` + `text` already present returns `null`).
-- `[to-do]` D1.1.3 Cap: keep the first 20 entries and the last 180; the drop writes one
+- `[done]` D1.1.3 Cap: keep the first 20 entries and the last 180; the drop writes one
   `progress` entry "N earlier steps folded" so the gap is visible. Unit tests: append, dedupe
   on replay, cap keeps head and tail, fenced run refused.
-- `[to-do]` D1.1.4 Migration: older jobs have no `journal`; readers treat `undefined` as `[]`.
+- `[done]` D1.1.4 Migration: older jobs have no `journal`; readers treat `undefined` as `[]`.
   Unit test on `getJob` of an old record.
 - **Done when:** a job's record shows the path a run took, in order, with no duplicates
   after a replay.
 
-### D1.2 The tools write it `[to-do]`
+### D1.2 The tools write it `[done]`
 
 - **Files:** `agent/subagents/teammate/tools/log_progress.ts`, `write_file.ts`,
   `save_artifact.ts`, `request_takeover.ts`, `page_*.ts` through `lib/browser.ts`
   (`refreshScreen` and the navigation path), `finish_job.ts`.
-- `[to-do]` D1.2.1 `log_progress` writes `progress` (keeps the feed record too).
-- `[to-do]` D1.2.2 The browser layer writes `page` once per navigation (new URL for the run's
+- `[done]` D1.2.1 `log_progress` writes `progress` (keeps the feed record too).
+- `[done]` D1.2.2 The browser layer writes `page` once per navigation (new URL for the run's
   tab), not per action. Unit test with a fake `browser()` that returns the same URL twice.
-- `[to-do]` D1.2.3 `write_file` writes `file` for paths under `/workspace/bots` and
+- `[done]` D1.2.3 `write_file` writes `file` for paths under `/workspace/bots` and
   `/workspace/shared`; scratch under `/workspace/sessions` is skipped.
-- `[to-do]` D1.2.4 `save_artifact` writes `artifact`; `request_takeover` writes `asked` and,
+- `[done]` D1.2.4 `save_artifact` writes `artifact`; `request_takeover` writes `asked` and,
   when the person hands back, `handover` with the note.
-- `[to-do]` D1.2.5 Tool failures the teammate sees (a browser action refused, a command that
+- `[done]` D1.2.5 Tool failures the teammate sees (a browser action refused, a command that
   exits non-zero) write `error`, capped at 20 per run so a loop cannot flood the record.
 - **Tests:** unit per tool with the journal fake; turn test that one real teammate turn with
   a stubbed browser leaves `page` then `progress` in order.
@@ -453,7 +453,7 @@ D1 and the backup generations.
 
 1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[done]` (`agent/lib/qa.ts`, routes in `ops.ts`, `tests/qa.test.ts`)
 2. D0.1 `[done]`, D0.2 `[done]` (QA check written, not yet run live: needs a model and `BOT_QA=1`)
-3. D1.1, D1.2, D1.3, D1.4 `[to-do]`
+3. D1.1 `[done]`, D1.2 `[done]`, D1.3, D1.4 `[to-do]`
 4. D2.1, D2.2, D2.4 `[to-do]`
 5. D1.5, D1.6, D0.3 (after E4) `[to-do]`
 6. D3.1, D3.2 `[to-do]`

@@ -26,6 +26,7 @@ import {
 } from "../../../lib/computer/screens";
 import { posterKey, saveScreen } from "../../../lib/screens";
 import { operator } from "../../../lib/session";
+import { journal } from "./journal";
 import { sessionState } from "./session-state";
 
 /**
@@ -240,7 +241,19 @@ async function readyScreen(ctx: ToolContext, n: number, recorded: ServiceState):
  * An action that cannot be watched is not run (`unwatched`), and a guarded
  * action is not retried here: a retry might land on another tab.
  */
+/** Browser commands whose failure is routine (a wait that timed out, a read of nothing) and not worth a journal line. */
+const QUIET_FAILURES = new Set(["wait", "get", "eval", "snapshot", "screenshot", "focus"]);
+
 export async function browser(ctx: ToolContext, args: readonly string[], options: { readonly guard?: boolean } = {}): Promise<BrowserResult> {
+  const result = await browserCommand(ctx, args, options);
+  if (!result.ok && !QUIET_FAILURES.has(args[0] ?? "")) {
+    const why = (result.error ?? result.output).replace(/\s+/g, " ").trim().slice(0, 160);
+    await journal(ctx, { kind: "error", text: `${args[0] ?? "browser"} failed: ${why}`, data: { tool: `browser ${args[0] ?? ""}`.trim() } });
+  }
+  return result;
+}
+
+async function browserCommand(ctx: ToolContext, args: readonly string[], options: { readonly guard?: boolean } = {}): Promise<BrowserResult> {
   if (FORBIDDEN.has(args[0] ?? "")) {
     return failure(new Error(`"${args[0]}" is not available: the browser stays open so the team can see and use it.`));
   }

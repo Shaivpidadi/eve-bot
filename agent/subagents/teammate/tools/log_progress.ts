@@ -5,6 +5,7 @@ import { record } from "../../../lib/activity";
 import { checkpointComputer } from "../../../lib/computer-backup";
 import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
+import { journal } from "../lib/journal";
 
 export default defineTool({
   description:
@@ -33,6 +34,7 @@ export default defineTool({
       text: note,
       ...(detail ? { data: detail } : {}),
     });
+    await journal(ctx, { kind: "progress", text: note, ...(detail ? { data: detail } : {}) }, jobId);
     // Throttled inside: most progress notes do not trigger a backup.
     await checkpointComputer(ctx);
     return { logged: true as const };

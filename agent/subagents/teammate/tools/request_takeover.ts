@@ -7,6 +7,7 @@ import { finishHandover, liveControl, sessionBinding, setControl, teamScreen } f
 import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
 import { browser } from "../lib/browser";
+import { forgetPage, journal } from "../lib/journal";
 import { forgetLook } from "../lib/page";
 
 /**
@@ -37,6 +38,7 @@ export default defineTool({
     }
     const screen = await teamScreen(who.workspaceId);
     const n = screen?.n ?? binding.n;
+    await journal(ctx, { kind: "asked", text: `Asked a person to take over: ${reason.slice(0, 200)}`, data: { reason: reason.slice(0, 400) } });
     // Returning control releases it; a lock left behind must not stall the Bot.
     if (screen !== null && liveControl(screen) !== null) await setControl(n, null);
     const personSaid = await finishHandover(n);
@@ -51,8 +53,14 @@ export default defineTool({
     // signed in to is kept either way; only the bot's carrying on is refused.
     const run = await guardSideEffect(ctx);
     if (!run.ok) return { handedBack: true as const, reason, personSaid, page: null, note: run.message };
+    await journal(ctx, {
+      kind: "handover",
+      text: personSaid ? `A person handed the browser back and said: ${personSaid.slice(0, 200)}` : "A person handed the browser back.",
+      data: { note: personSaid ?? null },
+    });
     // A person may have gone anywhere in the browser while they had control.
     forgetLook(ctx);
+    forgetPage(ctx);
     const page = await browser(ctx, ["snapshot", "-i"]);
     return {
       handedBack: true as const,

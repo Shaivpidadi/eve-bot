@@ -5,6 +5,7 @@ import { record } from "../../../lib/activity";
 import { MAX_ARTIFACT_BYTES, saveArtifact } from "../../../lib/artifacts";
 import { attachArtifact, describeRunRefusal } from "../../../lib/jobs";
 import { guardSideEffect } from "../../../lib/run-guard";
+import { journal } from "../lib/journal";
 import { operator } from "../../../lib/session";
 
 const MEDIA_TYPES: Record<string, string> = {
@@ -59,6 +60,9 @@ export default defineTool({
     });
 
     const attached = await attachArtifact(who.workspaceId, jobId, artifact, ctx.session.id);
+    if (attached.ok) {
+      await journal(ctx, { kind: "artifact", text: `Saved ${fileName}`, data: { id: artifact.id, name: fileName, path } }, jobId);
+    }
     if (!attached.ok) {
       // Superseded mid-copy: the stored file is attached to nothing, and the job is left as the new run has it.
       return { saved: false as const, reason: attached.reason, message: describeRunRefusal(attached.reason, jobId) };

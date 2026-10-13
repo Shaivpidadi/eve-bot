@@ -5,6 +5,7 @@ import { record } from "../../../lib/activity";
 import { checkpointComputer } from "../../../lib/computer-backup";
 import { describeRunRefusal, patchJobAsRun } from "../../../lib/jobs";
 import { operator } from "../../../lib/session";
+import { journal } from "../lib/journal";
 import { looseBoolean } from "../../../lib/tool-input";
 import type { JobResult } from "../../../lib/types";
 
@@ -62,6 +63,7 @@ export default defineTool({
     }
     const job = written.job;
     const result = job.result ?? draft;
+    await journal(ctx, { kind: "progress", text: `Recorded the result (${input.verified ? "verified" : "unverified"}): ${input.summary.slice(0, 200)}` }, input.jobId);
 
     await record({
       workspaceId: who.workspaceId,
