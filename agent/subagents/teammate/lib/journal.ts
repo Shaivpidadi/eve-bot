@@ -1,6 +1,9 @@
 import type { ToolContext } from "eve/tools";
 
 import { sessionBinding } from "../../../lib/computer/screens";
+import { getBot } from "../../../lib/bots";
+import { takeGeneration } from "../../../lib/generations";
+import { toolHands } from "../../../lib/hands";
 import { appendJournal } from "../../../lib/jobs";
 import type { NewEntry } from "../../../lib/journal";
 import { operator } from "../../../lib/session";
@@ -18,9 +21,37 @@ export async function journal(ctx: ToolContext, entry: NewEntry, jobId?: string)
     const { workspaceId } = operator(ctx);
     const target = jobId ?? (await sessionBinding(workspaceId, ctx.session.id))?.jobId;
     if (target === undefined || target === null) return;
-    await appendJournal(workspaceId, target, ctx.session.id, entry);
+    const written = await appendJournal(workspaceId, target, ctx.session.id, entry);
+    // A decision is a point worth going back to.
+    if (written.ok && entry.kind === "decision") await markPoint(ctx, written.job.id, "decision");
   } catch {
     // A diary line is never worth failing the work for.
+  }
+}
+
+/**
+ * Saves what the job owns as it is now, at the journal's current length, so a
+ * person can rewind the job to this point (see `lib/generations.ts`). Bounded
+ * and best-effort: a point that cannot be saved is a point that cannot be
+ * rewound to, never a failed step.
+ */
+export async function markPoint(ctx: ToolContext, jobId?: string, reason = "point"): Promise<void> {
+  try {
+    const { workspaceId } = operator(ctx);
+    const target = jobId ?? (await sessionBinding(workspaceId, ctx.session.id))?.jobId;
+    if (target === undefined || target === null) return;
+    const { getJob } = await import("../../../lib/jobs");
+    const job = await getJob(workspaceId, target);
+    if (job === null || job.lease?.session !== ctx.session.id) return;
+    const bot = await getBot(workspaceId, job.botId);
+    if (bot === null) return;
+    const hands = await toolHands(ctx);
+    await Promise.race([
+      takeGeneration(hands, { workspaceId, job, botName: bot.name, index: (job.journal ?? []).length, reason }),
+      new Promise((resolve) => setTimeout(resolve, 60_000)),
+    ]);
+  } catch (error) {
+    console.warn(`[bot] could not save a rewind point: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

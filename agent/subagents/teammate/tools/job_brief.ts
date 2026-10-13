@@ -7,6 +7,7 @@ import { getBot } from "../../../lib/bots";
 import { bindRun, describeRunRefusal } from "../../../lib/jobs";
 import { operator } from "../../../lib/session";
 import { bindScreen } from "../lib/browser";
+import { markPoint } from "../lib/journal";
 
 export default defineTool({
   description:
@@ -38,6 +39,8 @@ export default defineTool({
     const job = bound.job;
     // Every browser action this run takes happens on the Bot's own screen.
     await bindScreen(ctx, job.botId, jobId);
+    // Where this run begins is a point the job can be rewound to.
+    await markPoint(ctx, jobId, (job.journal ?? []).length === 0 ? "start" : "resume");
     const [bot, timeline] = await Promise.all([
       getBot(who.workspaceId, job.botId),
       recentActivity(who.workspaceId, { jobId, limit: 30 }),

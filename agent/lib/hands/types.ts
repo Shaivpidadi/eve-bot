@@ -28,6 +28,10 @@ export interface Hands {
     read(path: string): Promise<{ path: string; bytes: Uint8Array }>;
     write(path: string, bytes: Uint8Array): Promise<{ path: string }>;
     remove(path: string): Promise<{ path: string }>;
+    /** A gzipped archive of these workspace paths as they are now, or null when none exist. */
+    archive(paths: readonly string[]): Promise<Uint8Array | null>;
+    /** Puts these paths back as `archive` holds them, removing what it does not hold. */
+    restore(paths: readonly string[], archive: Uint8Array | null): Promise<void>;
   };
 
   readonly screen: {

@@ -1,5 +1,7 @@
 import {
   activateTab,
+  archivePaths,
+  restorePaths,
   captureScreen,
   closeTab,
   computerStatus,
@@ -40,6 +42,8 @@ export function linuxHands(io: ComputerIo): Hands {
       read: (path) => readWorkspaceFile(io, path),
       write: (path, bytes) => writeWorkspaceFile(io, path, bytes),
       remove: (path) => removeWorkspacePath(io, path),
+      archive: (paths) => archivePaths(io, paths),
+      restore: (paths, archive) => restorePaths(io, paths, archive),
     },
     screen: {
       ensure: (n, options) => ensureScreen(io, n, options),

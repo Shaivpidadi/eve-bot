@@ -48,7 +48,7 @@ Two helpers every track needs, built first:
 | D2. A workspace that follows its owner | [in-progress] | 3/4 |
 | D3. Thin hands | [in-progress] | 2/4 |
 | D4. One Workflow world | [done] | 2/2 |
-| D5. Rewind | [to-do] | 0/4 |
+| D5. Rewind | [in-progress] | 1/4 |
 
 ## D0. Stranded runs `[in-progress]`
 
@@ -402,26 +402,26 @@ Vercel, so this is a spike with a written answer, not a feature.
   Postgres for standalone, or wait for eve. If adopted, the setup script gains the option.
 - **Done when:** the decision is written and linked.
 
-## D5. Rewind `[to-do]`
+## D5. Rewind `[in-progress]`
 
 Beyond "continue from the last recorded step" (D1): a point in the job's
 journal a person can choose, with the computer's files put back as they
 were at that point, and a new run briefed with the journal up to it. Needs
 D1 and the backup generations.
 
-### D5.1 Generations tied to journal entries `[to-do]`
+### D5.1 Generations tied to journal entries `[done]`
 
 - **Files:** `agent/lib/computer-backup.ts` (`checkpointComputer({ reason, journalIndex })`,
   generation list `computer/<name>/generations.json`), `agent/lib/journal.ts` (entry gets
   `generation?`), `agent/lib/computer/snapshot.ts` (new).
-- `[to-do]` D5.1.1 On Vercel Sandbox use the SDK's snapshot (`@vercel/sandbox` exports
+- `[done]` D5.1.1 (changed: a whole-machine snapshot would rewind every Bot's files on the shared computer, so a generation archives only what the job owns, its Bot's folder and the files its journal lists, with the same path archive on every kind; `hands.files.archive`/`restore`. Taken when a run starts, at each decision, and before an email; connector changes and approved clicks not yet) On Vercel Sandbox use the SDK's snapshot (`@vercel/sandbox` exports
   `Snapshot`): a snapshot per `decision` entry and before each outward action
   (`send_email`, a connector change, a gated browser click once approved). On Docker and
   microsandbox, a tar archive as today. Both named by job id and journal index.
-- `[to-do]` D5.1.2 Retention: keep the last 10 generations per job and every generation
+- `[done]` D5.1.2 (the first and the latest nine per job) Retention: keep the last 10 generations per job and every generation
   the journal still references; a job's close prunes to the final one. Size and count on
   the Usage sheet's budget card (`BOT_BACKUP_MAX_MB` already caps one archive).
-- `[to-do]` D5.1.3 Taking a generation must not block the Bot for long: snapshots are async
+- `[done]` D5.1.3 (60-second cap, best-effort, never fails the step) Taking a generation must not block the Bot for long: snapshots are async
   on Vercel; the tar path runs with a 60-second cap and skips with a journal `error` when
   it cannot.
 - **Tests:** unit: generation naming, retention pruning, journal reference. Live: a job on
@@ -482,7 +482,7 @@ D1 and the backup generations.
 5. D1.5 `[done]`, D1.6 `[done]`, D0.3 (after E4) `[to-do]`
 6. D3.1 `[done]`, D3.2 `[done]`
 7. D4.1 `[done]`, D4.2 `[done]`
-8. D5.1, D5.2 `[to-do]`
+8. D5.1 `[done]`, D5.2 `[to-do]`
 9. D3.3, D3.4, D5.3, D5.4, D2.3 `[to-do]`
 
 Update the status board at the top with each commit.
