@@ -38,10 +38,17 @@ export default defineTool({
       .max(10)
       .optional()
       .describe("Checkable statements that define done."),
+    startInMinutes: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(525_600)
+      .optional()
+      .describe('For "in 10 minutes", "in an hour": start this many minutes from now. Prefer it to runAt for anything relative; the server knows the time and you may not.'),
     runAt: z
       .string()
       .optional()
-      .describe("ISO 8601 timestamp with offset for the first run. Defaults to now."),
+      .describe("ISO 8601 timestamp with offset for the first run, for a fixed date and time. Defaults to now. For relative times use startInMinutes."),
     // Coerced: some models send numbers as strings ("60"), and a rejected call
     // tends to be retried without the field, silently dropping the schedule.
     everyMinutes: z.coerce
@@ -149,7 +156,13 @@ export default defineTool({
         : recipe !== null && recipe.successCriteria.length > 0
           ? { successCriteria: [...recipe.successCriteria] }
           : {}),
-      ...(input.runAt ? { runAt: input.runAt } : schedule === null ? {} : { runAt: nextRun(schedule, new Date()).toISOString() }),
+      ...(input.runAt
+        ? { runAt: input.runAt }
+        : input.startInMinutes !== undefined
+          ? { runAt: new Date(Date.now() + input.startInMinutes * 60_000).toISOString() }
+          : schedule === null
+            ? {}
+            : { runAt: nextRun(schedule, new Date()).toISOString() }),
       ...(input.everyMinutes !== undefined ? { everyMinutes: input.everyMinutes } : {}),
       ...(schedule === null ? {} : { schedule }),
       ...(input.requiresSignoff !== undefined ? { requiresSignoff: input.requiresSignoff } : {}),
@@ -183,8 +196,8 @@ export default defineTool({
       },
       nextStep:
         job.status === "queued"
-          ? `Call run_job with jobId ${job.id} to start it now.`
-          : `Scheduled. The dispatcher will start it at ${job.runAt}.`,
+          ? `Call run_job with jobId ${job.id} now, in this turn, to start it.`
+          : `Call run_job with jobId ${job.id} now, in this turn, even though it starts later: nothing runs it otherwise. It answers at once and waits for ${job.runAt} without holding this conversation; this thread is told when it is due.`,
     };
   },
 });
