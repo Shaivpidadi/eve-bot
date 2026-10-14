@@ -4,22 +4,33 @@ import type { InputRequest, InputResolution } from "eve/client";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
+  BrainIcon,
   CheckIcon,
+  CircleAlertIcon,
   CircleCheckIcon,
   CircleXIcon,
+  ClockIcon,
+  DotIcon,
   FilePenIcon,
+  FolderIcon,
   GitBranchIcon,
   GlobeIcon,
   HandIcon,
   HistoryIcon,
   type LucideIcon,
+  MailIcon,
   MessageCircleQuestionIcon,
+  MonitorIcon,
   PaperclipIcon,
+  PlugIcon,
   RotateCcwIcon,
   TriangleAlertIcon,
+  UserIcon,
+  XIcon,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   Trace,
   TraceCollapsible,
@@ -35,12 +46,11 @@ import { AskCard } from "./ask-card";
 import { Avatar } from "./avatar";
 import { clock, dividerWhen, needsDivider } from "./format";
 import { api } from "./api";
-import { Icon } from "./icons";
 import type { Busy } from "./chat";
 import { LiveAvatar } from "./live-avatar";
 import { MentionText, useTeam } from "./mentions";
 import { Prose } from "./prose";
-import type { RoomSnapshot, RoomStore, StepsItem, TimelineItem } from "./room-store";
+import type { NoticeIcon, RoomSnapshot, RoomStore, StepsItem, TimelineItem } from "./room-store";
 import { suggestionsFor } from "./suggestions";
 import type { Member } from "./types";
 
@@ -59,6 +69,29 @@ const STEP_WORDS: Readonly<Record<string, string>> = {
   "job.rewound": "Rewound",
   "job.learned": "Learned",
 };
+
+/** Each notice's glyph, in lucide. */
+const NOTICE_ICONS: Readonly<Record<NoticeIcon, LucideIcon>> = {
+  alert: CircleAlertIcon,
+  brain: BrainIcon,
+  check: CircleCheckIcon,
+  clock: ClockIcon,
+  dot: DotIcon,
+  folder: FolderIcon,
+  mail: MailIcon,
+  monitor: MonitorIcon,
+  person: UserIcon,
+  plug: PlugIcon,
+  x: XIcon,
+};
+
+/** A chat bubble; who it belongs to adds its side and colour. */
+const BUBBLE =
+  "msg my-0.5 max-w-[min(72vw,560px)] rounded-[18px] px-[13px] py-[9px] text-[13.5px] leading-normal wrap-anywhere max-[760px]:max-w-[86%]";
+/** Your side of a thread wears the colour of the one you are talking to. */
+const YOURS = "bg-(--you) text-white whitespace-pre-wrap [&_a]:text-white";
+/** A rich reply (a table or code) may take the whole column. */
+const THEIRS = "bg-bubble has-[table]:max-w-full has-[pre]:max-w-full";
 
 /** How close to the bottom still counts as following the conversation. */
 const PINNED_PX = 90;
@@ -163,7 +196,7 @@ export function Transcript({
     for (const item of timeline) {
       if (needsDivider(lastAt, item.at)) {
         rows.push(
-          <div key={`divider:${item.key}`} className="divider">
+          <div key={`divider:${item.key}`} className="mt-3.5 mb-2.5 text-center text-[11px] text-faint tabular-nums">
             {dividerWhen(item.at)}
           </div>,
         );
@@ -173,9 +206,9 @@ export function Transcript({
       switch (item.kind) {
         case "you":
           rows.push(
-            <div key={item.key} className="msg-wrap you">
-              <div className="msg you">
-                <MentionText text={item.text} />
+            <div key={item.key} className="group/msg flex max-w-full origin-bottom-right flex-row-reverse items-center gap-1 self-end">
+              <div className={cn(BUBBLE, YOURS)}>
+                <MentionText text={item.text} onColor />
               </div>
               <RememberButton text={item.text} />
             </div>,
@@ -183,8 +216,8 @@ export function Transcript({
           break;
         case "bot":
           rows.push(
-            <div key={item.key} className="msg-wrap bot">
-              <div className="msg bot">
+            <div key={item.key} className="group/msg flex max-w-full origin-bottom-left items-center gap-1 self-start">
+              <div className={cn(BUBBLE, THEIRS)}>
                 <Prose text={item.text} />
               </div>
               <RememberButton text={item.text} />
@@ -194,35 +227,53 @@ export function Transcript({
         case "peer": {
           const sender = team.find((entry) => entry.name.toLowerCase() === item.from.toLowerCase());
           rows.push(
-            <div key={item.key} className="msg-wrap peer">
+            <div key={item.key} className="flex max-w-full origin-bottom-left items-end gap-1.5 self-start">
               {sender === undefined ? null : <Avatar member={sender} size={24} />}
-              <div className="msg bot peer">
-                <span className="peer-name">{item.from}</span>
+              <div className={cn(BUBBLE, THEIRS, "rounded-tl-md")}>
+                <span className="mb-0.5 block text-[11.5px] font-semibold text-muted-foreground">{item.from}</span>
                 <Prose text={item.text} />
               </div>
             </div>,
           );
           break;
         }
-        case "notice":
+        case "notice": {
+          const face = faceFor(item.face);
+          const Glyph = NOTICE_ICONS[item.icon];
+          const error = item.tone === "error";
           rows.push(
-            <div key={item.key} className={item.tone === "error" ? "notice error" : "notice"}>
-              {faceFor(item.face) === undefined ? <Icon name={item.icon} size={13} /> : <Avatar member={faceFor(item.face)!} size={16} />}
+            <div
+              key={item.key}
+              className={cn(
+                "my-2.5 flex flex-wrap items-center justify-center gap-1.5 self-center text-center text-[11.5px] text-faint",
+                error && "text-destructive",
+              )}
+            >
+              {face === undefined ? (
+                <Glyph className={cn("size-[13px] flex-none", error ? "text-destructive" : "text-muted-foreground")} />
+              ) : (
+                <Avatar member={face} size={16} />
+              )}
               <span>{item.label}</span>
-              {item.detail ? <b>{item.detail}</b> : null}
+              {item.detail ? <b className={cn("font-medium", error ? "text-destructive" : "text-muted-foreground")}>{item.detail}</b> : null}
               {item.action === "start-over" ? (
-                <button type="button" className="btn" onClick={() => void store.startOver()}>
-                  Start over
-                </button>
+                <span className="mt-1 flex basis-full justify-center">
+                  <Button variant="secondary" size="xs" onClick={() => void store.startOver()}>
+                    Start over
+                  </Button>
+                </span>
               ) : null}
               {item.action === "open-connectors" ? (
-                <button type="button" className="btn primary" onClick={() => window.location.assign("/bot#connectors")}>
-                  Open connectors
-                </button>
+                <span className="mt-1 flex basis-full justify-center">
+                  <Button size="xs" onClick={() => window.location.assign("/bot#connectors")}>
+                    Open connectors
+                  </Button>
+                </span>
               ) : null}
             </div>,
           );
           break;
+        }
         case "ask": {
           const request = room.asks.get(item.requestId);
           if (request === undefined) break;
@@ -257,23 +308,23 @@ export function Transcript({
 
     room.drafts.forEach((draft, index) => {
       rows.push(
-        <div key={`draft:${index}`} className="msg bot">
+        <div key={`draft:${index}`} className={cn(BUBBLE, THEIRS, "self-start")}>
           <Prose text={draft} />
         </div>,
       );
     });
     room.optimistic.forEach((message, index) => {
       rows.push(
-        <div key={`sending:${index}`} className="msg you sending">
+        <div key={`sending:${index}`} className={cn(BUBBLE, YOURS, "self-end opacity-60")}>
           {message}
         </div>,
       );
     });
     if (room.live && room.drafts.length === 0) {
       rows.push(
-        <div key="working" className="working">
+        <div key="working" className="mx-0.5 my-2 flex max-w-full items-center gap-2 self-start text-xs text-muted-foreground">
           <Avatar member={member} size={16} presence="thinking" />
-          <span className="shine">{room.liveLabel ?? "Thinking"}</span>
+          <span className="truncate shimmer">{room.liveLabel ?? "Thinking"}</span>
         </div>,
       );
     }
@@ -281,15 +332,15 @@ export function Transcript({
     busy.forEach(({ bot, job }, index) => {
       const own = bot.id === member.id;
       rows.push(
-        <Trace key={`busy:${bot.id}:${job.id}`} className="work-trace">
-          <TraceLine status="running">
-            <TraceIcon className="work-trace-face">
+        <Trace key={`busy:${bot.id}:${job.id}`} className="work-trace my-2 max-w-[min(100%,560px)] gap-0.5 self-start text-[13px]">
+          <TraceLine status="running" className="text-foreground">
+            <TraceIcon className="size-6">
               <LiveAvatar member={bot} size={24} alive={index === 0} />
             </TraceIcon>
             <TraceTitle>{own ? `Working on ${job.title}` : `${bot.name} is working on ${job.title}`}</TraceTitle>
           </TraceLine>
           {bot.action === null ? null : (
-            <TraceLine className="work-trace-step">
+            <TraceLine className="pl-8 text-xs text-muted-foreground">
               <TraceTitle>{bot.action}</TraceTitle>
             </TraceLine>
           )}
@@ -301,7 +352,7 @@ export function Transcript({
 
   return (
     <div
-      className="scroll"
+      className="min-h-0 flex-1 overflow-y-auto"
       ref={scroller}
       onScroll={() => {
         const element = scroller.current;
@@ -310,7 +361,10 @@ export function Transcript({
         }
       }}
     >
-      <div className="transcript" aria-live="polite">
+      <div
+        className="transcript mx-auto flex max-w-[760px] flex-col px-5 pt-[60px] pb-3 motion-safe:*:data-arrived:animate-arrive max-[760px]:px-3.5 max-[760px]:pt-3.5 max-[760px]:pb-2.5"
+        aria-live="polite"
+      >
         {body}
       </div>
     </div>
@@ -459,14 +513,14 @@ function StepsBlock({
   const span = took(first.at, closed ? latest.at : new Date().toISOString());
 
   return (
-    <Trace className="job-trace">
+    <Trace className="job-trace my-2 self-stretch text-[12.5px]">
       <TraceCollapsible open={open} onOpenChange={onToggle}>
         <TraceCollapsibleTrigger>
           <TraceLine {...(closed ? (failed ? { status: "error" as const } : {}) : { status: "running" as const })}>
             <TraceIcon>
               <Avatar member={member} size={16} presence={latest.kind === "job.done" ? "done" : member.presence} />
             </TraceIcon>
-            <TraceTitle>{title}</TraceTitle>
+            <TraceTitle className="text-foreground">{title}</TraceTitle>
             <TraceDescription>
               {count} {count === 1 ? "step" : "steps"} · {closed ? (failed ? `failed after ${span}` : `took ${span}`) : `${span} so far`}
             </TraceDescription>
@@ -531,8 +585,8 @@ function JournalRow({
   const word = JOURNAL_WORDS[line.kind];
   const url = line.kind === "page" && typeof line.data?.url === "string" && /^https?:\/\//.test(line.data.url) ? line.data.url : null;
   const said = line.text.startsWith(`${word} `) ? line.text.slice(word.length + 1) : line.text;
-  // A page whose title came back as raw data reads as its address instead.
-  const text = url !== null && /^\s*[[{]/.test(said) ? url.replace(/^https?:\/\//, "").replace(/\/$/, "") : said;
+  // A page whose title came back as raw data reads as its address instead, or as "a page".
+  const text = /^\s*[[{]/.test(said) ? (url === null ? "a page" : url.replace(/^https?:\/\//, "").replace(/\/$/, "")) : said;
   // Progress lines already say what was done ("Opened the page…"); the other kinds take their verb.
   const shown = line.kind === "progress" ? text : `${word} ${text}`;
   return (
@@ -545,7 +599,7 @@ function JournalRow({
           <TraceTitle>{resumedHere}</TraceTitle>
         </TraceLine>
       ) : null}
-      <div className="trace-step">
+      <div className="group/step flex min-w-0 items-center gap-1.5 *:first:min-w-0">
         <StepLine
           icon={JOURNAL_ICONS[line.kind] ?? CheckIcon}
           text={shown}
@@ -554,15 +608,21 @@ function JournalRow({
           href={url}
         />
         {onRewind !== null && undoes > 0 && !asking ? (
-          <Button variant="ghost" size="xs" className="trace-rewind" onClick={() => setAsking(true)} title="Take the job back to just after this step">
+          <Button
+            variant="ghost"
+            size="xs"
+            className="invisible flex-none group-hover/step:visible focus-visible:visible"
+            onClick={() => setAsking(true)}
+            title="Take the job back to just after this step"
+          >
             <RotateCcwIcon data-icon="inline-start" />
             Rewind to here
           </Button>
         ) : null}
       </div>
       {asking && onRewind !== null ? (
-        <div className="rewind-ask" data-slot="rewind-ask">
-          <span>
+        <div className="flex items-center gap-2 rounded-lg bg-secondary px-2 py-1.5 text-xs text-foreground">
+          <span className="min-w-0 flex-1">
             Undo the {undoes} later {undoes === 1 ? "step" : "steps"}, put this job&apos;s files back as they were, and run it again from here? Emails already sent stay sent.
           </span>
           <Button
@@ -609,26 +669,31 @@ function EmptyChat({
   const all = suggestionsFor(member);
   const shown = showMore ? all : all.slice(0, 4);
   return (
-    <div className="empty-chat">
-      <div className="empty-who">
+    <div className="m-auto w-[min(100%,460px)] px-5 py-10">
+      <div className="mb-[18px] flex items-center gap-3">
         <Avatar member={member} size={40} />
         <div>
-          <h2>{member.name}</h2>
-          <p>{member.title}</p>
+          <h2 className="m-0 text-[15px] font-semibold">{member.name}</h2>
+          <p className="mt-px mb-0 text-[12.5px] text-muted-foreground">{member.title}</p>
         </div>
       </div>
-      <div className="suggest">
-        <div className="suggest-title">
-          <Icon name="folder" size={15} />
+      <div className="flex flex-col">
+        <div className="mb-1.5 flex items-center gap-[7px] text-[12.5px] text-foreground">
+          <FolderIcon className="size-[15px] text-muted-foreground" />
           {member.kind === "hq" ? "Get the team going" : `Ask ${member.name}`}
         </div>
         {shown.map((text) => (
-          <button key={text} type="button" onClick={() => onSuggest(text)}>
+          <button
+            key={text}
+            type="button"
+            className="truncate py-[5px] text-left text-[12.5px] text-foreground hover:text-muted-foreground"
+            onClick={() => onSuggest(text)}
+          >
             {text}
           </button>
         ))}
         {all.length > shown.length ? (
-          <button type="button" className="more" onClick={onMore}>
+          <button type="button" className="py-[5px] text-left text-[12.5px] text-faint hover:text-muted-foreground" onClick={onMore}>
             Show more
           </button>
         ) : null}
@@ -645,10 +710,13 @@ function RememberButton({ text }: { text: string }) {
   const [state, setState] = useState<"idle" | "busy" | "done" | "failed">("idle");
   if (text.trim() === "") return null;
   return (
-    <button
-      type="button"
-      className="icon-btn msg-remember"
-      data-done={state === "done" ? "" : undefined}
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      className={cn(
+        "flex-none text-muted-foreground opacity-0 transition-opacity group-focus-within/msg:opacity-100 group-hover/msg:opacity-100",
+        state === "done" && "text-brand opacity-100 hover:text-brand",
+      )}
       aria-label={state === "done" ? "Remembered" : "Remember this"}
       title={state === "done" ? "Remembered" : state === "failed" ? "Could not remember that" : "Remember this"}
       disabled={state === "busy"}
@@ -662,7 +730,7 @@ function RememberButton({ text }: { text: string }) {
         }
       }}
     >
-      <Icon name={state === "done" ? "check" : "brain"} size={13} />
-    </button>
+      {state === "done" ? <CheckIcon /> : <BrainIcon />}
+    </Button>
   );
 }

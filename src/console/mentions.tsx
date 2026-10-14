@@ -2,6 +2,8 @@
 
 import { createContext, type CSSProperties, type ReactNode, useContext } from "react";
 
+import { cn } from "@/lib/utils";
+
 import { memberColor } from "./avatar";
 import type { Member } from "./types";
 
@@ -25,16 +27,25 @@ function mentionPattern(team: readonly Member[]): RegExp | null {
 
 const byName = (team: readonly Member[], name: string) => team.find((member) => member.name.toLowerCase() === name.toLowerCase());
 
-export function MentionChip({ member }: { member: Member }) {
+/** A tag as a chip in the teammate's colour; on a coloured bubble (yours) it is drawn in white. */
+export function MentionChip({ member, onColor = false }: { member: Member; onColor?: boolean }) {
   return (
-    <span className="mention" style={{ "--mc": memberColor(member) } as CSSProperties}>
+    <span
+      className={cn(
+        "mx-px inline-block rounded-md px-1.5 font-semibold whitespace-nowrap",
+        onColor
+          ? "bg-white/20 text-white"
+          : "bg-[color-mix(in_srgb,var(--mc)_15%,transparent)] text-[color-mix(in_srgb,var(--mc)_78%,var(--foreground))]",
+      )}
+      style={{ "--mc": memberColor(member) } as CSSProperties}
+    >
       @{member.name}
     </span>
   );
 }
 
 /** Plain text with every tag drawn as a chip. */
-export function MentionText({ text }: { text: string }) {
+export function MentionText({ text, onColor = false }: { text: string; onColor?: boolean }) {
   const team = useTeam();
   const pattern = mentionPattern(team);
   if (pattern === null) return <>{text}</>;
@@ -44,7 +55,7 @@ export function MentionText({ text }: { text: string }) {
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
     const member = byName(team, match[2] ?? "");
     if (member === undefined) continue;
-    out.push(text.slice(last, start), <MentionChip key={start} member={member} />);
+    out.push(text.slice(last, start), <MentionChip key={start} member={member} onColor={onColor} />);
     last = start + 1 + (match[2]?.length ?? 0);
   }
   out.push(text.slice(last));

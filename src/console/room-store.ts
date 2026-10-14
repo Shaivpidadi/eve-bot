@@ -2,7 +2,6 @@ import type { InputRequest, InputResolution, MessageStreamEvent } from "eve/clie
 
 import { api, errorMessage, isRecord, redirectToLogin, SignedOutError } from "./api";
 import { withoutEmoji } from "./format";
-import type { IconName } from "./icons";
 import type { ActivityEvent, Member } from "./types";
 
 /** How long a sent message may go unacknowledged by its thread before the console says so. */
@@ -12,8 +11,11 @@ const NO_REPLY_MS = 50_000;
 /** HQ's desk, as `agent/lib/rooms.ts` names it. */
 const HQ_ROOM_NAME = "desk";
 
+/** The glyph a notice wears; the transcript draws each with its lucide icon. */
+export type NoticeIcon = "alert" | "brain" | "check" | "clock" | "dot" | "folder" | "mail" | "monitor" | "person" | "plug" | "x";
+
 export interface Notice {
-  readonly icon: IconName;
+  readonly icon: NoticeIcon;
   readonly label: string;
   readonly detail?: string;
   readonly tone?: "error";

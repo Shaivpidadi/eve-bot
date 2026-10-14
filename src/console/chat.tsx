@@ -1,10 +1,13 @@
 "use client";
 
+import { ChevronLeftIcon, MonitorIcon } from "lucide-react";
 import { type CSSProperties, useMemo, useSyncExternalStore } from "react";
+
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 import { Avatar, memberColor } from "./avatar";
 import { Composer } from "./composer";
-import { Icon } from "./icons";
 import { TeamContext } from "./mentions";
 import { buildTimeline, roomStore } from "./room-store";
 import { Transcript } from "./transcript";
@@ -66,24 +69,29 @@ export function ChatPane({
 
   return (
     <TeamContext.Provider value={members}>
-      <main className="chat" style={{ "--you": memberColor(member) } as CSSProperties}>
-        <header className="chat-head">
-          <button type="button" className="icon-btn back" aria-label="Back to Bots" onClick={onBack}>
-            <Icon name="left" />
-          </button>
-          <span className="head-chip">
+      <main
+        className="chat relative flex min-h-0 min-w-0 flex-col bg-chat [--you:var(--bubble-you)]"
+        style={{ "--you": memberColor(member) } as CSSProperties}
+      >
+        {/* The header floats: a chip with the face and name over the top of the thread, which scrolls beneath it. */}
+        <header className="chat-head pointer-events-none absolute inset-x-0 top-0 z-4 flex h-14 items-center gap-2 bg-linear-to-b from-chat from-30% to-transparent px-3 *:pointer-events-auto">
+          <Button variant="ghost" size="icon-sm" className="hidden text-muted-foreground max-[760px]:inline-flex" aria-label="Back to Bots" onClick={onBack}>
+            <ChevronLeftIcon />
+          </Button>
+          <span className="head-chip mx-auto inline-flex max-w-[60%] items-center gap-[7px] rounded-full border border-border bg-card py-1 pr-3 pl-[5px] shadow-[0_2px_10px_rgba(0,0,0,0.08)]">
             <Avatar member={member} size={22} onHover={onHover} />
-            <span className="head-name">{member.name}</span>
+            <span className="min-w-0 truncate text-[13px] font-semibold">{member.name}</span>
           </span>
-          <button
-            type="button"
-            className={member.computer.active ? "icon-btn computer-btn active" : "icon-btn computer-btn"}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn("absolute right-3 text-muted-foreground", member.computer.active && "text-brand hover:text-brand")}
             aria-label="Team computer"
             title={member.computer.active ? "The team's computer is in use" : "Team computer"}
             onClick={onToggleComputer}
           >
-            <Icon name="monitor" />
-          </button>
+            <MonitorIcon />
+          </Button>
         </header>
         <Transcript
           member={member}

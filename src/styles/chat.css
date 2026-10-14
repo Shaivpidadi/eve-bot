@@ -4,4 +4,13 @@
  * here: styling lives in the components' Tailwind classes.
  */
 @theme {
+  /* A row that arrives after the thread opened eases up into place (see transcript.tsx). */
+  --animate-arrive: arrive 0.22s cubic-bezier(0.2, 0, 0, 1) both;
+
+  @keyframes arrive {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.985);
+    }
+  }
 }
