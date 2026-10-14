@@ -126,7 +126,8 @@ export function sessionsToInterrupt(leaseSession: string | null, job: Pick<Job, 
 
 /** The slice of eve's `attachSession(id)` handle an interruption uses. */
 export interface SessionControl {
-  cancel(options: { tasks: boolean }): Promise<unknown>;
+  /** Cancels the turn and every task working in the session (eve 0.79 has no narrower cancel). */
+  cancel(options?: { turnId?: string }): Promise<unknown>;
   reset(options: { reason?: string }): Promise<unknown>;
 }
 
@@ -161,7 +162,7 @@ export function interruptVia(
   return async (sessionId) => {
     const session = attachSession(sessionId);
     const problems: string[] = [];
-    await within(session.cancel({ tasks: true }), timeoutMs).catch((error: unknown) => {
+    await within(session.cancel(), timeoutMs).catch((error: unknown) => {
       problems.push(`cancel: ${error instanceof Error ? error.message : String(error)}`);
     });
     await within(session.reset({ reason }), timeoutMs).catch((error: unknown) => {

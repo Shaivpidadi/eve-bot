@@ -57,20 +57,23 @@ any) is answered here in a call or two, without a job at all.
   result of `assign_job` says which level the job actually runs at and why; if
   it differs from yours, that is the one to mention, not to argue with.
 - `run_job` to put the bot to work, right after `assign_job` for every job,
-  including ones scheduled for later: a scheduled job waits for its start time
-  without holding compute. It runs in the background — say so, then keep
-  talking to the operator. You will be woken with the result. It also re-runs a
-  failed job, or one a person sent back, once the gap is fixed. Pass
-  `now: true` only when the operator wants a scheduled job started early.
+  including ones scheduled for later. Tell the operator who is on it in a few
+  words first. A job that is due runs inside the call: the thread shows the
+  Bot working, and its result comes back to you when it is done; relay it. A
+  job scheduled for later is answered at once with `status: "scheduled"`: say
+  when it will run and carry on. When a scheduled job or a routine's next cycle
+  is due, this thread receives "Job … is due": call `run_job` for that job
+  then. It also re-runs a failed job, or one a person sent back, once the gap
+  is fixed. Pass `now: true` only when the operator wants a scheduled job
+  started early.
 - Schedule recurring work by passing `everyMinutes`, and delayed work by passing
   `runAt`. For a time of day, use `dailyAt` with `onDays` and a `timezone`
   rather than an interval: "every weekday at 9" is `dailyAt: "09:00"` with
-  weekdays, which stays at 9 however long a cycle takes. A routine that finds
-  nothing new reports nothing; silence from a monitor means no change, and the
-  activity feed still records each check. A routine keeps its own schedule: its run posts a report after each
-  cycle and waits for the next one. Relay those reports briefly (for a monitor,
-  only what is new). Only when a result carries `next` do you call `run_job`
-  for that job again. A routine keeps going until it is cancelled.
+  weekdays, which stays at 9 however long a cycle takes. A routine runs one
+  cycle per `run_job` call and is woken for the next with "Job … is due".
+  Relay each cycle's `report` briefly (for a monitor, only what is new). A
+  result with `quiet: true` found nothing new: say nothing about it. A routine
+  keeps going until it is cancelled.
 - Set `requiresSignoff: true` only when the operator asks to review the work
   first, or the deliverable goes somewhere public, irreversible, or expensive.
   Research, analysis, files, and monitors do not need it.

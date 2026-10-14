@@ -420,6 +420,29 @@ export async function holdUntilDue(workspaceId: string, jobId: string, token: st
 }
 
 /**
+ * A waiting run's hand-off when the start time comes: its wait lease becomes a
+ * dispatch lease, exactly what the watchdog leaves when it wakes a room, so the
+ * `run_job` call the wake-up prompts takes the job over. Null when the run no
+ * longer holds the wait (the job was cancelled, rescheduled, or taken over).
+ */
+export async function handOffWait(
+  workspaceId: string,
+  jobId: string,
+  waitToken: string,
+  options: { readonly token: string; readonly forMs: number },
+): Promise<Job | null> {
+  return updateDoc<Job>(key(workspaceId, jobId), (current) => {
+    if (current === null || current.lease?.kind !== "wait" || current.lease.token !== waitToken) return null;
+    if (!DISPATCHABLE.includes(current.status)) return null;
+    return stamp({
+      ...current,
+      status: "dispatched",
+      lease: { token: options.token, kind: "dispatch", until: new Date(Date.now() + options.forMs).toISOString(), build: buildId() },
+    });
+  });
+}
+
+/**
  * Extends a run's lease while its bot is still working. Returns `false` when
  * the run no longer owns the job, which means someone else took it over.
  */

@@ -21,3 +21,10 @@ describe("isWedged", () => {
     expect(isWedged({ sentAt: "not a date", turnAt: null }, t0 + WEDGED_AFTER_MS)).toBe(false);
   });
 });
+
+describe("isWedged with a turn open", () => {
+  it("never calls a thread wedged while a turn is running: since eve 0.79 a job's run keeps it open", () => {
+    expect(isWedged({ sentAt: at(0), turnAt: null, active: true }, t0 + WEDGED_AFTER_MS * 3)).toBe(false);
+    expect(isWedged({ sentAt: at(0), turnAt: null, active: false }, t0 + WEDGED_AFTER_MS * 3)).toBe(true);
+  });
+});

@@ -19,7 +19,7 @@ vi.mock("../agent/lib/computer/shell", () => ({
   isolatedBash: {
     description: "bash",
     inputSchema: { parse: (value: unknown) => value },
-    execute: async () => ({ exitCode: shell.exitCode, stdout: "", stderr: shell.exitCode === 0 ? "" : "boom", truncated: false }),
+    execute: async () => ({ status: "completed", exitCode: shell.exitCode, stdout: "", stderr: shell.exitCode === 0 ? "" : "boom", truncated: false }),
   },
   isolatedWriteFile: {
     description: "write",

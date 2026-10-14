@@ -1,4 +1,5 @@
 import { defineTool } from "eve/tools";
+import type { BashToolOutput } from "eve/tools/bash";
 
 import { isolatedBash } from "../../../lib/computer/shell";
 import { journal } from "../lib/journal";
@@ -13,8 +14,8 @@ export default defineTool({
   ...isolatedBash,
   async execute(input, ctx) {
     // eve's bash answers with one result, never a stream (see lib/computer/shell.ts).
-    const output = (await isolatedBash.execute(input, ctx)) as { exitCode: number; stdout: string; stderr: string; truncated: boolean };
-    if (output.exitCode !== 0) {
+    const output = (await isolatedBash.execute(input, ctx)) as BashToolOutput;
+    if (output.status === "completed" && output.exitCode !== 0) {
       const command = typeof (input as { command?: unknown }).command === "string" ? (input as { command: string }).command : "";
       await journal(ctx, {
         kind: "error",

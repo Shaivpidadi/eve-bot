@@ -1,15 +1,18 @@
 import { findBot, getBot, HQ_BOT_ID } from "./bots";
 import { newId } from "./ids";
 import { HQ_ROOM, roomForBot } from "./rooms";
-import { deleteDoc, listDocs, updateDoc, writeDoc } from "./store";
+import { deliverOutbox, enqueue } from "./outbox";
+import { flushOutboxSoon } from "./self";
+import { updateDoc } from "./store";
 
 /**
  * Teammates talking to each other.
  *
  * A Bot (or HQ) leaves a note for a teammate with `message_teammate`. The note
- * waits in a small outbox, and the next pass that can reach a thread delivers
- * it into the teammate's own thread as a turn of its own: the console's board
- * poll, a message sent from the console, or the watchdog. The teammate reads
+ * goes into the outbox (see `outbox.ts`) and is delivered into the teammate's
+ * own thread as a turn of its own, at once when the server can call itself,
+ * else on the console's board poll, a message sent from the console, or the
+ * watchdog. The teammate reads
  * it in its own voice and context, and answers the same way, so a question
  * and its answer appear in both threads.
  *
@@ -24,17 +27,12 @@ export interface TeamNote {
   readonly to: { readonly name: string; readonly room: string };
   readonly text: string;
   readonly at: string;
-  /** Set while a pass is delivering it, so two passes do not both deliver it. */
-  readonly claimedAt?: string | null;
 }
 
 export const MAX_NOTE_CHARS = 4000;
 /** Notes one teammate may send another inside the window. */
 export const NOTES_PER_WINDOW = 6;
 export const NOTE_WINDOW_MS = 10 * 60_000;
-const CLAIM_MS = 60_000;
-
-const noteKey = (workspaceId: string, id: string) => `mail/${workspaceId}/${id}.json`;
 const logKey = (workspaceId: string, from: string, to: string) => `mail-log/${workspaceId}/${from}__${to}.json`;
 
 /** How a note reads when it arrives; the console shows it as the sender's bubble (see `room-store.ts`). */
@@ -87,40 +85,11 @@ export async function postNote(input: {
     to: input.to,
     text: input.text.slice(0, MAX_NOTE_CHARS),
     at: new Date(now).toISOString(),
-    claimedAt: null,
   };
-  await writeDoc(noteKey(note.workspaceId, note.id), note, null);
+  await enqueue({ workspaceId: note.workspaceId, room: note.to.room, message: noteMessage(note), id: note.id });
+  await flushOutboxSoon();
   return { ok: true, note };
 }
 
-/**
- * Delivers every waiting note. Each is claimed first, delivered, then removed;
- * a pass that dies mid-way leaves the claim to lapse and the next pass retries.
- */
-export async function deliverNotes(
-  send: (workspaceId: string, room: string, message: string) => Promise<void>,
-  options: { readonly workspaceId?: string; readonly now?: number } = {},
-): Promise<number> {
-  const now = options.now ?? Date.now();
-  const waiting = await listDocs<TeamNote>(options.workspaceId === undefined ? "mail/" : `mail/${options.workspaceId}/`);
-  let delivered = 0;
-  for (const note of waiting.sort((left, right) => left.at.localeCompare(right.at))) {
-    let mine = false;
-    await updateDoc<TeamNote>(noteKey(note.workspaceId, note.id), (current) => {
-      if (current === null) return null;
-      const held = current.claimedAt != null && now - Date.parse(current.claimedAt) < CLAIM_MS;
-      if (held) return current;
-      mine = true;
-      return { ...current, claimedAt: new Date(now).toISOString() };
-    });
-    if (!mine) continue;
-    try {
-      await send(note.workspaceId, note.to.room, noteMessage(note));
-      await deleteDoc(noteKey(note.workspaceId, note.id));
-      delivered += 1;
-    } catch {
-      // Left claimed; it is retried once the claim lapses.
-    }
-  }
-  return delivered;
-}
+/** Delivers every waiting note (and anything else in the outbox). */
+export const deliverNotes = deliverOutbox;

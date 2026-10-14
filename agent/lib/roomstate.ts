@@ -64,13 +64,17 @@ export interface RoomState {
 export const WEDGED_AFTER_MS = 45_000;
 
 /**
- * eve 0.58 has a failure where a session accepts a message and never starts a
- * turn: after the dev runtime reloads, or after certain task interactions. It
+ * eve 0.58 had a failure where a session accepts a message and never starts a
+ * turn: after the dev runtime reloads, or after certain task interactions
+ * (eve 0.76 ends such a stranded session on the next send instead). It
  * emits nothing, so the only sign is a delivery with no turn behind it. That
  * is what this reads: the last message went in, no turn has started since,
  * and long enough has passed that one would have.
  */
-export function isWedged(state: Pick<RoomState, "sentAt" | "turnAt"> | null, now: number = Date.now(), graceMs: number = WEDGED_AFTER_MS): boolean {
+export function isWedged(state: (Pick<RoomState, "sentAt" | "turnAt"> & { readonly active?: boolean }) | null, now: number = Date.now(), graceMs: number = WEDGED_AFTER_MS): boolean {
+  // A turn still open takes a new message into itself without starting one: since
+  // eve 0.79 a turn stays open while a job's run works, so that is not wedged.
+  if (state?.active === true) return false;
   const sentAt = state?.sentAt ?? null;
   if (sentAt === null) return false;
   const sent = Date.parse(sentAt);

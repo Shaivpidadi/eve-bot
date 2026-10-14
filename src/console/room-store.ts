@@ -539,6 +539,20 @@ export class RoomStore {
           this.answering.delete(resolution.requestId);
         }
         break;
+      case "task.settled": {
+        // eve 0.79 hands a finished task's result to the model inside the turn, with
+        // no message of its own; a job's run coming back is marked here instead.
+        const data = event.data as { name?: string; status?: string; output?: unknown; error?: { message?: string } };
+        if (data.name !== "run_job") break;
+        const output = isRecord(data.output) ? data.output : {};
+        const job = text(output.jobId);
+        if (data.status === "failed") {
+          this.items.push({ kind: "notice", key, at, icon: "alert", tone: "error", label: "Work failed", ...(job === undefined ? {} : { jobId: job }) });
+        } else if (data.status === "completed" && output.ran === true) {
+          this.items.push({ kind: "notice", key, at, icon: "check", label: "Work came back", ...(job === undefined ? {} : { jobId: job }) });
+        }
+        break;
+      }
       case "turn.started":
         this.live = true;
         this.liveLabel = null;

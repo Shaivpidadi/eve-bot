@@ -1,12 +1,12 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import type { SandboxBackend, SandboxNetworkPolicy } from "eve/sandbox";
-import { docker } from "eve/sandbox/docker";
-import { microsandbox } from "eve/sandbox/microsandbox";
-import { vercel } from "eve/sandbox/vercel";
+import type { SandboxNetworkPolicy, SandboxSession } from "eve/sandbox";
+import { DockerSandbox } from "eve/sandbox/docker";
+import { MicrosandboxSandbox } from "eve/sandbox/microsandbox";
+import { VercelSandbox } from "eve/sandbox/vercel";
 
-import { sharedComputer } from "./computer";
+import { TeamComputer } from "./team-computer";
 
 /**
  * Where the team's computer runs.
@@ -50,9 +50,6 @@ const allow = (process.env.BOT_SANDBOX_ALLOW_DOMAINS ?? "")
  */
 const networkPolicy: SandboxNetworkPolicy = allow.length > 0 ? { allow } : "allow-all";
 
-/** An expired snapshot is a computer that comes back empty. */
-const NO_EXPIRY = 0;
-
 /** Why the Vercel computer cannot start here, or null when it can. */
 export function vercelCredentialsError(): string | null {
   if (process.env.VERCEL === "1") return null;
@@ -63,32 +60,40 @@ export function vercelCredentialsError(): string | null {
   return 'The team\'s computer runs on Vercel Sandbox. Run "vercel link && vercel env pull" in the project, or set BOT_COMPUTER=local to use a VM on this machine.';
 }
 
-export function computerBackend(): SandboxBackend {
+/**
+ * The team's computer as an eve sandbox environment: one machine every session
+ * shares (see `team-computer.ts`), made by the built-in provider for this mode.
+ * `prepare` runs once per environment generation and is baked into the
+ * snapshot or image every new machine starts from.
+ */
+export function computerEnvironment(prepare: (sandbox: SandboxSession) => Promise<void>) {
   if (computerMode() === "local") {
-    const local =
-      localComputer() === "docker"
-        ? docker({ networkPolicy: allow.length > 0 ? "deny-all" : "allow-all" })
-        : microsandbox({
-            memoryMiB: 2048 * Number(process.env.BOT_SANDBOX_VCPUS ?? 4),
-            networkPolicy,
-          });
-    return sharedComputer(guarded(local, localModeError));
+    return localComputer() === "docker"
+      ? TeamComputer.environment({ provider: "docker", environment: DockerSandbox.environment({ prepare }), check: localModeError })
+      : TeamComputer.environment({
+          provider: "microsandbox",
+          environment: MicrosandboxSandbox.environment({ prepare, memoryMiB: 2048 * Number(process.env.BOT_SANDBOX_VCPUS ?? 4) }),
+          check: localModeError,
+        });
   }
-
   const minutes = Number(process.env.BOT_SANDBOX_TIMEOUT_MINUTES ?? 30);
-  return sharedComputer(
-    guarded(
-      vercel({
-        networkPolicy,
-        resources: { vcpus: Number(process.env.BOT_SANDBOX_VCPUS ?? 4) },
-        snapshotExpiration: NO_EXPIRY,
-        keepLastSnapshots: { count: 3, expiration: NO_EXPIRY },
-        ports: [COMPUTER_PORT],
-        timeout: minutes * 60_000,
-      }),
-      vercelCredentialsError,
-    ),
-  );
+  return TeamComputer.environment({
+    provider: "vercel",
+    environment: VercelSandbox.environment({
+      prepare,
+      networkPolicy,
+      resources: { vcpus: Number(process.env.BOT_SANDBOX_VCPUS ?? 4) },
+      ports: [COMPUTER_PORT],
+      timeout: minutes * 60_000,
+    }),
+    check: vercelCredentialsError,
+  });
+}
+
+/** Options the machine is opened with: local providers take their network policy here. */
+export function computerOpenOptions(): object | undefined {
+  if (computerMode() !== "local") return undefined;
+  return localComputer() === "docker" ? { networkPolicy: allow.length > 0 ? "deny-all" : "allow-all" } : { networkPolicy };
 }
 
 /**
@@ -101,17 +106,4 @@ function localModeError(): string | null {
   return process.env.NODE_ENV === "production" && localComputer() === "microsandbox"
     ? "BOT_COMPUTER_LOCAL=microsandbox is for development only. Unset it to run the computer in Docker."
     : null;
-}
-
-/** Fails a session start with a plain explanation instead of a provider stack trace. */
-function guarded<BO, SO>(inner: SandboxBackend<BO, SO>, check: () => string | null): SandboxBackend<BO, SO> {
-  return {
-    name: inner.name,
-    prewarm: (input) => inner.prewarm(input),
-    async create(input) {
-      const problem = check();
-      if (problem !== null) throw new Error(problem);
-      return inner.create(input);
-    },
-  };
 }

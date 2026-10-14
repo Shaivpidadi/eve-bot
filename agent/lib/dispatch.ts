@@ -16,6 +16,10 @@ import type { Bot, Job } from "./types";
  */
 export const DISPATCH_LEASE_MS = 5 * 60_000;
 
+/** The wake-up a room gets when one of its jobs is due; `DUE_JOB_MESSAGE` in rooms.ts reads it. */
+export const dueMessage = (job: Pick<Job, "id" | "title">): string =>
+  [`Job ${job.id} is due: "${job.title}".`, "Run it now with run_job, then report the outcome in one short message."].join(" ");
+
 export interface DispatchOutcome {
   readonly due: number;
   readonly dispatched: number;
@@ -61,7 +65,7 @@ export async function dispatchDue(
       }
 
       try {
-        await send(job, [`Job ${job.id} is due: "${job.title}".`, "Run it now with run_job, then report the outcome in one short message."].join(" "));
+        await send(job, dueMessage(job));
         dispatched += 1;
       } catch {
         // Could not hand it off — put it back rather than leaving it leased.

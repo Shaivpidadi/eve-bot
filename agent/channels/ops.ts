@@ -27,6 +27,7 @@ import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom,
 import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
+import { isInternal, noteOrigin } from "../lib/self";
 import { crashRun, qaEnabled } from "../lib/qa";
 import { rewind } from "../lib/rewind";
 import { exportEnabled, exportTo } from "../lib/store/transfer";
@@ -105,12 +106,12 @@ const seeOther = (location: string, headers: Record<string, string> = {}) =>
 async function restartWedgedRoom(
   workspaceId: string,
   room: string,
-  attachSession: (sessionId: string) => { cancel(options: { tasks: boolean }): Promise<unknown> },
+  attachSession: (sessionId: string) => { cancel(options?: { turnId?: string }): Promise<unknown> },
 ): Promise<number> {
   const old = (await getRoomState(workspaceId, room))?.sessionId ?? null;
   const generation = await restartRoom(workspaceId, room);
   if (old !== null) {
-    await within(attachSession(old).cancel({ tasks: false }), 5_000).catch(() => undefined);
+    await within(attachSession(old).cancel(), 5_000).catch(() => undefined);
   }
   const botId = botIdForRoom(room);
   const bot = botId === null ? null : await getBot(workspaceId, botId);
@@ -248,6 +249,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     GET("/bot/v1/state", async (request, { from, waitUntil }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
+      void noteOrigin(request);
       const after = new URL(request.url).searchParams.get("after");
       // The console polls this every few seconds, so teammates' notes to each other go out here.
       waitUntil(deliverNotes(sendInto(from), { workspaceId: gate.access.workspaceId }).catch(() => 0));
@@ -257,9 +259,20 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return json({ ...board, user: gate.access.user, profile: gate.access.profile });
     }),
 
+    /**
+     * The server asking itself to deliver its outbox (see lib/self.ts): a job's
+     * wake-up or a teammate's note, from a workflow that cannot reach a room.
+     */
+    POST("/bot/v1/internal/flush", async (request, { from, waitUntil }) => {
+      if (!(await isInternal(request))) return json({ error: "not found" }, 404);
+      waitUntil(deliverNotes(sendInto(from)).catch(() => 0));
+      return json({ flushing: true }, 202);
+    }),
+
     POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params, waitUntil }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
+      void noteOrigin(request);
       const room = await resolveRoom(gate.access, params.room);
       if (room instanceof Response) return room;
 
@@ -394,10 +407,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         cancelledJobs.push(job.id);
       }
       const old = [...new Set([live?.id ?? null, recorded].filter((id): id is string => id !== null))];
-      // The session alone, not its tasks: the one-off jobs' sessions were cancelled
-      // above, routines started here must keep running, and asking eve to cancel
-      // finished children only makes it log that they cannot be cancelled.
-      for (const id of old) await quietly(within(attachSession(id).cancel({ tasks: false })));
+      // The one-off jobs were cancelled above. eve 0.79's cancel stops the turn and
+      // every task still working; a routine waiting for its next cycle is an idle
+      // task and keeps its schedule (see run_job).
+      for (const id of old) await quietly(within(attachSession(id).cancel()));
       // eve's own reset of the old address is left to finish, or not, on its own.
       void quietly(from(address).reset({ reason: `Started over from the console by ${user}` }));
       const reset = { status: `generation ${generation}` };

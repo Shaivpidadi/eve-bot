@@ -57,6 +57,13 @@ const preparedDirectories = sessionState<true>();
 const runSessionName = (ctx: ToolContext) => `run-${ctx.session.id.replace(/[^A-Za-z0-9_-]/g, "")}`.slice(0, 60);
 
 /** Runs opened with their tab ready, so the label lookup happens once per run. */
+/**
+ * agent-browser's eve types describe eve 0.58's tool context, whose sandbox
+ * carried an `id`. It only names its own sessions by it, and every call here
+ * passes the run's session name, so eve 0.79's context serves as is.
+ */
+const pluginContext = (ctx: ToolContext) => ctx as unknown as Parameters<typeof runAgentBrowser>[0];
+
 const openedTabs = sessionState<{ targetId: string; at: number }>();
 const TAB_TRUSTED_MS = 60_000;
 
@@ -74,7 +81,7 @@ async function labelledTab(
 ): Promise<string | null> {
   try {
     const listed = await runAgentBrowser<{ data?: { tabs?: { label?: string | null; targetId?: string }[] } }>(
-      ctx,
+      pluginContext(ctx),
       ["--cdp", String(cdp), "tab", "list", "--json"],
       { session, env: environment(await sessionDirectory(ctx)), abortSignal: ctx.abortSignal },
     );
@@ -104,7 +111,7 @@ async function ensureRunTab(ctx: ToolContext, binding: SessionBinding, n: number
   if (targetId === null) {
     try {
       const opened = await runAgentBrowser<{ data?: { targetId?: string } }>(
-        ctx,
+        pluginContext(ctx),
         ["--cdp", String(cdp), "--pin-tab", "tab", "new", "--label", label, "about:blank"],
         { session, env: environment(await sessionDirectory(ctx)), abortSignal: ctx.abortSignal },
       );
@@ -289,7 +296,7 @@ async function browserCommand(ctx: ToolContext, args: readonly string[], options
 
   const session = runSessionName(ctx);
   const run = async () =>
-    runAgentBrowser(ctx, ["--cdp", String(screenPorts(n).cdp), "--pin-tab", ...args], {
+    runAgentBrowser(pluginContext(ctx), ["--cdp", String(screenPorts(n).cdp), "--pin-tab", ...args], {
       abortSignal: ctx.abortSignal,
       env: environment(await sessionDirectory(ctx)),
       // One agent-browser session per run, pinned to that run's own tab in the shared browser.
@@ -303,7 +310,7 @@ async function browserCommand(ctx: ToolContext, args: readonly string[], options
   } catch (error) {
     try {
       if (missingBinary(error)) {
-        await installAgentBrowser(await ctx.getSandbox(), { ...AGENT_BROWSER_INSTALL, abortSignal: ctx.abortSignal });
+        await installAgentBrowser((await ctx.getSandbox()) as never, { ...AGENT_BROWSER_INSTALL, abortSignal: ctx.abortSignal });
         return shape(await run());
       }
       if (tabGone(error)) {

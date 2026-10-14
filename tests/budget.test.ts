@@ -464,9 +464,9 @@ describe("model spend on the budget", () => {
     await hook.events["step.started"]!({ type: "step.started", data: { modelId: "m" } } as never, ctxFor("sess_A"));
     await hook.events["step.completed"]!(step("evt_1", 1.2), ctxFor("sess_A"));
     expect(await budget.runHalted(WS, "lease_A")).toBe(true);
-    expect(() => hook.events["step.started"]!({ type: "step.started", data: { modelId: "m" } } as never, ctxFor("sess_A"))).toThrow(
-      /workspace budget/,
-    );
+    // The teammate's model resolver refuses the next step on this (a hook can no longer stop a turn since eve 0.68).
+    const { stopReason } = await import("../agent/subagents/teammate/lib/stops");
+    expect(await stopReason("sess_A", () => WS)).toMatch(/workspace budget/);
   });
 
   it("charges auxiliary calls to the workspace, flagging unpriced ones", async () => {

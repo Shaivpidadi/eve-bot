@@ -88,8 +88,8 @@ async function running() {
 function fakeSessions(fail?: { cancel?: Error; reset?: Error; hang?: boolean }) {
   const calls: string[] = [];
   const attachSession = vi.fn((id: string) => ({
-    cancel: async (options: { tasks: boolean }) => {
-      calls.push(`cancel ${id} tasks=${options.tasks}`);
+    cancel: async (_options?: { turnId?: string }) => {
+      calls.push(`cancel ${id}`);
       if (fail?.hang) return new Promise(() => undefined);
       if (fail?.cancel) throw fail.cancel;
       return { status: "accepted" };
@@ -118,7 +118,7 @@ describe("cancelJobRun", () => {
     });
 
     expect(outcome).toMatchObject({ ok: true, wasRunning: true, alreadyCancelled: false, session: "sess_A", interruption: "interrupted" });
-    expect(calls).toEqual(["cancel sess_A tasks=true", "reset sess_A Cancelled from the console"]);
+    expect(calls).toEqual(["cancel sess_A", "reset sess_A Cancelled from the console"]);
     const after = await read();
     expect(after.status).toBe("cancelled");
     expect(after.lease).toBeNull();
@@ -181,7 +181,7 @@ describe("cancelJobRun", () => {
 
     const outcome = await cancel.cancelJobRun(WORKSPACE, job.id, { interrupt: cancel.interruptVia(attachSession, "x") });
     expect(outcome).toMatchObject({ ok: true, session: null, sessions: ["sess_legacy"], interruption: "interrupted" });
-    expect(calls).toEqual(["cancel sess_legacy tasks=true", "reset sess_legacy x"]);
+    expect(calls).toEqual(["cancel sess_legacy", "reset sess_legacy x"]);
   });
 
   it("stops the run's bound session and the job's recorded one, each once", async () => {
@@ -190,7 +190,7 @@ describe("cancelJobRun", () => {
     const { attachSession, calls } = fakeSessions();
     const outcome = await cancel.cancelJobRun(WORKSPACE, job.id, { interrupt: cancel.interruptVia(attachSession, "x") });
     expect(outcome).toMatchObject({ ok: true, session: "sess_A", sessions: ["sess_A", "sess_earlier"], interruption: "interrupted" });
-    expect(calls.filter((call) => call.startsWith("cancel"))).toEqual(["cancel sess_A tasks=true", "cancel sess_earlier tasks=true"]);
+    expect(calls.filter((call) => call.startsWith("cancel"))).toEqual(["cancel sess_A", "cancel sess_earlier"]);
     expect(cancel.sessionsToInterrupt("sess_A", { sessionId: "sess_A" })).toEqual(["sess_A"]);
     expect(cancel.sessionsToInterrupt(null, { sessionId: null })).toEqual([]);
   });
@@ -365,7 +365,7 @@ describe("the cancel_job tool and the console's DELETE route", () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ cancelledJobs: [job.id] });
-    expect(calls).toContain("cancel sess_unbound tasks=true");
+    expect(calls).toContain("cancel sess_unbound");
     expect(calls).toContain("reset sess_unbound Room reset");
     expect((await jobs.getJob(WORKSPACE, job.id))?.status).toBe("cancelled");
   });
@@ -379,7 +379,7 @@ describe("the cancel_job tool and the console's DELETE route", () => {
       params: { jobId: job.id },
     });
     expect(await response.json()).toMatchObject({ cancelled: true, interruption: "interrupted" });
-    expect(calls).toEqual(["cancel sess_unbound tasks=true", expect.stringMatching(/^reset sess_unbound /)]);
+    expect(calls).toEqual(["cancel sess_unbound", expect.stringMatching(/^reset sess_unbound /)]);
   });
 
   it("DELETE /bot/v1/jobs/:jobId cancels and stops the bound session", async () => {
@@ -397,7 +397,7 @@ describe("the cancel_job tool and the console's DELETE route", () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ cancelled: true, interruption: "interrupted", alreadyCancelled: false });
-    expect(calls[0]).toBe("cancel sess_A tasks=true");
+    expect(calls[0]).toBe("cancel sess_A");
     expect((await read()).status).toBe("cancelled");
   });
 });

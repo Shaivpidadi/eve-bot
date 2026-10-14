@@ -1,4 +1,4 @@
-import { defineWorkflowTool } from "eve/tools";
+import { defineWorkflowTool, type WorkflowServeContext } from "eve/tools";
 import { sleep } from "workflow";
 import { z } from "zod";
 
@@ -11,12 +11,17 @@ import { renderBrief } from "../lib/brief";
 import { reapIdleScreens } from "../lib/computer/reaper";
 import { forgetJob } from "../lib/computer/screens";
 import { newId } from "../lib/ids";
+import { DISPATCH_LEASE_MS, dueMessage } from "../lib/dispatch";
+import { enqueue } from "../lib/outbox";
+import { flushOutboxSoon } from "../lib/self";
 import {
   blockJob,
+  cancelJob,
   claimJob,
   completeJob,
   failJob,
   getJob,
+  handOffWait,
   holdForSignoff,
   holdUntilDue,
   patchJob,
@@ -45,12 +50,13 @@ import type { JobResult, JobStatus } from "../lib/types";
  */
 const LEASE_MS = 20 * 60_000;
 /**
- * How often a run waiting on its bot looks at its job: a cancelled job's run
- * ends within this even while the bot is parked on a card. A look is one read;
- * the lease, a write, is renewed only every `RENEW_EVERY` looks (8 minutes).
+ * How often a run waiting on its bot looks at its job: a cancelled or halted
+ * job's Bot is stopped within this, even while it is parked on a card. A look
+ * is two reads; the lease, a write, is renewed only every `RENEW_EVERY` looks
+ * (8 minutes).
  */
-const CHECK_EVERY = "1m";
-const RENEW_EVERY = 8;
+const CHECK_EVERY = "20s";
+const RENEW_EVERY = 24;
 const SIGNOFF_TIMEOUT = "24h";
 /** Outlives the sign-off wait, so the timeout branch always runs before it lapses. */
 const SIGNOFF_LEASE_MS = 25 * 60 * 60_000;
@@ -58,14 +64,6 @@ const SIGNOFF_LEASE_MS = 25 * 60 * 60_000;
 const MAX_WAKES = 20;
 /** How often a run retries a budget it could not check before leaving the job to the watchdog. */
 const MAX_DEFERRALS = 5;
-/**
- * A routine's run keeps its own schedule, then hands off to a fresh run. Runs
- * finish on the deployment that started them, so a day's bound is how code
- * changes reach a routine; the cycle cap keeps a short interval inside
- * Workflow's per-run event limit.
- */
-const HANDOFF_AFTER_MS = 24 * 60 * 60_000;
-const MAX_CYCLES = 48;
 
 const JobResultZ = z.object({
   summary: z.string(),
@@ -113,291 +111,307 @@ function cycleReport(title: string, jobId: string, result: JobResult, nextRunAt:
  * time, the work, revisions a person asks for, and, for a routine, every cycle
  * after that.
  */
+/**
+ * Puts a bot to work.
+ *
+ * A durable workflow, which is what makes a bot "always on": the run survives
+ * deploys and restarts, and a sign-off request can sit unanswered for a day
+ * without holding any compute. Each call is one resumable task (eve 0.79):
+ *
+ * - A job that is due runs now, inside the call: the conversation shows it
+ *   working, the Bot's questions, approvals and takeovers reach the person, and
+ *   the result comes back to the model as the call's result.
+ * - A job that is not due yet is answered at once, which frees the
+ *   conversation; the task then sleeps, idle, until the start time and posts
+ *   "Job … is due" into the room, exactly as the watchdog does, so the next
+ *   call runs it.
+ * - A routine runs one cycle per call, answers, then waits for its next cycle
+ *   the same way.
+ *
+ * An idle task holds no turn, so a thread with routines does not stay busy.
+ */
 export default defineWorkflowTool({
   description:
-    "Hand a job to its bot and let it work. Call it right after assign_job for every job, including ones scheduled for later: a job that is not due yet waits for its start time without holding compute, and a routine keeps running on its schedule, reporting after each cycle. Returns immediately with a receipt; results arrive later as task messages. Also re-runs a failed or blocked job.",
+    "Hand a job to its bot and let it work. Call it right after assign_job for every job, including ones scheduled for later. A job that is due runs now and its result comes back to you. A job scheduled for later is answered at once and waits for its start time without holding this conversation; when it is due, this thread receives \"Job … is due\" and you call run_job for it again. A routine runs one cycle per call and is woken the same way for the next. Also re-runs a failed or blocked job.",
   inputSchema: z.object({
     jobId: z.string().describe("The job to run."),
     now: looseBoolean()
       .optional()
       .describe("Start straight away even if the job is scheduled for later."),
   }),
-  execution: "background",
   label: {
     start: ({ jobId }) => `Run ${jobId}`,
   },
-  async *execute({ jobId, now }, ctx, task) {
+  async serve(receive, ctx) {
     "use workflow";
+    const call = await receive();
+    const { jobId, now } = call.input;
     const workspaceId = operator(ctx).workspaceId;
-    const waitToken = await newWaitToken();
-    const startedAt = await clockNow();
 
-    for (let cycle = 1; ; cycle += 1) {
-      // 1. Wait. The clock is a durable sleep, not a poller: nothing runs until
-      // the job is due, and a job rescheduled meanwhile is simply waited on again.
-      if (!(now === true && cycle === 1)) {
-        for (let wakes = 0; ; wakes += 1) {
-          const hold = await holdForStart(workspaceId, jobId, waitToken);
-          if (hold.kind === "due") break;
-          if (hold.kind === "refused") {
-            return { jobId, ran: cycle > 1, cyclesRun: cycle - 1, reason: hold.reason };
-          }
-          if (wakes >= MAX_WAKES) {
-            return {
-              jobId,
-              ran: cycle > 1,
-              cyclesRun: cycle - 1,
-              reason: "It kept being rescheduled; run it again to wait afresh.",
-            };
-          }
-          yield { phase: "scheduled", title: hold.title, runAt: hold.runAt };
-          await sleep(new Date(hold.runAt));
-        }
+    // 1. Not due yet: answer now, then wait for the start time without holding the conversation.
+    if (now !== true) {
+      const waitToken = await newWaitToken();
+      const hold = await holdForStart(workspaceId, jobId, waitToken);
+      if (hold.kind === "refused") {
+        ctx.reply({ jobId, ran: false as const, reason: hold.reason });
+        return;
       }
-
-      // 2. Work. A person's review, when needed, is the only card this run shows:
-      // a run's later cards do not reach the thread, so whatever follows is a new run.
-      let signedOff = false;
-      let done: { result: JobResult; token: string; title: string; botName: string; previous: string | null } | null = null;
-      work: {
-        let claim = await claimForRun(workspaceId, jobId, {
-          waitToken,
-          takeOverWait: now === true && cycle === 1,
-          deferrals: 0,
-        });
-        // The budget could not be checked: the claim went back and the job
-        // waits under this run's wait token. Sleep and try again, a few times,
-        // then leave it to the watchdog, which picks it up once the wait lapses.
-        for (let deferrals = 1; !claim.ok && claim.retryAt !== null; deferrals += 1) {
-          if (deferrals > MAX_DEFERRALS) {
-            return { jobId, ran: cycle > 1, cyclesRun: cycle - 1, reason: `${claim.reason} The job is waiting; the watchdog will try it again.` };
-          }
-          yield { phase: "scheduled", title: claim.title, runAt: claim.retryAt };
-          await sleep(new Date(claim.retryAt));
-          claim = await claimForRun(workspaceId, jobId, { waitToken, takeOverWait: false, deferrals });
-        }
-        if (!claim.ok) return { jobId, ran: cycle > 1, cyclesRun: cycle - 1, reason: claim.reason };
-
-        // A cancel that landed between the claim and here: the bot never starts.
-        const beforeWork = await standing(workspaceId, jobId, claim.token);
-        if (beforeWork !== "owns") {
-          await closeBudget(workspaceId, claim.token, "release");
-          return stoppedEarly(jobId, beforeWork);
-        }
-
-        yield { phase: claim.revising ? "revising" : "working", bot: claim.botName, title: claim.title };
-
-        const working: Promise<Settled> = ctx
-          // No output schema: the result of record is what finish_job stored. A
-          // structured final answer is welcome but not required; see salvageResult.
-          .agent("teammate", { message: claim.brief })
-          .then(
-            (raw): Settled => ({ ok: true, raw }),
-            (error: unknown): Settled => ({ ok: false, error: describeError(error) }),
-          );
-
-        // Heartbeat: while the bot works, look at the job every minute and keep
-        // the lease fresh, so the watchdog never mistakes a long job for a dead
-        // one and starts a second copy. A cancel reaches the bot itself, not
-        // this wait: eve gives a workflow no handle on the child `ctx.agent`
-        // started, so the bot fails its turn before its next model call (the
-        // teammate's `fence` hook), which settles `working`, and every job
-        // write or guarded action it tries until then is refused. The cancel
-        // also kills the run's shell commands, so a long command does not hold
-        // the bot back from that call. A bot parked on a card is noticed at the
-        // next look. (A Workflow hook resumed by the cancel was tried here and
-        // made replay diverge; see run-stop.ts.)
-        let settled: Settled | null = null;
-        let looks = 0;
-        while (settled === null) {
-          const wake = await nextWake(working, sleep(CHECK_EVERY));
-          if (wake.kind === "settled") {
-            settled = wake.settled;
-            continue;
-          }
-          looks += 1;
-          const still =
-            looks % RENEW_EVERY === 0
-              ? await keepLease(workspaceId, jobId, claim.token)
-              : (await standing(workspaceId, jobId, claim.token)) === "owns";
-          if (!still) {
-            await closeBudget(workspaceId, claim.token, "release");
-            return stoppedEarly(jobId, await standing(workspaceId, jobId, claim.token));
-          }
-        }
-
-        // A cancel can land while the bot works, and stopping its session is
-        // one way the child returns at all: whatever it left is not this
-        // job's result any more, so nothing is salvaged, failed, or closed.
-        const afterWork = await standing(workspaceId, jobId, claim.token);
-        if (afterWork !== "owns") {
-          await closeBudget(workspaceId, claim.token, "release");
-          return stoppedEarly(jobId, afterWork);
-        }
-
-        // The budget stopped the bot mid-run (see the teammate's usage hook):
-        // the job waits for a person with the reason, rather than failing.
-        const budgetStop = settled.ok ? null : await budgetHalted(workspaceId, claim.token);
-        if (budgetStop !== null) {
-          await markBlocked(workspaceId, jobId, budgetStop, claim.token);
-          return { jobId, ran: true as const, status: "blocked" as const, reason: budgetStop };
-        }
-
-        // What the run left behind, in order of trust: the result finish_job
-        // recorded, a structured final answer, or the final answer as text with
-        // the files saved along the way. A run that failed outright may still
-        // have recorded a result before it did.
-        const salvaged = await salvageResult(workspaceId, jobId, claim, settled.ok ? settled.raw : null);
-        if (salvaged === null) {
-          const error = settled.ok ? "The bot ended without a result: nothing was recorded, said, or saved." : settled.error;
-          await markFailed(workspaceId, jobId, error, claim.token);
-          return { jobId, ran: true as const, status: "failed" as const, error };
-        }
-        const result: JobResult = salvaged;
-
-        if (!claim.requiresSignoff && !result.needsHuman) {
-          // Observation only: what a grader would have said about this close,
-          // recorded beside what actually happened. It decides nothing yet.
-          await reviewClose(workspaceId, jobId, claim, result);
-          done = { result, token: claim.token, title: claim.title, botName: claim.botName, previous: claim.resultAtClaim };
-          break work;
-        }
-        if (cycle > 1) {
-          // A routine's later cycle cannot show a card from this run; a fresh run asks instead.
-          const reason = "This cycle needs a person's review.";
-          await markBlocked(workspaceId, jobId, reason, claim.token, result);
-          return {
-            jobId,
-            ran: true as const,
-            status: "blocked" as const,
-            cyclesRun: cycle,
-            reason,
-            next: "Call run_job for this job again; the fresh run shows the person its review card.",
-            result,
-          };
-        }
-
-        // Blocked with a sign-off lease: the watchdog leaves it alone, and a
-        // manual re-run is refused until this request is answered or times out.
-        const held = await parkForSignoff(workspaceId, jobId, claim.token, result);
-        if (!held) {
-          await closeBudget(workspaceId, claim.token, "release");
-          return {
-            jobId,
-            ran: true as const,
-            status: "superseded" as const,
-            reason: "The job was cancelled or taken over before sign-off.",
-            result,
-          };
-        }
-
-        yield { phase: "awaiting sign-off", bot: claim.botName, title: claim.title };
-
-        const pending = ctx.ask({
-          prompt: [
-            claim.requiresSignoff
-              ? `${claim.botName} finished "${claim.title}" and needs your sign-off.`
-              : `${claim.botName} finished "${claim.title}" but needs you before it counts as done.`,
-            "",
-            result.summary,
-            "",
-            result.deliverable.slice(0, 1_500),
-            result.openQuestions.length > 0
-              ? `\nOpen questions:\n${result.openQuestions.map((q) => `- ${q}`).join("\n")}`
-              : "",
-          ].join("\n"),
-          display: "confirmation",
-          allowFreeform: true,
-          options: [
-            { id: "approve", label: "Approve", style: "primary" },
-            { id: "revise", label: "Send back" },
-          ],
-        });
-
-        // `sleep` is a durable timer, not a setTimeout: nothing is held open
-        // while the request sits on the operator's channel.
-        const answer = await Promise.race([pending, sleep(SIGNOFF_TIMEOUT).then(() => null)]);
-        // A cancel while the card waited: the answer no longer decides anything.
-        const afterCard = await standing(workspaceId, jobId, claim.token);
-        if (afterCard !== "owns") return stoppedEarly(jobId, afterCard);
-
-        if (answer === null) {
-          await markBlocked(workspaceId, jobId, "Sign-off timed out after 24h.", claim.token, result);
-          return { jobId, ran: true as const, status: "blocked" as const, reason: "Sign-off timed out after 24h.", result };
-        }
-        if (answer.optionId === "approve") {
-          signedOff = true;
-          done = { result, token: claim.token, title: claim.title, botName: claim.botName, previous: claim.resultAtClaim };
-          break work;
-        }
-
-        const note = answer.text?.trim() ?? "";
-        if (note === "") {
-          const reason = "Sent back without a note.";
-          await markBlocked(workspaceId, jobId, reason, claim.token, result);
-          return {
-            jobId,
-            ran: true as const,
-            status: "blocked" as const,
-            reason,
-            next: "Ask the person what to change, then call run_job for this job again.",
-            result,
-          };
-        }
-        // The revision is a fresh run, so its review card reaches the person: the job
-        // goes back in the queue with the note in its brief, next to this result.
-        await markSentBack(workspaceId, jobId, note, claim.token, result);
-        return {
+      if (hold.kind === "wait") {
+        ctx.reply({
           jobId,
-          ran: true as const,
-          status: "sent back" as const,
-          note,
-          next: "Call run_job for this job now: the note is in its brief and the same bot revises it. Do not open a new job or ask first.",
-          result,
-        };
-      }
-      if (done === null) {
-        return { jobId, ran: true as const, status: "superseded" as const, reason: "The run ended without a result." };
-      }
-
-      // 3. Close.
-      const closed = await markDone(workspaceId, jobId, done.result, done.token);
-      // Cancelled after the work (during sign-off, say): completeJob left it cancelled.
-      if (closed.status === "cancelled") return stoppedEarly(jobId, "cancelled");
-      if (closed.nextRunAt === null) {
-        return {
-          jobId,
-          ran: true as const,
-          status: closed.status ?? ("superseded" as const),
-          ...(signedOff ? { signedOff: true as const } : {}),
-          result: done.result,
-        };
-      }
-
-      // 4. A routine: report this cycle and keep going, until it is time to
-      // hand off to a fresh run.
-      if (cycle >= MAX_CYCLES || Date.parse(closed.nextRunAt) - startedAt > HANDOFF_AFTER_MS) {
-        return {
-          jobId,
-          ran: true as const,
+          ran: false as const,
           status: "scheduled" as const,
-          cyclesRun: cycle,
-          nextRunAt: closed.nextRunAt,
-          ...(signedOff ? { signedOff: true as const } : {}),
-          next: "This routine hands off to a fresh run: call run_job for it again now, and it will wait until nextRunAt.",
-          result: done.result,
-        };
-      }
-      // A monitor that finds the same thing again says nothing: the feed keeps
-      // the record, and the thread stays worth reading.
-      if (sameFindings(done.previous, done.result)) {
-        await noteQuietCycle(workspaceId, jobId, done.botName, closed.nextRunAt);
-      } else {
-        yield task.postMessage(cycleReport(done.title, jobId, done.result, closed.nextRunAt));
+          runAt: hold.runAt,
+          note: "Waiting for its start time without holding this conversation. When it is due, this thread receives \"Job … is due\": call run_job for it then.",
+        });
+        await waitThenWake(workspaceId, jobId, waitToken, hold.runAt);
+        return;
       }
     }
+
+    // 2. Due: run one cycle inside this call.
+    const outcome = await runCycle(workspaceId, jobId, now === true, call.abortSignal, ctx);
+    if (outcome.kind === "reply") {
+      ctx.reply(outcome.reply);
+      return;
+    }
+
+    // 3. A routine: answer this cycle, then wait for the next one, idle.
+    ctx.reply(outcome.reply);
+    const waitToken = await newWaitToken();
+    const hold = await holdForStart(workspaceId, jobId, waitToken);
+    if (hold.kind === "wait") await waitThenWake(workspaceId, jobId, waitToken, hold.runAt);
+    else if (hold.kind === "due") await wakeRoom(workspaceId, jobId, waitToken);
   },
 });
+
+/** Sleeps until the job's start time, following reschedules, then wakes its room. */
+async function waitThenWake(workspaceId: string, jobId: string, waitToken: string, firstRunAt: string): Promise<void> {
+  let runAt = firstRunAt;
+  for (let wakes = 0; wakes < MAX_WAKES; wakes += 1) {
+    await sleep(new Date(runAt));
+    const hold = await holdForStart(workspaceId, jobId, waitToken);
+    if (hold.kind === "refused") return;
+    if (hold.kind === "due") {
+      await wakeRoom(workspaceId, jobId, waitToken);
+      return;
+    }
+    runAt = hold.runAt;
+  }
+  // Rescheduled too many times: the watchdog picks it up once this wait lapses.
+}
+
+type CycleOutcome =
+  /** The call's answer, and nothing to wait for. */
+  | { readonly kind: "reply"; readonly reply: Record<string, unknown> }
+  /** A routine's cycle: answer, then wait for the next one. */
+  | { readonly kind: "routine"; readonly reply: Record<string, unknown> };
+
+const answer = (reply: Record<string, unknown>): CycleOutcome => ({ kind: "reply", reply });
+
+/** One cycle of work: claim, the Bot's turn, sign-off when needed, close. */
+async function runCycle(
+  workspaceId: string,
+  jobId: string,
+  startNow: boolean,
+  abortSignal: AbortSignal,
+  ctx: WorkflowServeContext,
+): Promise<CycleOutcome> {
+  const waitToken = await newWaitToken();
+  let signedOff = false;
+  let claim = await claimForRun(workspaceId, jobId, { waitToken, takeOverWait: startNow, deferrals: 0 });
+  // The budget could not be checked: the claim went back and the job waits under
+  // this wait token. Sleep and try again, a few times, then leave it to the watchdog.
+  for (let deferrals = 1; !claim.ok && claim.retryAt !== null; deferrals += 1) {
+    if (deferrals > MAX_DEFERRALS) {
+      return answer({ jobId, ran: false, reason: `${claim.reason} The job is waiting; the watchdog will try it again.` });
+    }
+    await sleep(new Date(claim.retryAt));
+    claim = await claimForRun(workspaceId, jobId, { waitToken, takeOverWait: false, deferrals });
+  }
+  if (!claim.ok) return answer({ jobId, ran: false, reason: claim.reason });
+
+  // A cancel that landed between the claim and here: the bot never starts.
+  const beforeWork = await standing(workspaceId, jobId, claim.token);
+  if (beforeWork !== "owns") {
+    await closeBudget(workspaceId, claim.token, "release");
+    return answer(stoppedEarly(jobId, beforeWork));
+  }
+
+  // The Bot's turn stops when this call is cancelled from eve, or when a look
+  // below finds the job stopped: the one handle on the child eve gives.
+  const stop = new AbortController();
+  if (abortSignal.aborted) stop.abort();
+  else abortSignal.addEventListener("abort", () => stop.abort(), { once: true });
+
+  // No output schema: the result of record is what finish_job stored. A
+  // structured final answer is welcome but not required; see salvageResult.
+  const working: Promise<Settled> = ctx
+    .agent("teammate")
+    .send(claim.brief, { signal: stop.signal })
+    .then((response) => response.result())
+    .then(
+      (result): Settled =>
+        result.status === "failed" ? { ok: false, error: result.error?.message ?? "The bot's turn failed." } : { ok: true, raw: result.data ?? result.message ?? null },
+      (error: unknown): Settled => ({ ok: false, error: describeError(error) }),
+    );
+
+  // Heartbeat: while the bot works, look at the job every 20 seconds and keep
+  // the lease fresh, so the watchdog never mistakes a long job for a dead one
+  // and starts a second copy. A look that finds the job cancelled, taken over,
+  // or halted by the budget cancels the Bot's turn; the Bot's model resolver
+  // refuses its next step on its own as well (see the teammate's lib/stops.ts).
+  let settled: Settled | null = null;
+  let looks = 0;
+  while (settled === null) {
+    const wake = await nextWake(working, sleep(CHECK_EVERY));
+    if (wake.kind === "settled") {
+      settled = wake.settled;
+      continue;
+    }
+    looks += 1;
+    const still =
+      looks % RENEW_EVERY === 0 ? await keepLease(workspaceId, jobId, claim.token) : (await standing(workspaceId, jobId, claim.token)) === "owns";
+    if (!still) {
+      stop.abort();
+      await closeBudget(workspaceId, claim.token, "release");
+      return answer(stoppedEarly(jobId, await standing(workspaceId, jobId, claim.token)));
+    }
+    // The budget halted the run: its model resolver refuses the next step, and this stops the turn outright.
+    if ((await budgetHalted(workspaceId, claim.token)) !== null) stop.abort();
+  }
+
+  // Stopped from eve (a task cancel, or the conversation started over): the job is cancelled too.
+  if (abortSignal.aborted && !stop.signal.aborted) stop.abort();
+  if (abortSignal.aborted) {
+    await cancelFromEve(workspaceId, jobId, claim.token);
+    await closeBudget(workspaceId, claim.token, "release");
+    return answer(stoppedEarly(jobId, "cancelled"));
+  }
+
+  // A cancel can land while the bot works, and stopping its session is one way
+  // the child returns at all: whatever it left is not this job's result any more.
+  const afterWork = await standing(workspaceId, jobId, claim.token);
+  if (afterWork !== "owns") {
+    await closeBudget(workspaceId, claim.token, "release");
+    return answer(stoppedEarly(jobId, afterWork));
+  }
+
+  // The budget stopped the bot mid-run (see the teammate's usage hook): the job
+  // waits for a person with the reason, rather than failing.
+  const budgetStop = settled.ok ? null : await budgetHalted(workspaceId, claim.token);
+  if (budgetStop !== null) {
+    await markBlocked(workspaceId, jobId, budgetStop, claim.token);
+    return answer({ jobId, ran: true, status: "blocked", reason: budgetStop });
+  }
+
+  // What the run left behind, in order of trust: the result finish_job
+  // recorded, a structured final answer, or the final answer as text with the
+  // files saved along the way.
+  const salvaged = await salvageResult(workspaceId, jobId, claim, settled.ok ? settled.raw : null);
+  if (salvaged === null) {
+    const error = settled.ok ? "The bot ended without a result: nothing was recorded, said, or saved." : settled.error;
+    await markFailed(workspaceId, jobId, error, claim.token);
+    return answer({ jobId, ran: true, status: "failed", error });
+  }
+  const result: JobResult = salvaged;
+
+  if (claim.requiresSignoff || result.needsHuman) {
+    // Blocked with a sign-off lease: the watchdog leaves it alone, and a manual
+    // re-run is refused until this request is answered or times out.
+    const held = await parkForSignoff(workspaceId, jobId, claim.token, result);
+    if (!held) {
+      await closeBudget(workspaceId, claim.token, "release");
+      return answer({ jobId, ran: true, status: "superseded", reason: "The job was cancelled or taken over before sign-off.", result });
+    }
+
+    const pending = ctx.ask({
+      prompt: [
+        claim.requiresSignoff
+          ? `${claim.botName} finished "${claim.title}" and needs your sign-off.`
+          : `${claim.botName} finished "${claim.title}" but needs you before it counts as done.`,
+        "",
+        result.summary,
+        "",
+        result.deliverable.slice(0, 1_500),
+        result.openQuestions.length > 0 ? `\nOpen questions:\n${result.openQuestions.map((q) => `- ${q}`).join("\n")}` : "",
+      ].join("\n"),
+      display: "confirmation",
+      allowFreeform: true,
+      options: [
+        { id: "approve", label: "Approve", style: "primary" },
+        { id: "revise", label: "Send back" },
+      ],
+    });
+
+    // `sleep` is a durable timer: nothing is held open while the request sits on the channel.
+    const response = await Promise.race([pending, sleep(SIGNOFF_TIMEOUT).then(() => null)]);
+    // A cancel while the card waited: the answer no longer decides anything.
+    const afterCard = await standing(workspaceId, jobId, claim.token);
+    if (afterCard !== "owns") return answer(stoppedEarly(jobId, afterCard));
+
+    if (response === null || response.status !== "answered") {
+      const reason = response === null ? "Sign-off timed out after 24h." : "The sign-off request was withdrawn.";
+      await markBlocked(workspaceId, jobId, reason, claim.token, result);
+      return answer({ jobId, ran: true, status: "blocked", reason, result });
+    }
+    if (response.optionId === "approve") {
+      signedOff = true;
+    } else {
+      const note = response.text?.trim() ?? "";
+      if (note === "") {
+        const reason = "Sent back without a note.";
+        await markBlocked(workspaceId, jobId, reason, claim.token, result);
+        return answer({ jobId, ran: true, status: "blocked", reason, next: "Ask the person what to change, then call run_job for this job again.", result });
+      }
+      // The revision is a fresh call, so its review card reaches the person: the job
+      // goes back in the queue with the note in its brief, next to this result.
+      await markSentBack(workspaceId, jobId, note, claim.token, result);
+      return answer({
+        jobId,
+        ran: true,
+        status: "sent back",
+        note,
+        next: "Call run_job for this job now: the note is in its brief and the same bot revises it. Do not open a new job or ask first.",
+        result,
+      });
+    }
+  } else {
+    // Observation only: what a grader would have said about this close,
+    // recorded beside what actually happened. It decides nothing yet.
+    await reviewClose(workspaceId, jobId, claim, result);
+  }
+
+  // Close.
+  const closed = await markDone(workspaceId, jobId, result, claim.token);
+  // Cancelled after the work (during sign-off, say): completeJob left it cancelled.
+  if (closed.status === "cancelled") return answer(stoppedEarly(jobId, "cancelled"));
+  if (closed.nextRunAt === null) {
+    return answer({ jobId, ran: true, status: closed.status ?? "superseded", ...(signedOff ? { signedOff: true } : {}), result });
+  }
+
+  // A routine. A monitor that finds the same thing again says nothing: the feed
+  // keeps the record, and the thread stays worth reading.
+  if (sameFindings(claim.resultAtClaim, result)) {
+    await noteQuietCycle(workspaceId, jobId, claim.botName, closed.nextRunAt);
+    return {
+      kind: "routine",
+      reply: { jobId, ran: true, status: "scheduled", nextRunAt: closed.nextRunAt, quiet: true, note: "Nothing new this cycle: say nothing to the person." },
+    };
+  }
+  return {
+    kind: "routine",
+    reply: {
+      jobId,
+      ran: true,
+      status: "scheduled",
+      nextRunAt: closed.nextRunAt,
+      ...(signedOff ? { signedOff: true } : {}),
+      report: cycleReport(claim.title, jobId, result, closed.nextRunAt),
+      result,
+    },
+  };
+}
 
 /** The run's answer when it finds the job is no longer its own: nothing recorded. */
 function stoppedEarly(jobId: string, standing: Standing) {
@@ -678,9 +692,25 @@ async function newWaitToken(): Promise<string> {
   return newId("wait");
 }
 
-async function clockNow(): Promise<number> {
+
+/**
+ * The start time came: hand the wait over as a dispatch, exactly as the
+ * watchdog does, and wake the room with the same message, so the `run_job`
+ * call that follows takes the job. Delivered at once when the server can call
+ * itself, else by the console's poll or the watchdog (see `lib/outbox.ts`).
+ */
+async function wakeRoom(workspaceId: string, jobId: string, waitToken: string): Promise<void> {
   "use step";
-  return Date.now();
+  const job = await handOffWait(workspaceId, jobId, waitToken, { token: newId("dispatch"), forMs: DISPATCH_LEASE_MS });
+  if (job === null) return;
+  await enqueue({ workspaceId, room: job.room, message: dueMessage(job) });
+  await flushOutboxSoon();
+}
+
+/** eve stopped the run (a task cancel, or the room started over): cancel the job with it. */
+async function cancelFromEve(workspaceId: string, jobId: string, token: string): Promise<void> {
+  "use step";
+  if ((await runStanding(workspaceId, jobId, token)) === "owns") await cancelJob(workspaceId, jobId);
 }
 
 async function holdForStart(workspaceId: string, jobId: string, token: string): Promise<Hold> {
