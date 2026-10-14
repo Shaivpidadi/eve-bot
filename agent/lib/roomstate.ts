@@ -42,6 +42,14 @@ export interface RoomState {
    * address no longer resolves to it, and this is how its thread still reads back.
    */
   sessionId?: string | null;
+  /**
+   * The thread's earlier sessions, oldest first: ones the watchdog moved it off,
+   * and ones eve replaced (a session made by an older eve version is ended on
+   * the next message and a fresh one takes over). The thread reads them back
+   * before the current one, so a change of session never empties it. Starting
+   * over clears them.
+   */
+  sessions?: string[];
   /** How many times the room was started over; part of its session address (see `rooms.ts`). */
   generation?: number;
   /** When the room was last started over: the thread shows nothing recorded before this. */
@@ -127,6 +135,7 @@ export async function resetRoom(workspaceId: string, room: string): Promise<numb
       answered: [],
       active: false,
       sessionId: null,
+      sessions: [],
       generation,
       clearedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -189,6 +198,7 @@ export async function restartRoom(workspaceId: string, room: string): Promise<nu
       pending: [],
       active: false,
       sessionId: null,
+      sessions: withEarlier(state.sessions, state.sessionId ?? null),
       generation,
       sentAt: null,
       turnAt: null,
@@ -199,9 +209,19 @@ export async function restartRoom(workspaceId: string, room: string): Promise<nu
   return generation;
 }
 
+const MAX_EARLIER_SESSIONS = 20;
+
+/** The earlier sessions with `previous` added at the end, once. */
+function withEarlier(sessions: readonly string[] | undefined, previous: string | null): string[] {
+  const list = (sessions ?? []).filter((id) => id !== previous);
+  return previous === null ? list : [...list, previous].slice(-MAX_EARLIER_SESSIONS);
+}
+
 export function noteSession(workspaceId: string, room: string, sessionId: string): Promise<void> {
   return updateRoom(workspaceId, room, (state) =>
-    state.sessionId === sessionId ? state : { ...state, sessionId },
+    state.sessionId === sessionId
+      ? state
+      : { ...state, sessions: withEarlier(state.sessions, state.sessionId ?? null).filter((id) => id !== sessionId), sessionId },
   );
 }
 

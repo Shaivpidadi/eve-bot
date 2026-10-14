@@ -1,4 +1,4 @@
-import { DELETE, GET, PATCH, POST, defineChannel } from "eve/channels";
+import { DELETE, GET, PATCH, POST, SessionStrandedError, defineChannel } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
 
@@ -190,6 +190,30 @@ async function resolveRoom(access: Access, raw: string | undefined): Promise<str
     return json({ error: "no such bot" }, 404);
   }
   return raw;
+}
+
+/**
+ * How many events a session that is no longer the room's recorded, read once:
+ * an earlier session's history does not change.
+ */
+const recordedLengths = new Map<string, number>();
+async function recordedLength(session: { readonly id?: string; getEventStream(options: { startIndex?: number; follow?: boolean }): Promise<ReadableStream<unknown>> }): Promise<number> {
+  const id = session.id ?? "";
+  const known = recordedLengths.get(id);
+  if (known !== undefined) return known;
+  let length = 0;
+  try {
+    const reader = (await session.getEventStream({ startIndex: 0, follow: false })).getReader();
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) break;
+      length += 1;
+    }
+  } catch {
+    // Unreadable: count it as empty rather than block the thread.
+  }
+  if (id !== "") recordedLengths.set(id, length);
+  return length;
 }
 
 /** The room's current session address: its generation changes each time it is started over. */
@@ -455,10 +479,15 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       // ended, so the thread still reads back. The fallback id comes from this
       // workspace's own room record, never from the request.
       const live = await resolveSession(await addressOf(gate.access.workspaceId, room));
-      const sessionId =
-        live?.id ?? (await getRoomState(gate.access.workspaceId, room))?.sessionId ?? null;
+      const state = await getRoomState(gate.access.workspaceId, room);
+      const sessionId = live?.id ?? state?.sessionId ?? null;
       if (sessionId === null) return none();
       const session = live ?? attachSession(sessionId);
+      // The thread's earlier sessions are read back first, as recorded, so a new
+      // session never empties it; the reader's cursor runs across all of them,
+      // and the first session names the thread (see roomstate.ts).
+      const earlier = (state?.sessions ?? []).filter((id) => id !== sessionId);
+      const threadId = earlier[0] ?? sessionId;
 
       const requested = Number(new URL(request.url).searchParams.get("startIndex") ?? 0);
       const startIndex = Number.isInteger(requested) && requested >= 0 ? requested : 0;
@@ -494,14 +523,35 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
           void (async () => {
             try {
-              const events = await session.getEventStream({ startIndex });
-              if (!open) return void events.cancel().catch(() => undefined);
-              reader = events.getReader();
-              for (;;) {
-                const { value, done } = await reader.read();
-                if (done || !open) break;
-                controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+              const pipe = async (events: ReadableStream<unknown>) => {
+                if (!open) return void events.cancel().catch(() => undefined);
+                reader = events.getReader();
+                for (;;) {
+                  const { value, done } = await reader.read();
+                  if (done || !open) break;
+                  controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+                }
+              };
+              let skip = startIndex;
+              for (const id of earlier) {
+                if (!open) return;
+                const length = await recordedLength(attachSession(id));
+                if (skip >= length) {
+                  skip -= length;
+                  continue;
+                }
+                await pipe(await attachSession(id).getEventStream({ startIndex: skip, follow: false }));
+                skip = 0;
               }
+              let events: ReadableStream<unknown>;
+              try {
+                events = await session.getEventStream({ startIndex: skip });
+              } catch (error) {
+                // A session an older eve made is stranded: its history still reads, without following.
+                if (!SessionStrandedError.is(error)) throw error;
+                events = await session.getEventStream({ startIndex: skip, follow: false });
+              }
+              await pipe(events);
             } catch {
               // The session is gone or the reader left; either way the stream ends.
             } finally {
@@ -528,7 +578,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         headers: {
           "content-type": "application/x-ndjson; charset=utf-8",
           "cache-control": "no-store",
-          "x-bot-session": sessionId,
+          "x-bot-session": threadId,
           ...SECURITY_HEADERS,
         },
       });
