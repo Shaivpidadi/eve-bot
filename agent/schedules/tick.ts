@@ -6,6 +6,7 @@ import { reapIdleScreens } from "../lib/computer/reaper";
 import { chargeComputerRuntime } from "../lib/computer-spend";
 import { dispatchDue } from "../lib/dispatch";
 import { roomAttributes } from "../lib/rooms";
+import { deliverNotes } from "../lib/teammail";
 
 /**
  * The watchdog that keeps the team always-on.
@@ -34,6 +35,14 @@ export default defineSchedule({
           `[bot] watchdog: ${outcome.due} due, ${outcome.dispatched} dispatched${outcome.stranded > 0 ? `, ${outcome.stranded} stranded by a restart` : ""}, ${outcome.ms}ms`,
         );
       }),
+    );
+    // Teammates' notes to each other that no console pass delivered yet.
+    waitUntil(
+      deliverNotes((workspaceId, room, message) =>
+        to(ops, { workspaceId, room })
+          .send(message, { auth: { ...appAuth, attributes: roomAttributes(workspaceId, room) } })
+          .then(() => undefined),
+      ).catch(() => 0),
     );
     // Browsers nobody is using are stopped; they start again on the next use.
     waitUntil(reapIdleScreens().catch(() => 0));

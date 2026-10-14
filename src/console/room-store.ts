@@ -37,6 +37,8 @@ function failureNotice(message: string): Omit<Notice, "icon"> {
 
 export type RoomItem =
   | { readonly kind: "you" | "bot"; readonly key: string; readonly at: string; readonly text: string }
+  /** A teammate's message to this thread's member (see `agent/lib/teammail.ts`). */
+  | { readonly kind: "peer"; readonly key: string; readonly at: string; readonly from: string; readonly text: string }
   | ({ readonly kind: "notice"; readonly key: string; readonly at: string } & Notice)
   | { readonly kind: "ask"; readonly key: string; readonly at: string; readonly requestId: string };
 
@@ -88,6 +90,14 @@ export function humanTool(name: string): string {
   return TOOL_WORDS[bare] ?? bare.replaceAll("_", " ").replace(/^\w/, (first) => first.toUpperCase());
 }
 
+/** A teammate's note as it arrived: who sent it and what they said, without the guidance for the reader. */
+export function teammateNote(text: string): { from: string; text: string } | null {
+  const match = /^Teammate message from (.+?) \[mail_[a-z0-9]+\]:\n([\s\S]*)$/.exec(text);
+  if (match === null) return null;
+  const body = (match[2] ?? "").replace(/\n\n— If [\s\S]*$/, "").trim();
+  return { from: match[1] ?? "A teammate", text: body };
+}
+
 /** Messages the runtime wrote into the room: the dispatcher, the standup, task notices. */
 export function systemNotice(text: string): Notice | null {
   const due = /^Job (job_[a-z0-9]+) is due: "(.*)"\./.exec(text);
@@ -116,11 +126,15 @@ export function actionNotice(toolName: string, output: unknown): Notice | null {
       if (output.assigned !== true) return null;
       return typeof job.everyMinutes === "number"
         ? { icon: "clock", label: "Created Routine", detail: text(job.title) ?? "" }
-        : { icon: "folder", label: `Assigned to ${text(bot.name) ?? "a Bot"}`, detail: text(job.title) ?? "" };
+        : output.bot !== undefined && bot.pickedBy === "named"
+          ? { icon: "folder", label: `Handed to ${text(bot.name) ?? "a teammate"}`, detail: text(job.title) ?? "" }
+          : { icon: "folder", label: "Took it on", detail: text(job.title) ?? "" };
     case "update_bot":
       return output.updated === true ? { icon: "person", label: "Updated", detail: text(bot.name) ?? "" } : null;
     case "cancel_job":
       return output.cancelled === true ? { icon: "x", label: "Cancelled", detail: text(job.title) ?? "" } : null;
+    case "message_teammate":
+      return output.sent === true ? { icon: "mail", label: `Messaged ${text(output.to) ?? "a teammate"}` } : null;
     case "retire_bot":
       return output.retired === true ? { icon: "person", label: "Retired a Bot" } : null;
     default:
@@ -426,6 +440,11 @@ export class RoomStore {
     switch (event.type) {
       case "message.received": {
         const message = event.data.message;
+        const note = teammateNote(message);
+        if (note !== null) {
+          this.items.push({ kind: "peer", key, at, from: note.from, text: note.text });
+          break;
+        }
         const notice = systemNotice(message);
         if (notice !== null) {
           this.items.push({ kind: "notice", key, at, ...notice });

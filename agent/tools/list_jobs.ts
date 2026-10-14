@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { findBot, listBots } from "../lib/bots";
+import { findBot, listBots, HQ_BOT_ID } from "../lib/bots";
 import { listJobs } from "../lib/jobs";
 import { operator } from "../lib/session";
 
@@ -38,7 +38,7 @@ export default defineTool({
       }),
       listBots(who.workspaceId),
     ]);
-    const names = new Map(bots.map((entry) => [entry.id, entry.name]));
+    const names = new Map([[HQ_BOT_ID, "HQ"], ...bots.map((entry) => [entry.id, entry.name] as const)]);
     return {
       jobs: jobs.map((job) => ({
         id: job.id,

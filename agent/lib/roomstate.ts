@@ -23,6 +23,11 @@ export interface RoomState {
   readonly workspaceId: string;
   readonly room: string;
   preview: { text: string; from: "you" | "bot"; at: string } | null;
+  /**
+   * The person's latest message here, whole enough to tell who it names. Work
+   * goes to whoever was asked unless this names someone else (see `routing.ts`).
+   */
+  asked?: { text: string; at: string } | null;
   pending: PendingInput[];
   /**
    * Requests a person answered from the console. A request raised inside
@@ -139,6 +144,15 @@ export function notePreview(
     state.preview !== null && state.preview.at > at
       ? state
       : { ...state, preview: { text: trimmed, from, at } },
+  );
+}
+
+const ASKED_CHARS = 4000;
+
+export function noteAsked(workspaceId: string, room: string, text: string, at: string): Promise<void> {
+  const kept = text.slice(0, ASKED_CHARS);
+  return updateRoom(workspaceId, room, (state) =>
+    state.asked != null && state.asked.at > at ? state : { ...state, asked: { text: kept, at } },
   );
 }
 

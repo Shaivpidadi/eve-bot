@@ -8,6 +8,7 @@ import { Avatar } from "./avatar";
 import { clock, dividerWhen, needsDivider } from "./format";
 import { api } from "./api";
 import { Icon } from "./icons";
+import { MentionText, useTeam } from "./mentions";
 import { Prose } from "./prose";
 import type { RoomSnapshot, RoomStore, StepsItem, TimelineItem } from "./room-store";
 import { suggestionsFor } from "./suggestions";
@@ -66,6 +67,7 @@ export function Transcript({
   onOpenComputer: (requestId: string) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
+  const team = useTeam();
   const pinned = useRef(true);
   const [openSteps, setOpenSteps] = useState<ReadonlySet<string>>(() => new Set());
   const [notes, setNotes] = useState<ReadonlyMap<string, string>>(() => new Map());
@@ -128,7 +130,9 @@ export function Transcript({
         case "you":
           rows.push(
             <div key={item.key} className="msg-wrap you">
-              <div className="msg you">{item.text}</div>
+              <div className="msg you">
+                <MentionText text={item.text} />
+              </div>
               <RememberButton text={item.text} />
             </div>,
           );
@@ -143,6 +147,19 @@ export function Transcript({
             </div>,
           );
           break;
+        case "peer": {
+          const sender = team.find((entry) => entry.name.toLowerCase() === item.from.toLowerCase());
+          rows.push(
+            <div key={item.key} className="msg-wrap peer">
+              {sender === undefined ? null : <Avatar member={sender} size={24} />}
+              <div className="msg bot peer">
+                <span className="peer-name">{item.from}</span>
+                <Prose text={item.text} />
+              </div>
+            </div>,
+          );
+          break;
+        }
         case "notice":
           rows.push(
             <div key={item.key} className={item.tone === "error" ? "notice error" : "notice"}>

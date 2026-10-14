@@ -243,6 +243,7 @@ const ACTIVITY_ICON: Readonly<Record<string, IconName>> = {
   "computer.handback": "monitor",
   "computer.restored": "monitor",
   "computer.failed": "alert",
+  "team.message": "mail",
 };
 
 /** A feed line's headline: the job it is about, when the line names one in quotes. */

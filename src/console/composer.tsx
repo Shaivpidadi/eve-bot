@@ -2,7 +2,9 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { Avatar } from "./avatar";
 import { Icon } from "./icons";
+import { mentionChoices, typedMention, useTeam } from "./mentions";
 import type { RoomStore } from "./room-store";
 import { suggestionsFor } from "./suggestions";
 import type { Member } from "./types";
@@ -36,6 +38,29 @@ export function Composer({ member, live, store }: { member: Member; live: boolea
   const menu = useRef<HTMLDivElement>(null);
   const recognition = useRef<Dictation | null>(null);
   const Recognition = dictationApi();
+  const team = useTeam();
+  // Tagging: "@" before the caret opens a list of teammates to pick from.
+  const [caret, setCaret] = useState(0);
+  const [pick, setPick] = useState(0);
+  const [tagClosed, setTagClosed] = useState<number | null>(null);
+  const typed = typedMention(text, caret);
+  const choices = typed === null || tagClosed === typed.start ? [] : mentionChoices(team, typed.query, member.id);
+  const tagging = typed !== null && choices.length > 0;
+
+  const insertTag = (chosen: Member) => {
+    if (typed === null) return;
+    const before = text.slice(0, typed.start);
+    const after = text.slice(caret);
+    const tag = `@${chosen.name} `;
+    setText(`${before}${tag}${after.replace(/^\s+/, "")}`);
+    const next = before.length + tag.length;
+    setCaret(next);
+    setPick(0);
+    requestAnimationFrame(() => {
+      area.current?.focus();
+      area.current?.setSelectionRange(next, next);
+    });
+  };
 
   useLayoutEffect(() => {
     const element = area.current;
@@ -102,6 +127,27 @@ export function Composer({ member, live, store }: { member: Member; live: boolea
           void send(text);
         }}
       >
+        {tagging ? (
+          <div className="popover mention-menu" role="listbox" aria-label="Tag a teammate">
+            <h4>Tag a teammate</h4>
+            {choices.map((choice, index) => (
+              <button
+                key={choice.id}
+                type="button"
+                role="option"
+                aria-selected={index === Math.min(pick, choices.length - 1)}
+                className={index === Math.min(pick, choices.length - 1) ? "on" : undefined}
+                onPointerDown={(event) => event.preventDefault()}
+                onPointerEnter={() => setPick(index)}
+                onClick={() => insertTag(choice)}
+              >
+                <Avatar member={choice} size={20} />
+                <span className="mention-menu-name">{choice.name}</span>
+                <span className="mention-menu-role">{choice.title}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div className="composer-pop" ref={menu}>
           {menuOpen ? (
             <div className="popover">
@@ -127,9 +173,33 @@ export function Composer({ member, live, store }: { member: Member; live: boolea
           ref={area}
           rows={1}
           value={text}
-          placeholder={`Message ${member.name}`}
-          onChange={(event) => setText(event.target.value)}
+          placeholder={`Message ${member.name} · @ to tag a teammate`}
+          onChange={(event) => {
+            setText(event.target.value);
+            setCaret(event.target.selectionStart ?? event.target.value.length);
+            setPick(0);
+            setTagClosed(null);
+          }}
+          onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
           onKeyDown={(event) => {
+            if (tagging) {
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                setPick((current) => (current + (event.key === "ArrowDown" ? 1 : choices.length - 1)) % choices.length);
+                return;
+              }
+              if ((event.key === "Enter" || event.key === "Tab") && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                const chosen = choices[Math.min(pick, choices.length - 1)];
+                if (chosen !== undefined) insertTag(chosen);
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setTagClosed(typed?.start ?? null);
+                return;
+              }
+            }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               void send(text);

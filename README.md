@@ -135,7 +135,7 @@ Ollama is `http://ollama:11434/v1`.
 | | |
 | --- | --- |
 | **HQ** | The teammate you message. It writes a brief with success criteria, hands the job to the right Bot, and reports back. It does no work itself. |
-| **Bots** | Each has a name, a job, a persona, a playbook it learns, and its own thread. Every workspace starts with Atlas, a generalist. Retire a Bot and it stays gone; if a job ever finds nobody on the team, Atlas rejoins on his own. |
+| **Bots** | Each has a name, a job, a persona, a playbook it learns, and its own thread. Every workspace starts with Atlas, a generalist. Whoever you ask does the work, HQ included; it moves to another teammate only when you name or tag them (`@Ava`). Bots can message each other, and the answer comes back to the thread that asked. |
 | **One computer, kept** | A persistent Linux machine with one Chrome, a terminal, and files, shared by the whole team. Sign-ins carry across Bots. Backed up while Bots work, restored if it is ever replaced. |
 | **Watch and take over** | The screen sits in every thread. When a Bot hits a sign-in, a code, or a CAPTCHA, it asks you; you do the step in its live browser and hand back. Passwords go into the page, never through chat. |
 | **Durable jobs** | A run survives restarts and redeploys, waits for its start time with no compute, renews a lease so a dead run is noticed, and can park a day for your sign-off. A watchdog re-dispatches anything stranded, and the next run continues from the job's journal instead of starting over. |

@@ -1,5 +1,5 @@
 import { recentActivity } from "./activity";
-import { listBots } from "./bots";
+import { getBot, HQ_BOT_ID, listBots } from "./bots";
 import { budgetStatus, type BudgetStatus } from "./budget";
 import { computerMode, vercelCredentialsError, type ComputerMode } from "./computer-config";
 import { currentKind, type HandsKind } from "./hands/kinds";
@@ -178,13 +178,15 @@ export async function buildBoard(
   workspaceId: string,
   options: { after?: string } = {},
 ): Promise<Board> {
-  const [bots, open, recent, screens, ledger, budget] = await Promise.all([
+  const [bots, open, recent, screens, ledger, budget, hqWorker] = await Promise.all([
     listBots(workspaceId),
     listOpenJobs(workspaceId),
     recentActivity(workspaceId, { limit: FEED_WINDOW }),
     readScreens(),
     readLedger(workspaceId),
     budgetStatus(workspaceId),
+    // HQ does work too; its jobs are recorded like a Bot's (see `bots.ts`).
+    getBot(workspaceId, HQ_BOT_ID).then((worker) => worker!),
   ]);
   const rooms = await Promise.all(
     [HQ_ROOM, ...bots.map((bot) => roomForBot(bot.id))].map((room) =>
@@ -195,7 +197,21 @@ export async function buildBoard(
   const now = Date.now();
   const screen = workspaceScreen(screens, workspaceId);
   const members: Member[] = [
-    hqMember(rooms[0] ?? null, open, screen, ledger.hq),
+    hqMember(
+      rooms[0] ?? null,
+      open,
+      screen,
+      ledger.hq,
+      botMember(
+        hqWorker,
+        open.filter((job) => job.botId === HQ_BOT_ID),
+        rooms[0] ?? null,
+        recent.filter((event) => event.botId === HQ_BOT_ID),
+        screen,
+        now,
+        ledger.hq,
+      ),
+    ),
     ...bots
       .map((bot, index) =>
         botMember(
@@ -245,7 +261,7 @@ const recency = (member: Member) => member.preview?.at ?? member.profile?.hiredA
 const answeredIn = (room: RoomState | null): Member["answered"] =>
   Object.fromEntries((room?.answered ?? []).map((entry) => [entry.requestId, { outcome: entry.outcome, optionId: entry.optionId }]));
 
-function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAllocation | null, usage: Usage): Member {
+function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAllocation | null, usage: Usage, own: Member): Member {
   const pending = room?.pending ?? [];
   // From HQ's desk the team's browser is whoever is on it right now.
   const running = open.find((job) => job.status === "running");
@@ -256,16 +272,17 @@ function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAl
     name: "HQ",
     title: "Runs the team",
     status: "active",
-    presence: pending.length > 0 ? "waiting" : room?.active === true ? "thinking" : "idle",
-    action: pending[0]?.prompt ?? (room?.active === true ? "Thinking" : null),
+    // What HQ itself is doing: its own jobs, or the conversation.
+    presence: pending.length > 0 ? "waiting" : own.presence,
+    action: pending[0]?.prompt ?? own.action,
     preview: room?.preview ?? null,
     clearedAt: room?.clearedAt ?? null,
     usage,
     pending: pending.length,
     answered: answeredIn(room),
     computer: sharedComputer(screen, running, running?.id ?? null, openHandover(screen?.handover ?? null, open)),
-    routines: [],
-    files: [],
+    routines: own.routines,
+    files: own.files,
     pinned: false,
     section: null,
     hidden: false,

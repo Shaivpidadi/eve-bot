@@ -218,7 +218,8 @@ export type ActivityKind =
   | "computer.restored"
   | "computer.failed"
   | "computer.takeover"
-  | "computer.handback";
+  | "computer.handback"
+  | "team.message";
 
 export interface ActivityEvent {
   readonly id: string;

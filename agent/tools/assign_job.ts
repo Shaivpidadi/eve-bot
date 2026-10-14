@@ -1,44 +1,21 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { record } from "../lib/activity";
-import { defaultBot, findBot, hireBot, listBots } from "../lib/bots";
-import { DEFAULT_BOT } from "../lib/default-bot";
 import { assignJob } from "../lib/jobs";
 import { DEFAULT_EFFORT, EFFORT_DESCRIPTIONS, JOB_EFFORTS, type JobEffort } from "../lib/models";
 import { isRoomName } from "../lib/rooms";
+import { getRoomState } from "../lib/roomstate";
+import { routeWork } from "../lib/routing";
 import { operator } from "../lib/session";
 import { briefFromRecipe, findRecipe, noteRecipeUsed } from "../lib/recipes";
 import { DAYS, defaultTimezone, describeSchedule, isSchedule, nextRun, type Schedule } from "../lib/schedule";
 import { looseBoolean } from "../lib/tool-input";
-import type { Bot } from "../lib/types";
 
 type Rating = { readonly effort: JobEffort; readonly by: "hq" | "default" };
 
 /** The level HQ gave the job, or the default. A failed job re-runs one level up. */
 const rateEffort = (effort: JobEffort | undefined): Rating =>
   effort === undefined ? { effort: DEFAULT_EFFORT, by: "default" } : { effort, by: "hq" };
-
-type Pick = { readonly bot: Bot; readonly by: "named" | "default"; readonly note?: string };
-
-/**
- * Which Bot takes a job HQ did not name one for: the generalist. An empty
- * roster brings the generalist back rather than leaving HQ to improvise a
- * teammate. Retiring it stays deliberate; needing it does not.
- */
-async function pickBot(workspaceId: string): Promise<Pick> {
-  const active = (await listBots(workspaceId)).filter((bot) => bot.status === "active");
-  const fallback = (await defaultBot(workspaceId)) ?? active[0] ?? null;
-  if (fallback !== null) return { bot: fallback, by: "default" };
-  const hired = await hireBot({ workspaceId, hiredBy: "system", ...DEFAULT_BOT });
-  await record({
-    workspaceId,
-    kind: "bot.hired",
-    botId: hired.id,
-    text: `${DEFAULT_BOT.emoji} ${hired.name} rejoined the team: no Bot was left to take a job.`,
-  });
-  return { bot: hired, by: "default", note: `No Bot was on the team, so ${hired.name}, the generalist, rejoined it to take this job.` };
-}
 
 export default defineTool({
   description:
@@ -48,7 +25,7 @@ export default defineTool({
       .string()
       .optional()
       .describe(
-        "Bot name or id. Give it when the operator named the Bot, the job is in that Bot's own thread, or a Bot's role clearly fits. Otherwise leave it out and the generalist takes it; the result says who.",
+        "Leave this out: whoever was asked does the work (this thread's Bot, or HQ on HQ's desk). Give a teammate's name only when the person named or tagged them (@Name) in their message; handing work on otherwise is refused.",
       ),
     title: z.string().min(1).max(120),
     brief: z
@@ -116,20 +93,13 @@ export default defineTool({
       .describe("Where the result should be reported. Defaults to the conversation you are in."),
   }),
   label: {
-    start: ({ bot, title }) => `Assign "${title}" to ${bot}`,
+    start: ({ bot, title }) => (bot === undefined || bot.trim() === "" ? `Take on "${title}"` : `Hand "${title}" to ${bot}`),
   },
   async execute(input, ctx) {
     const who = operator(ctx);
-    let pick: Pick;
-    if (input.bot !== undefined && input.bot.trim() !== "") {
-      const named = await findBot(who.workspaceId, input.bot);
-      if (named === null) {
-        return { assigned: false as const, reason: `No bot called ${input.bot}. Leave bot out to have one picked, or hire one.` };
-      }
-      pick = { bot: named, by: "named" };
-    } else {
-      pick = await pickBot(who.workspaceId);
-    }
+    const asked = who.automated ? null : ((await getRoomState(who.workspaceId, who.room).catch(() => null))?.asked?.text ?? null);
+    const pick = await routeWork({ workspaceId: who.workspaceId, threadBotId: who.botId, named: input.bot, asked, automated: who.automated });
+    if (!pick.ok) return { assigned: false as const, reason: pick.reason };
     const bot = pick.bot;
     if (bot.status === "paused") {
       return { assigned: false as const, reason: `${bot.name} is paused. Resume it first.` };
@@ -210,7 +180,6 @@ export default defineTool({
         id: bot.id,
         name: bot.name,
         pickedBy: pick.by,
-        ...(pick.note === undefined ? {} : { note: pick.note }),
       },
       nextStep:
         job.status === "queued"

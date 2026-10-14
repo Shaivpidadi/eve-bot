@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import type { PluggableList } from "unified";
 
 import { Icon } from "./icons";
+import { linkMentions, MENTION_HREF, MentionChip, useTeam } from "./mentions";
 
 /**
  * A teammate's message, rendered from GitHub-flavoured Markdown: paragraphs,
@@ -23,7 +24,7 @@ const normalize = (text: string) => text.replace(LOOSE_BULLET, "$1- ").replace(P
 
 const remarkPlugins: PluggableList = [[remarkGfm, { singleTilde: false }]];
 
-const SAFE_PROTOCOLS = /^(https?:|mailto:)/i;
+const SAFE_PROTOCOLS = /^(https?:|mailto:|mention:)/i;
 
 /** Relative and unknown-scheme links are shown as text, not opened. */
 function safeUrl(url: string): string {
@@ -90,7 +91,9 @@ const components: Components = {
   h5: ({ children }) => <p className="h">{children}</p>,
   h6: ({ children }) => <p className="h">{children}</p>,
   a: ({ href, children }) =>
-    href ? (
+    href && MENTION_HREF.test(href) ? (
+      <Mention id={decodeURIComponent(MENTION_HREF.exec(href)?.[1] ?? "")}>{children}</Mention>
+    ) : href ? (
       <a href={href} target="_blank" rel="noopener noreferrer">
         {children}
       </a>
@@ -105,10 +108,17 @@ const components: Components = {
   ),
 };
 
+/** A tag in a reply: the teammate's chip, or the plain text if they have left. */
+function Mention({ id, children }: { id: string; children: ReactNode }) {
+  const member = useTeam().find((entry) => entry.id === id);
+  return member === undefined ? <span>{children}</span> : <MentionChip member={member} />;
+}
+
 export function Prose({ text }: { text: string }) {
+  const team = useTeam();
   return (
     <Markdown remarkPlugins={remarkPlugins} components={components} urlTransform={safeUrl} skipHtml>
-      {normalize(text)}
+      {linkMentions(normalize(text), team)}
     </Markdown>
   );
 }

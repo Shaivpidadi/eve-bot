@@ -6,7 +6,7 @@ import { authenticate, sessionCookie, setStoredName, tokensConfigured, type Acce
 import { record } from "../lib/activity";
 import { readArtifact } from "../lib/artifacts";
 import { buildBoard } from "../lib/board";
-import { findBot, getBot, hireBot, listBots, patchBot, retireBot } from "../lib/bots";
+import { findBot, getBot, hireBot, isHq, listBots, patchBot, retireBot } from "../lib/bots";
 import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
@@ -26,6 +26,7 @@ import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } fro
 import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
 import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
+import { deliverNotes } from "../lib/teammail";
 import { crashRun, qaEnabled } from "../lib/qa";
 import { rewind } from "../lib/rewind";
 import { exportEnabled, exportTo } from "../lib/store/transfer";
@@ -137,6 +138,14 @@ const SWEEP_EVERY_MS = 60_000;
 let lastSweepAt = 0;
 
 /** The app itself, acting in a room: what a schedule sends as. */
+/** Hands a teammate's note to its thread, as the runtime (see `teammail.ts`). */
+const sendInto =
+  (from: (address: string) => { send: (message: string, options: { auth: SessionAuthContext }) => Promise<unknown> }) =>
+  async (workspaceId: string, room: string, message: string): Promise<void> => {
+    await from(await addressOf(workspaceId, room)).send(message, { auth: runtimePrincipal(workspaceId, room) });
+    await noteSent(workspaceId, room).catch(() => undefined);
+  };
+
 function runtimePrincipal(workspaceId: string, room: string): SessionAuthContext {
   return {
     attributes: roomAttributes(workspaceId, room),
@@ -236,17 +245,19 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /** Everything the console needs: the roster with presence, and the feed. */
-    GET("/bot/v1/state", async (request) => {
+    GET("/bot/v1/state", async (request, { from, waitUntil }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const after = new URL(request.url).searchParams.get("after");
+      // The console polls this every few seconds, so teammates' notes to each other go out here.
+      waitUntil(deliverNotes(sendInto(from), { workspaceId: gate.access.workspaceId }).catch(() => 0));
       const board = await buildBoard(gate.access.workspaceId, {
         ...(after !== null && !Number.isNaN(Date.parse(after)) ? { after } : {}),
       });
       return json({ ...board, user: gate.access.user, profile: gate.access.profile });
     }),
 
-    POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params }) => {
+    POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params, waitUntil }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const room = await resolveRoom(gate.access, params.room);
@@ -269,6 +280,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         auth: principal(gate.access, room),
       });
       await noteSent(workspaceId, room).catch(() => undefined);
+      waitUntil(deliverNotes(sendInto(from), { workspaceId }).catch(() => 0));
       return json({ room, sessionId: session.id, ...(recovered ? { recovered: true } : {}) });
     }),
 
@@ -571,8 +583,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (status === undefined && name === undefined && role === undefined && persona === undefined && !placement) {
         return json({ error: "nothing to change" }, 400);
       }
-      const before = botId === undefined ? null : await getBot(workspaceId, botId);
+      const before = botId === undefined || isHq(botId) ? null : await getBot(workspaceId, botId);
       if (before === null) return json({ error: "no such bot" }, 404);
+      if (name !== undefined && name.trim().toLowerCase() === "hq") return json({ error: "HQ is taken: it is the team's chief of staff." }, 409);
       if (name !== undefined) {
         // Bots are addressed by name, so two with the same name would be ambiguous.
         const clash = await findBot(workspaceId, name);
@@ -609,7 +622,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const workspaceId = gate.access.workspaceId;
-      const source = params.botId === undefined ? null : await getBot(workspaceId, params.botId);
+      const source = params.botId === undefined || isHq(params.botId) ? null : await getBot(workspaceId, params.botId);
       if (source === null) return json({ error: "no such bot" }, 404);
       const taken = new Set((await listBots(workspaceId)).map((bot) => bot.name.toLowerCase()));
       let name = `${source.name} copy`.slice(0, 40);
@@ -636,6 +649,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const workspaceId = gate.access.workspaceId;
+      if (params.botId !== undefined && isHq(params.botId)) return json({ error: "HQ runs the team and cannot be removed." }, 400);
       const bot = params.botId === undefined ? null : await getBot(workspaceId, params.botId);
       if (bot === null) return json({ error: "no such bot" }, 404);
       const open = (await listOpenJobs(workspaceId)).filter((job) => job.botId === bot.id);

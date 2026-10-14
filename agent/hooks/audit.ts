@@ -3,7 +3,7 @@ import type { HookContext } from "eve/hooks";
 
 import { record } from "../lib/activity";
 import { isSystemMessage } from "../lib/rooms";
-import { noteActive, notePending, notePreview, noteResolved, noteSession, noteTurnStarted } from "../lib/roomstate";
+import { noteActive, noteAsked, notePending, notePreview, noteResolved, noteSession, noteTurnStarted } from "../lib/roomstate";
 import { operator } from "../lib/session";
 
 /**
@@ -40,9 +40,9 @@ export default defineHook({
       const auth = ctx.session.auth.current;
       if (auth?.principalType !== "user" || isSystemMessage(event.data.message)) return;
       const who = operator(ctx);
-      await quietly(() =>
-        notePreview(who.workspaceId, who.room, "you", event.data.message, new Date().toISOString()),
-      );
+      const at = new Date().toISOString();
+      await quietly(() => notePreview(who.workspaceId, who.room, "you", event.data.message, at));
+      await quietly(() => noteAsked(who.workspaceId, who.room, event.data.message, at));
     },
 
     async "message.completed"(event, ctx) {
