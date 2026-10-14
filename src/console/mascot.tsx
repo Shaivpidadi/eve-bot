@@ -12,7 +12,7 @@ import type { Member, Presence } from "./types";
  * Drag it to spin it round (it jiggles as it turns, and swings back to face
  * you a moment after you let go); tap it for a squish. It moves by mood:
  *
- * - Idle: breathes, glances at your pointer, blinks now and then.
+ * - Idle: breathes, turns to follow your pointer with its eyes and body, blinks now and then.
  * - Thinking: sways side to side, eyes circling up and away.
  * - Working: hops, squashing on landing and stretching on the way up.
  * - Waiting (needs you): sways, eyes wide and on you.
@@ -205,7 +205,7 @@ void main() {
   // The face, painted on the front so it turns with the body.
   vec3 q = local(pos);
   float front = smoothstep(0.02, 0.14, q.z);
-  vec2 g = uGaze * vec2(0.075, 0.06);
+  vec2 g = uGaze * vec2(0.1, 0.075);
   vec2 eyeL = q.xy - (vec2(-0.24 + uSide * 0.03, 0.1 - uEyeY) + g);
   vec2 eyeR = q.xy - (vec2(0.24 + uSide * 0.03, 0.1 - uEyeY) + g);
   float eyes = (1.0 - smoothstep(-px, px, min(eye(eyeL), eye(eyeR)))) * front;
@@ -331,12 +331,14 @@ export function Mascot({
     const pointer = { x: 0, y: 0, active: false, at: 0 };
     const onPointer = (event: PointerEvent) => {
       const rect = element.getBoundingClientRect();
-      const dx = (event.clientX - (rect.left + rect.width / 2)) / 260;
-      const dy = (event.clientY - (rect.top + rect.height / 2)) / 260;
+      const dx = event.clientX - (rect.left + rect.width / 2);
+      const dy = event.clientY - (rect.top + rect.height / 2);
+      // Eases toward full as the pointer goes further, so it keeps following
+      // across the whole window instead of pinning at the edge of a radius.
       const length = Math.hypot(dx, dy);
-      const scale = length > 1 ? 1 / length : 1;
-      pointer.x = dx * scale;
-      pointer.y = -dy * scale;
+      const reach = length / (length + 160);
+      pointer.x = length === 0 ? 0 : (dx / length) * reach;
+      pointer.y = length === 0 ? 0 : (-dy / length) * reach;
       pointer.active = true;
       pointer.at = performance.now();
     };
@@ -387,6 +389,7 @@ export function Mascot({
     element.addEventListener("pointercancel", onUp);
 
     let gaze = { x: 0, y: 0 };
+    let lookWeight = 0;
     let nextBlink = performance.now() + 1500 + Math.random() * 3000;
     let blinkUntil = 0;
     let nextTwirl = performance.now() + 2500 + Math.random() * 3000;
@@ -424,7 +427,7 @@ export function Mascot({
       let lean = 0;
       let wobble = 0.5;
       let sway = 0;
-      let target = pointer.active && now - pointer.at < 4000 ? { x: pointer.x, y: pointer.y } : { x: Math.sin(t * 0.37) * 0.5, y: Math.sin(t * 0.23) * 0.3 };
+      let target = pointer.active && now - pointer.at < 8000 ? { x: pointer.x, y: pointer.y } : { x: Math.sin(t * 0.37) * 0.5, y: Math.sin(t * 0.23) * 0.3 };
       let open = 1;
       let moodCode = 0;
       let sat = 1;
@@ -476,6 +479,9 @@ export function Mascot({
       if (now < blinkUntil) open = 0.05;
       const ease = 1 - Math.exp(-dt * 7);
       gaze = { x: gaze.x + (target.x - gaze.x) * ease, y: gaze.y + (target.y - gaze.y) * ease };
+      // Its whole body turns a little toward what it looks at, except mid-spin or asleep.
+      const looking = spin.drag === null && Math.abs(spin.velocity) < 0.6 && m !== "paused" ? 1 : 0;
+      lookWeight += (looking - lookWeight) * (1 - Math.exp(-dt * 4));
 
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
@@ -484,9 +490,9 @@ export function Mascot({
       gl.uniform2f(uniforms.scale, scale[0]!, scale[1]!);
       gl.uniform1f(uniforms.lean, lean);
       gl.uniform1f(uniforms.wobble, still ? 0 : wobble);
-      gl.uniform1f(uniforms.yaw, spin.yaw + (still ? 0 : sway));
+      gl.uniform1f(uniforms.yaw, spin.yaw + (still ? 0 : sway - gaze.x * 0.42 * lookWeight));
       gl.uniform1f(uniforms.jiggle, still ? 0 : spin.jiggle);
-      gl.uniform1f(uniforms.pitch, 0.14 + spin.pitch);
+      gl.uniform1f(uniforms.pitch, 0.14 + spin.pitch - (still ? 0 : gaze.y * 0.24 * lookWeight));
       gl.uniform2f(uniforms.gaze, gaze.x, gaze.y);
       gl.uniform1f(uniforms.open, open);
       gl.uniform1f(uniforms.mood, moodCode);
