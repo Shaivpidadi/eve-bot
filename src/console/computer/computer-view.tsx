@@ -211,7 +211,16 @@ export function ComputerView({
   };
 
   return (
-    <div className="computer" role="dialog" aria-modal="true" aria-label="Team computer">
+    <div
+      className="computer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Team computer"
+      onClick={(event) => {
+        // A click on the dimmed app around the window closes it, unless you are in control.
+        if (event.target === event.currentTarget && !controllingNow.current) close();
+      }}
+    >
       <div className="computer-bar">
         <button type="button" className="computer-close" aria-label="Close" title="Close" onClick={close}>
           <Icon name="x" size={14} />
@@ -228,31 +237,6 @@ export function ComputerView({
         >
           <Icon name="folder" size={14} /> Files
         </button>
-        {controlling ? (
-          <>
-            <input
-              className="control-note"
-              value={note}
-              placeholder={waiting ? `Tell ${member.name} what you did (optional)` : "Note for the Bot (optional)"}
-              aria-label={`Note for ${member.name}`}
-              onChange={(event) => setNote(event.target.value)}
-              onKeyDown={(event) => event.stopPropagation()}
-            />
-            <button type="button" className="btn primary" disabled={busy} onClick={() => void returnControl()}>
-              {returnLabel}
-            </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            className="btn primary"
-            disabled={busy || heldByOther}
-            title={heldByOther ? `${control.by} has control` : "Use this computer yourself"}
-            onClick={() => void take()}
-          >
-            Take control
-          </button>
-        )}
       </div>
 
       <div className="computer-stage">
@@ -336,6 +320,44 @@ export function ComputerView({
             </div>
           </aside>
         ) : null}
+      </div>
+
+      <div className={controlling ? "control-pill controlling" : "control-pill"} role="group" aria-label="Control">
+        {controlling ? (
+          <>
+            <span className="pill-state">
+              <i className="live-dot" />
+              You&apos;re in control
+            </span>
+            <input
+              className="control-note"
+              value={note}
+              placeholder={waiting ? `Tell ${member.name} what you did` : "Note for the Bot (optional)"}
+              aria-label={`Note for ${member.name}`}
+              onChange={(event) => setNote(event.target.value)}
+              onKeyDown={(event) => event.stopPropagation()}
+            />
+            <button type="button" className="pill-action" disabled={busy} onClick={() => void returnControl()}>
+              {returnLabel}
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="pill-state">
+              <Icon name="eye" size={14} />
+              {heldByOther ? `${control.by} has control` : "Watching"}
+            </span>
+            <button
+              type="button"
+              className="pill-action"
+              disabled={busy || heldByOther}
+              title={heldByOther ? `${control.by} has control` : "Use this computer yourself"}
+              onClick={() => void take()}
+            >
+              Take control
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
