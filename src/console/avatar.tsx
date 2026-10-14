@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useId } from "react";
 
 import type { Hover, Member, Presence } from "./types";
 
@@ -65,6 +65,9 @@ export function Avatar({
   const color = member.kind === "hq" ? HQ_COLOR : (COLORS[seed % COLORS.length] ?? HQ_COLOR);
   const shape = member.kind === "hq" ? SHAPES[0] : (SHAPES[(seed >>> 7) % SHAPES.length] ?? SHAPES[0]);
   const style = { "--av": color, width: size, height: size } as CSSProperties;
+  const id = useId().replaceAll(":", "");
+  // Bots lean a little and look up and to the side; HQ looks straight at you.
+  const gaze = member.kind === "hq" ? "" : " translate(1.2 -0.4) rotate(7 20 20)";
 
   return (
     <span
@@ -79,10 +82,24 @@ export function Avatar({
       onPointerLeave={onHover === undefined ? undefined : () => onHover(null)}
     >
       <svg viewBox="0 0 40 40" aria-hidden="true">
-        <g className="body" fill="var(--av)">
+        <defs>
+          {/* Lit from above: a lighter crown, a deeper base, and a soft sheen. */}
+          <linearGradient id={`f${id}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" style={{ stopColor: "color-mix(in srgb, var(--av) 72%, white)" }} />
+            <stop offset="0.55" style={{ stopColor: "var(--av)" }} />
+            <stop offset="1" style={{ stopColor: "color-mix(in srgb, var(--av) 82%, black)" }} />
+          </linearGradient>
+          <radialGradient id={`s${id}`} cx="0.32" cy="0.22" r="0.42">
+            <stop offset="0" stopColor="#fff" stopOpacity="0.55" />
+            <stop offset="1" stopColor="#fff" stopOpacity="0" />
+          </radialGradient>
+          <clipPath id={`c${id}`}>{shape.body}</clipPath>
+        </defs>
+        <g className="body" fill={`url(#f${id})`}>
           {shape.body}
+          <rect width="40" height="40" fill={`url(#s${id})`} clipPath={`url(#c${id})`} />
         </g>
-        <g transform={`translate(0 ${shape.eyes})`}>
+        <g transform={`translate(0 ${shape.eyes})${gaze}`}>
           <g className="eyes" fill="var(--eye)">
             <rect x="13.8" y="14.2" width="3.3" height="7.6" rx="1.65" />
             <rect x="22.9" y="14.2" width="3.3" height="7.6" rx="1.65" />

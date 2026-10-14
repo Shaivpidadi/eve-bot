@@ -902,7 +902,10 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
   .av[data-presence="blocked"] svg { animation: shiver 2.4s ease-in-out infinite; }
   .av[data-presence="done"] svg { animation: settle 1.1s ease-out 1; }
   .av.paused svg, .av.paused .eyes { animation: none !important; }
+  /* A squish when you point at one: it notices. */
+  .row:hover .av svg, .tile:hover .av svg, .hero-face:hover .av svg, .head-chip:hover .av svg { animation: boop 0.42s cubic-bezier(0.3, 1.6, 0.5, 1); }
 }
+@keyframes boop { 30% { scale: 1.08 0.9; } 60% { scale: 0.96 1.06; } 100% { scale: 1 1; } }
 @keyframes blink { 0%, 92%, 100% { scale: 1 1; } 95% { scale: 1 0.08; } }
 @keyframes glance { 0%, 40%, 100% { translate: 0 0; } 48%, 60% { translate: 2px 0; } 68%, 80% { translate: -1.5px 0; } }
 @keyframes ponder { 0%, 100% { translate: -1.6px -1.4px; } 50% { translate: 1.6px -1.4px; } }
