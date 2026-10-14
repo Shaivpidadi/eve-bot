@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandMark } from "./brands";
 import { useCallback, useEffect, useState } from "react";
 
 import { guessedReads, toolEffect, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind } from "../../agent/lib/catalog";
@@ -65,13 +66,9 @@ const humanTool = (tool: string) => {
   return words.charAt(0).toUpperCase() + words.slice(1);
 };
 
-/** A brand-coloured monogram, since connectors bring no icon of their own. */
-function Mark({ label, size = 44 }: { label: string; size?: number }) {
-  return (
-    <span className="cpage-mark" style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }} aria-hidden="true">
-      {label.trim().charAt(0).toUpperCase() || "?"}
-    </span>
-  );
+/** The connector's app icon: its brand, its site's icon, or its initial (see `brands.tsx`). */
+function Mark({ label, brand, url, size = 44 }: { label: string; brand?: string | null; url?: string | null; size?: number }) {
+  return <BrandMark brand={brand} label={label} url={url} size={size} />;
 }
 
 function Switch({ checked, disabled, onChange, label }: { checked: boolean; disabled?: boolean; onChange: (next: boolean) => void; label: string }) {
@@ -234,7 +231,7 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
                   const on = connector.check.tools.length - (connector.disabledTools?.length ?? 0);
                   return (
                     <button key={connector.id} type="button" className={`cpage-card${connector.enabled ? "" : " off"}`} onClick={() => onSelect(connector.id)}>
-                      <Mark label={connector.label} />
+                      <Mark label={connector.label} brand={connector.catalog} url={connector.catalog === null ? connector.url : null} />
                       <span className="cpage-card-main">
                         <b>{connector.label}</b>
                         <span>{connector.catalog === null ? host(connector.url) : catalog.find((entry) => entry.id === connector.catalog)?.detail ?? "Built in"}</span>
@@ -259,7 +256,7 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
               <div className="cpage-grid">
                 {available.map((entry) => (
                   <div key={entry.id} className="cpage-card static">
-                    <Mark label={entry.label} />
+                    <Mark label={entry.label} brand={entry.id} />
                     <span className="cpage-card-main">
                       <b>{entry.label}</b>
                       <span>{entry.detail}</span>
@@ -390,7 +387,7 @@ function ConnectorDetail({
   return (
     <div className="usage-body cpage-body">
       <div className="cpage-hero">
-        <Mark label={connector.label} size={56} />
+        <Mark label={connector.label} brand={connector.catalog} url={connector.catalog === null ? connector.url : null} size={56} />
         <div className="cpage-hero-main">
           <h2>{connector.label}</h2>
           <a href={source} target="_blank" rel="noopener noreferrer">

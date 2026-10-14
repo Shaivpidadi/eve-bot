@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandMark } from "./brands";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { api, errorMessage, SignedOutError } from "./api";
@@ -34,6 +35,45 @@ function grouped(rows: readonly Member[]) {
   }
   const named = [...sections.entries()].sort(([left], [right]) => left.localeCompare(right));
   return { hq, pinned, sections: named, rest, hidden, grouping: pinned.length > 0 || named.length > 0 };
+}
+
+interface AppIcon {
+  readonly key: string;
+  readonly brand: string | null;
+  readonly label: string;
+  readonly url: string | null;
+}
+
+/** The apps the team has connected, for the footer's pill; a few from the catalog until there are any. */
+function useConnectedApps(): { connected: boolean; list: readonly AppIcon[] } {
+  const [state, setState] = useState<{ connected: boolean; list: readonly AppIcon[] }>({
+    connected: false,
+    list: ["github", "linear", "notion"].map((brand) => ({ key: brand, brand, label: brand, url: null })),
+  });
+  useEffect(() => {
+    let stopped = false;
+    const read = async () => {
+      try {
+        const response = await api("/bot/v1/connectors");
+        if (!response.ok) return;
+        const body = (await response.json()) as { connectors?: { id: string; label: string; catalog: string | null; url: string; enabled: boolean }[] };
+        const on = (body.connectors ?? []).filter((connector) => connector.enabled);
+        if (!stopped && on.length > 0) {
+          setState({ connected: true, list: on.map((connector) => ({ key: connector.id, brand: connector.catalog, label: connector.label, url: connector.catalog === null ? connector.url : null })) });
+        }
+      } catch {
+        // The pill keeps what it showed.
+      }
+    };
+    void read();
+    const onFocus = () => void read();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      stopped = true;
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
+  return state;
 }
 
 export function Sidebar({
@@ -83,6 +123,7 @@ export function Sidebar({
   const [showHidden, setShowHidden] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [meOpen, setMeOpen] = useState(false);
+  const apps = useConnectedApps();
 
   const needle = query.trim().toLowerCase();
   const rows = members.filter(
@@ -332,12 +373,12 @@ export function Sidebar({
               </div>
             ) : null}
           </div>
-          <button type="button" className="connect-pill" onClick={onConnectors}>
-            Connect apps
+          <button type="button" className="connect-pill" onClick={onConnectors} title={apps.connected ? "Your connected apps" : "Connect the apps your team uses"}>
+            {apps.connected ? "Apps" : "Connect apps"}
             <span className="app-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
+              {apps.list.slice(0, 3).map((app) => (
+                <BrandMark key={app.key} brand={app.brand} label={app.label} url={app.url} size={18} />
+              ))}
             </span>
           </button>
           <button type="button" className="icon-btn" aria-label="Memory" title="Memory" onClick={onMemory}>
