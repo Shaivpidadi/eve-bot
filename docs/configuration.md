@@ -58,6 +58,29 @@ of it; these are the ones that matter.
 | `BOT_QA` | `1` opens the QA suite's fault routes (crash a job's run, replace the computer) on this deployment; leave unset in production |
 | `BOT_STANDUP_CRON` / `BOT_STANDUP_ROOM` | when the daily standup runs (`0 13 * * 1-5`, in UTC) and where it posts: HQ's `desk` by default, or a Bot's room (`bot-<id>`) |
 
+## Observability: Vercel Agent Runs
+
+On a Vercel preview or production deployment, every HQ, Bot and job session is
+sent to **Agent Runs**, the Observability tab of your Vercel project, as a
+trace: each model step and tool call, with timings, model, tokens and errors.
+Traces are kept 30 days. It is billed as span units, which for a team like
+this comes to cents a month; Hobby includes a million a month.
+
+Two switches in the console, under your name → **Settings**, apply to the
+whole deployment:
+
+| Switch | Default | |
+| --- | --- | --- |
+| Send runs to Agent Runs | on | off stops the export; checked per span, so it applies to runs already going |
+| Include conversation content | off | on adds prompts, tool arguments and results (an email a Bot read, a page it opened); applies to sessions that start afterwards, and off applies at once |
+
+The project also needs a tracing rule: **Settings → Tracing**, all
+environments, rate 100%. `eve deploy` creates new projects with one. The tab
+has to be enabled for your Vercel team; if it is missing, ask Vercel.
+Locally, `eve dev` keeps its own traces and nothing goes to Vercel. The trace
+hooks live in `agent/instrumentation/` (eve's experimental instrumentation
+providers, switched on in `agent/agent.ts`).
+
 ## Journal and rewind
 
 There are no settings. Each job keeps the first 20 and last 180 lines of its

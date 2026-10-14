@@ -19,6 +19,7 @@ import {
   PinIcon,
   PlusIcon,
   SearchIcon,
+  SettingsIcon,
   SunIcon,
   Trash2Icon,
   TriangleAlertIcon,
@@ -136,6 +137,7 @@ export function Sidebar({
   onConnectors,
   onMemory,
   onUsage,
+  onSettings,
   onHover,
   onUnread,
   onChanged,
@@ -154,6 +156,8 @@ export function Sidebar({
   onConnectors: () => void;
   onMemory: () => void;
   onUsage: () => void;
+  /** Opens the deployment's settings (tracing). */
+  onSettings: () => void;
   onHover: (hover: Hover | null) => void;
   onUnread: (id: string, unread: boolean) => void;
   /** The roster changed on the server; re-read it. */
@@ -557,6 +561,10 @@ export function Sidebar({
                 <DropdownMenuItem onClick={toggleTheme}>
                   {theme === "dark" ? <SunIcon /> : <MoonIcon />}
                   {theme === "dark" ? "Light theme" : "Dark theme"}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onSettings}>
+                  <SettingsIcon />
+                  Settings
                 </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
