@@ -352,7 +352,7 @@ export function Transcript({
 
   return (
     <div
-      className="min-h-0 flex-1 overflow-y-auto"
+      className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       ref={scroller}
       onScroll={() => {
         const element = scroller.current;
