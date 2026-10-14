@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type KeyboardEvent, type PointerEvent } from "react";
 
-/** How long the details panel takes to slide open or closed; matches `.app` in globals.css. */
+/** How long the details panel takes to slide open or closed; matches the panel slot's transition in console.tsx. */
 export const PANEL_SLIDE_MS = 240;
 
 const KEY = "bot.panel-width";
@@ -98,7 +98,10 @@ export function PanelResizer({
 
   return (
     <div
-      className="panel-resize"
+      // A 7px grab strip on the panel's edge with a 2px line that lights up while hovered,
+      // focused or dragged (the app carries data-resizing during a drag). Hidden where the
+      // panel is an overlay rather than a column.
+      className="absolute inset-y-0 left-0 z-5 w-[7px] cursor-col-resize touch-none outline-none after:absolute after:inset-y-0 after:left-0 after:w-0.5 after:bg-transparent after:transition-colors after:content-[''] hover:after:bg-brand focus-visible:after:bg-brand in-data-resizing:after:bg-brand max-[1080px]:hidden"
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize the panel"
