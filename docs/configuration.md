@@ -60,26 +60,19 @@ of it; these are the ones that matter.
 
 ## Observability: Vercel Agent Runs
 
-On a Vercel preview or production deployment, every HQ, Bot and job session is
-sent to **Agent Runs**, the Observability tab of your Vercel project, as a
-trace: each model step and tool call, with timings, model, tokens and errors.
-Traces are kept 30 days. It is billed as span units, which for a team like
-this comes to cents a month; Hobby includes a million a month.
+On a Vercel deployment, every HQ, Bot and job session appears in **Agent
+Runs**, under your project's Observability tab: the conversation, each turn,
+tool calls, model, tokens, cost and timings. It needs a tracing rule on the
+project (**Settings → Tracing**, rate 100%, or `vercel traces config set
+production 100`); `eve deploy` creates new projects with one. It is billed as
+span units, cents a month at this team's size, and Hobby includes a million a
+month. Runs are kept 30 days. Locally, `eve dev` keeps its own traces.
 
-Two switches in the console, under your name → **Settings**, apply to the
-whole deployment:
-
-| Switch | Default | |
-| --- | --- | --- |
-| Send runs to Agent Runs | on | off stops the export; checked per span, so it applies to runs already going |
-| Include conversation content | off | on adds prompts, tool arguments and results (an email a Bot read, a page it opened); applies to sessions that start afterwards, and off applies at once |
-
-The project also needs a tracing rule: **Settings → Tracing**, all
-environments, rate 100%. `eve deploy` creates new projects with one. The tab
-has to be enabled for your Vercel team; if it is missing, ask Vercel.
-Locally, `eve dev` keeps its own traces and nothing goes to Vercel. The trace
-hooks live in `agent/instrumentation/` (eve's experimental instrumentation
-providers, switched on in `agent/agent.ts`).
+Agent Runs reads each session's record from Vercel Workflow, where eve already
+keeps a Vercel deployment's conversations so they survive restarts and
+deploys. So the conversation is on Vercel whether or not tracing is on, and no
+app setting hides it from Agent Runs. To keep conversations off Vercel, run
+standalone with your own Postgres world (`BOT_WORKFLOW_WORLD`, above).
 
 ## Journal and rewind
 

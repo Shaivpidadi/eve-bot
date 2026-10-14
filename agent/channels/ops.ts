@@ -29,7 +29,6 @@ import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { crashRun, qaEnabled } from "../lib/qa";
 import { rewind } from "../lib/rewind";
-import { readTracingSettings, writeTracingSettings } from "../lib/tracing-settings";
 import { exportEnabled, exportTo } from "../lib/store/transfer";
 import { PassThrough, Readable } from "node:stream";
 import { version as appVersion } from "../../package.json";
@@ -796,34 +795,6 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
     /** The recipes this team saved: briefs that worked, for HQ to reuse. */
     /** What the workspace has spent on models: totals, by Bot, by model, by day, and by job. */
-    /**
-     * Tracing, for the whole deployment: whether runs go to Vercel Agent Runs,
-     * and whether their traces carry content. See lib/tracing-settings.ts.
-     */
-    GET("/bot/v1/settings/tracing", async (request) => {
-      const gate = await authenticate(request);
-      if (!gate.ok) return denied(gate);
-      return json({ settings: await readTracingSettings(), environment: process.env.VERCEL_ENV ?? "development" });
-    }),
-
-    PATCH("/bot/v1/settings/tracing", async (request) => {
-      const gate = await authenticate(request);
-      if (!gate.ok) return denied(gate);
-      const body = await readJson(request);
-      const patch = {
-        ...(typeof body?.agentRuns === "boolean" ? { agentRuns: body.agentRuns } : {}),
-        ...(typeof body?.content === "boolean" ? { content: body.content } : {}),
-      };
-      if (Object.keys(patch).length === 0) return json({ error: "agentRuns or content (true or false) is required" }, 400);
-      const settings = await writeTracingSettings(patch, gate.access.user);
-      await record({
-        workspaceId: gate.access.workspaceId,
-        kind: "bot.updated",
-        text: `${gate.access.user} turned ${settings.agentRuns ? "on" : "off"} Agent Runs${settings.agentRuns ? `, ${settings.content ? "with" : "without"} conversation content` : ""}.`,
-      }).catch(() => undefined);
-      return json({ settings, environment: process.env.VERCEL_ENV ?? "development" });
-    }),
-
     GET("/bot/v1/usage", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
