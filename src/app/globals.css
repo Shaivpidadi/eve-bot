@@ -10,55 +10,113 @@
  */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/*
+ * The palette, in shadcn/ui's tokens: light on :root, dark under the console's
+ * theme switch (data-theme on <html>, set before first paint in layout.tsx).
+ * A few surfaces shadcn has no name for are added the same way (chat, bubble,
+ * faint, selected, brand, success, warning) and are Tailwind colours too.
+ */
 :root {
-  --bg: #111113;
-  --side: #18181a;
+  --background: #ffffff;
+  --foreground: #141416;
+  --card: #ffffff;
+  --card-foreground: #141416;
+  --popover: #ffffff;
+  --popover-foreground: #141416;
+  --primary: #141416;
+  --primary-foreground: #ffffff;
+  --secondary: #ededef;
+  --secondary-foreground: #141416;
+  --muted: #ededef;
+  --muted-foreground: #6a6a72;
+  --accent: #ededef;
+  --accent-foreground: #141416;
+  --destructive: #e5484d;
+  --border: #e6e6e9;
+  --input: #dcdce0;
+  --ring: #9d9da5;
+  --radius: 0.75rem;
+  --sidebar: #f6f6f7;
+  --sidebar-foreground: #141416;
+  --sidebar-primary: #141416;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #ededef;
+  --sidebar-accent-foreground: #141416;
+  --sidebar-border: #e6e6e9;
+  --sidebar-ring: #9d9da5;
+
+  --chat: #ffffff;
+  --panel: #f6f6f7;
+  --faint: #9d9da5;
+  --selected: #e6e6e9;
+  --bubble: #f0f0f2;
+  --bubble-you: #e2e2e6;
+  --brand: #9b7bff;
+  --success: #2fae5f;
+  --warning: #d9962b;
+  --eye: #141416;
+  --shadow: 0 18px 50px rgba(20, 20, 30, 0.16);
+  --font: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --background: #111113;
+  --foreground: #ececee;
+  --card: #1b1b1e;
+  --card-foreground: #ececee;
+  --popover: #1b1b1e;
+  --popover-foreground: #ececee;
+  --primary: #f1f1f2;
+  --primary-foreground: #111113;
+  --secondary: #202023;
+  --secondary-foreground: #ececee;
+  --muted: #202023;
+  --muted-foreground: #9b9ba2;
+  --accent: #212124;
+  --accent-foreground: #ececee;
+  --destructive: #f36b6b;
+  --border: #262629;
+  --input: #2e2e32;
+  --ring: #67676e;
+  --sidebar: #18181a;
+  --sidebar-foreground: #ececee;
+  --sidebar-primary: #f1f1f2;
+  --sidebar-primary-foreground: #111113;
+  --sidebar-accent: #212124;
+  --sidebar-accent-foreground: #ececee;
+  --sidebar-border: #262629;
+  --sidebar-ring: #67676e;
+
   --chat: #131315;
   --panel: #18181a;
-  --line: #262629;
-  --line-2: #2e2e32;
-  --text: #ececee;
-  --text-2: #9b9ba2;
   --faint: #67676e;
-  --hover: #212124;
   --selected: #2a2a2e;
-  --field: #202023;
-  --bubble-bot: #232326;
+  --bubble: #232326;
   --bubble-you: #3a3a3e;
-  --card: #1b1b1e;
-  --primary-bg: #f1f1f2;
-  --primary-fg: #111113;
-  --purple: #9b7bff;
-  --ok: #3ecf73;
-  --warn: #f0b44c;
-  --bad: #f36b6b;
-  --eye: #141416;
+  --success: #3ecf73;
+  --warning: #f0b44c;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
-  --font: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   color-scheme: dark;
 }
 
-/* The theme is set on <html> before the first paint (src/app/layout.tsx): the operator's pick, or the system's. */
-:root[data-theme="light"] {
-  --bg: #ffffff;
-  --side: #f6f6f7;
-  --chat: #ffffff;
-  --panel: #f6f6f7;
-  --line: #e6e6e9;
-  --line-2: #dcdce0;
-  --text: #141416;
-  --text-2: #6a6a72;
-  --faint: #9d9da5;
-  --hover: #ededef;
-  --selected: #e6e6e9;
-  --field: #ededef;
-  --bubble-bot: #f0f0f2;
-  --bubble-you: #e2e2e6;
-  --card: #ffffff;
-  --primary-bg: #141416;
-  --primary-fg: #ffffff;
-  --shadow: 0 18px 50px rgba(20, 20, 30, 0.16);
-  color-scheme: light;
+/* The console's old names, kept only while its screens move to Tailwind classes. */
+:root {
+  --bg: var(--background);
+  --side: var(--sidebar);
+  --line: var(--border);
+  --line-2: var(--input);
+  --text: var(--foreground);
+  --text-2: var(--muted-foreground);
+  --hover: var(--accent);
+  --field: var(--secondary);
+  --bubble-bot: var(--bubble);
+  --primary-bg: var(--primary);
+  --primary-fg: var(--primary-foreground);
+  --purple: var(--brand);
+  --ok: var(--success);
+  --warn: var(--warning);
+  --bad: var(--destructive);
 }
 
 /*
@@ -1215,38 +1273,6 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .notice .av { flex: none; }
 
 
-/* ------------------------------------------------------- shadcn/ui bridge */
-
-/* shadcn's tokens, in the console's own colours; each theme's values flow through. */
-:root {
-  --background: var(--bg);
-  --foreground: var(--text);
-  --card-foreground: var(--text);
-  --popover: var(--card);
-  --popover-foreground: var(--text);
-  --primary: var(--primary-bg);
-  --primary-foreground: var(--primary-fg);
-  --secondary: var(--field);
-  --secondary-foreground: var(--text);
-  --muted: var(--field);
-  --muted-foreground: var(--text-2);
-  --accent: var(--hover);
-  --accent-foreground: var(--text);
-  --destructive: #ef4a4a;
-  --border: var(--line);
-  --input: var(--line-2);
-  --ring: var(--faint);
-  --radius: 0.75rem;
-  --sidebar: var(--side);
-  --sidebar-foreground: var(--text);
-  --sidebar-primary: var(--primary-bg);
-  --sidebar-primary-foreground: var(--primary-fg);
-  --sidebar-accent: var(--hover);
-  --sidebar-accent-foreground: var(--text);
-  --sidebar-border: var(--line);
-  --sidebar-ring: var(--faint);
-}
-
 @theme inline {
   --font-sans: var(--font);
   --font-heading: var(--font);
@@ -1277,6 +1303,16 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-chat: var(--chat);
+  --color-panel: var(--panel);
+  --color-faint: var(--faint);
+  --color-selected: var(--selected);
+  --color-bubble: var(--bubble);
+  --color-bubble-you: var(--bubble-you);
+  --color-brand: var(--brand);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --shadow-float: var(--shadow);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);

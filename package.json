@@ -30,6 +30,7 @@
     "@vercel/sandbox": "^3.2.2",
     "ai": "^7.0.97",
     "class-variance-authority": "^0.7.1",
+    "cmdk": "^1.1.1",
     "cn": "^0.4.0",
     "eve": "^0.58.1",
     "lucide-react": "^1.57.0",
