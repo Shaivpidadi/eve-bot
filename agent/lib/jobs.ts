@@ -131,6 +131,8 @@ export async function assignJob(input: {
     botId: job.botId,
     jobId: job.id,
     text: `${bot?.name ?? job.botId} was assigned "${job.title}".`,
+    // The thread it was asked in, so each thread shows only its own work (see the console's timeline).
+    data: { room: job.room, title: job.title },
   });
   return job;
 }
@@ -870,6 +872,7 @@ export async function completeJob(
       botId: job.botId,
       jobId,
       text: `Finished "${job.title}"${result.completion === "recovered" ? " (recovered, unverified)" : ""}${spent(job)}: ${result.summary}`,
+      data: { room: job.room, title: job.title, summary: result.summary },
     });
   }
   return job;
@@ -918,6 +921,7 @@ export async function failJob(
       botId: job.botId,
       jobId,
       text: `Could not finish "${job.title}"${spent(job)}: ${error}`,
+      data: { room: job.room, title: job.title, error },
     });
   }
   return job;

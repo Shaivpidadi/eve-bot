@@ -1206,3 +1206,15 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .msg-wrap.peer { align-self: flex-start; align-items: flex-end; gap: 6px; }
 .msg.peer { border-top-left-radius: 6px; }
 .peer-name { display: block; font-size: 11.5px; font-weight: 600; color: var(--muted); margin-bottom: 2px; }
+
+/* Someone on work for this thread: their live face, what they took on, and the step they are on. */
+.work-row {
+  align-self: flex-start; display: flex; align-items: center; gap: 10px; margin: 8px 0; padding: 8px 14px 8px 8px;
+  max-width: min(100%, 560px); border-radius: 16px; background: var(--bubble-bot);
+}
+.work-row-text { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.work-row-head { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-row-head b { font-weight: 600; }
+.work-row-title { color: var(--muted); }
+.work-row-step { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notice .av { flex: none; }

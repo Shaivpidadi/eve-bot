@@ -8,6 +8,8 @@ import { Avatar } from "./avatar";
 import { clock, dividerWhen, needsDivider } from "./format";
 import { api } from "./api";
 import { Icon } from "./icons";
+import type { Busy } from "./chat";
+import { LiveAvatar } from "./live-avatar";
 import { MentionText, useTeam } from "./mentions";
 import { Prose } from "./prose";
 import type { RoomSnapshot, RoomStore, StepsItem, TimelineItem } from "./room-store";
@@ -60,14 +62,16 @@ export function Transcript({
   member: Member;
   room: RoomSnapshot;
   timeline: readonly TimelineItem[];
-  /** Bots working in the background on this thread's behalf; see `busyIn` in chat.tsx. */
-  busy: readonly Member[];
+  /** Teammates on work for this thread; see `busyIn` in chat.tsx. */
+  busy: readonly Busy[];
   user: string;
   store: RoomStore;
   onOpenComputer: (requestId: string) => void;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const team = useTeam();
+  const faceFor = (face: string | undefined) =>
+    face === undefined ? undefined : team.find((entry) => entry.id === face || entry.name.toLowerCase() === face.toLowerCase());
   const pinned = useRef(true);
   const [openSteps, setOpenSteps] = useState<ReadonlySet<string>>(() => new Set());
   const [notes, setNotes] = useState<ReadonlyMap<string, string>>(() => new Map());
@@ -163,7 +167,7 @@ export function Transcript({
         case "notice":
           rows.push(
             <div key={item.key} className={item.tone === "error" ? "notice error" : "notice"}>
-              <Icon name={item.icon} size={13} />
+              {faceFor(item.face) === undefined ? <Icon name={item.icon} size={13} /> : <Avatar member={faceFor(item.face)!} size={16} />}
               <span>{item.label}</span>
               {item.detail ? <b>{item.detail}</b> : null}
               {item.action === "start-over" ? (
@@ -233,18 +237,23 @@ export function Transcript({
         </div>,
       );
     }
-    // The Bots on jobs for this thread, animated until their work comes back.
-    for (const bot of busy) {
+    // Whoever is on work for this thread: their live face, the job, and the step they are on.
+    busy.forEach(({ bot, job }, index) => {
+      const own = bot.id === member.id;
       rows.push(
-        <div key={`busy:${bot.id}`} className="working">
-          <Avatar member={bot} size={16} presence="thinking" />
-          <span className="shimmer">
-            {bot.id === member.id ? "Working" : `${bot.name} is working`}
-            {bot.action === null ? "" : ` · ${bot.action}`}
+        <div key={`busy:${bot.id}:${job.id}`} className="work-row">
+          <LiveAvatar member={bot} size={28} alive={index === 0} />
+          <span className="work-row-text">
+            <span className="work-row-head">
+              {own ? "Working on" : <b>{bot.name}</b>}
+              {own ? " " : " is working on "}
+              <span className="work-row-title">{job.title}</span>
+            </span>
+            {bot.action === null ? null : <span className="work-row-step shimmer">{bot.action}</span>}
           </span>
         </div>,
       );
-    }
+    });
     body = rows;
   }
 

@@ -9,6 +9,7 @@ import { TeamContext } from "./mentions";
 import { buildTimeline, roomStore } from "./room-store";
 import { Transcript } from "./transcript";
 import type { ActivityEvent, Hover, Member } from "./types";
+import type { WorkInHand } from "../../agent/lib/board";
 
 /**
  * Bots at work whose progress belongs in this thread: from HQ's desk, every
@@ -16,10 +17,26 @@ import type { ActivityEvent, Hover, Member } from "./types";
  * already showing. Work runs in the background after HQ's turn ends, so this
  * is what keeps the thread from looking asleep until the result comes back.
  */
-function busyIn(member: Member, members: readonly Member[], live: boolean): Member[] {
-  const atWork = (candidate: Member) => candidate.presence === "working" || candidate.presence === "thinking";
-  if (member.kind === "hq") return members.filter((candidate) => candidate.kind === "bot" && atWork(candidate));
-  return !live && atWork(member) ? [member] : [];
+/** A teammate at work for this thread: whoever took a job asked here, and this Bot on work asked elsewhere. */
+export interface Busy {
+  readonly bot: Member;
+  readonly job: WorkInHand;
+}
+
+function busyIn(member: Member, members: readonly Member[], live: boolean): Busy[] {
+  const out: Busy[] = [];
+  for (const candidate of members) {
+    for (const job of candidate.jobs) {
+      if (job.status !== "running" && job.status !== "dispatched") continue;
+      const askedHere = job.room === member.room;
+      const mineFromElsewhere = candidate.id === member.id && !askedHere;
+      if (!askedHere && !mineFromElsewhere) continue;
+      // The thread's own turn already shows that it is thinking.
+      if (candidate.id === member.id && live && askedHere) continue;
+      out.push({ bot: candidate, job });
+    }
+  }
+  return out;
 }
 
 export function ChatPane({
@@ -44,7 +61,7 @@ export function ChatPane({
 }) {
   const store = roomStore(member.room);
   const room = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
-  const timeline = useMemo(() => buildTimeline(member, room.items, activity), [member, room.items, activity]);
+  const timeline = useMemo(() => buildTimeline(member, room.items, activity, members), [member, room.items, activity, members]);
   const busy = useMemo(() => busyIn(member, members, room.live), [member, members, room.live]);
 
   return (

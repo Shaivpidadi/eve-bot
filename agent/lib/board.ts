@@ -80,6 +80,13 @@ export interface MemberComputer {
   } | null;
 }
 
+export interface WorkInHand {
+  readonly id: string;
+  readonly title: string;
+  readonly room: string;
+  readonly status: Job["status"];
+}
+
 export interface Member {
   readonly id: string;
   readonly kind: "hq" | "bot";
@@ -101,6 +108,8 @@ export interface Member {
   readonly computer: MemberComputer;
   readonly routines: readonly Routine[];
   readonly files: readonly FileRef[];
+  /** Work in hand right now, and the thread each job was asked in, so that thread can show who is on it. */
+  readonly jobs: readonly WorkInHand[];
   /** Roster placement from the row menu: pinned rows first, grouped by section, hidden rows folded away. */
   readonly pinned: boolean;
   readonly section: string | null;
@@ -283,6 +292,7 @@ function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAl
     computer: sharedComputer(screen, running, running?.id ?? null, openHandover(screen?.handover ?? null, open)),
     routines: own.routines,
     files: own.files,
+    jobs: own.jobs,
     pinned: false,
     section: null,
     hidden: false,
@@ -364,6 +374,9 @@ function botMember(
         at: event.at,
         jobId: event.jobId,
       })),
+    jobs: jobs
+      .filter((job) => job.status === "running" || job.status === "dispatched" || job.status === "blocked")
+      .map((job) => ({ id: job.id, title: job.title, room: job.room, status: job.status })),
     pinned: bot.pinned === true,
     section: bot.section ?? null,
     hidden: bot.hidden === true,

@@ -43,14 +43,26 @@ export function Composer({ member, live, store }: { member: Member; live: boolea
   const [caret, setCaret] = useState(0);
   const [pick, setPick] = useState(0);
   const [tagClosed, setTagClosed] = useState<number | null>(null);
-  const typed = typedMention(text, caret);
-  const choices = typed === null || tagClosed === typed.start ? [] : mentionChoices(team, typed.query, member.id);
+  // The tag being typed is read from the box itself whenever it matters, so a
+  // stale caret can never splice the tag into the wrong place.
+  const tagAt = (value: string, at: number) => {
+    // Not in the middle of a word: "@At|las" is editing, not tagging.
+    if (/^[\p{L}\p{N}_]/u.test(value.slice(at))) return null;
+    const found = typedMention(value, at);
+    return found === null || tagClosed === found.start ? null : found;
+  };
+  const typed = tagAt(text, caret);
+  const choices = typed === null ? [] : mentionChoices(team, typed.query, member.id);
   const tagging = typed !== null && choices.length > 0;
 
   const insertTag = (chosen: Member) => {
-    if (typed === null) return;
-    const before = text.slice(0, typed.start);
-    const after = text.slice(caret);
+    const element = area.current;
+    const value = element?.value ?? text;
+    const at = element?.selectionStart ?? caret;
+    const live = tagAt(value, at);
+    if (live === null) return;
+    const before = value.slice(0, live.start);
+    const after = value.slice(at);
     const tag = `@${chosen.name} `;
     setText(`${before}${tag}${after.replace(/^\s+/, "")}`);
     const next = before.length + tag.length;
@@ -88,6 +100,7 @@ export function Composer({ member, live, store }: { member: Member; live: boolea
     const message = value.trim();
     if (message === "") return;
     setText("");
+    setCaret(0);
     setMenuOpen(false);
     if (!(await store.send(message))) setText(message);
   };
@@ -181,8 +194,11 @@ export function Composer({ member, live, store }: { member: Member; live: boolea
             setTagClosed(null);
           }}
           onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
+          onKeyUp={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
+          onClick={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
           onKeyDown={(event) => {
-            if (tagging) {
+            const liveTag = tagAt(event.currentTarget.value, event.currentTarget.selectionStart ?? 0);
+            if (tagging && liveTag !== null) {
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();
                 setPick((current) => (current + (event.key === "ArrowDown" ? 1 : choices.length - 1)) % choices.length);
@@ -196,7 +212,7 @@ export function Composer({ member, live, store }: { member: Member; live: boolea
               }
               if (event.key === "Escape") {
                 event.preventDefault();
-                setTagClosed(typed?.start ?? null);
+                setTagClosed(liveTag.start);
                 return;
               }
             }
