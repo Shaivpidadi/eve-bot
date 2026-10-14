@@ -2,6 +2,13 @@
 
 import { useState } from "react";
 
+import { cn } from "@/lib/utils";
+
+/** A tile: a dark one gets a faint inner light edge, a light one a hairline so it does not vanish on white. */
+const TILE = "brand-mark grid flex-none place-items-center overflow-hidden";
+const DARK_EDGE = "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08),0_1px_2px_rgba(0,0,0,0.12)]";
+const LIGHT_EDGE = "shadow-[inset_0_0_0_1px_rgba(0,0,0,0.1),0_1px_2px_rgba(0,0,0,0.08)]";
+
 /**
  * Brand marks for the connector catalog, so a connector looks like the app
  * it connects. Paths for GitHub, Linear, Notion, Atlassian and Sentry are
@@ -54,12 +61,15 @@ export function BrandMark({
   label,
   url,
   size = 44,
+  className,
 }: {
   brand?: string | null;
   label: string;
   /** A custom server's address, whose site icon is tried before the initial. */
   url?: string | null;
   size?: number;
+  /** Extra classes for where it sits (an overlap, a ring). */
+  className?: string;
 }) {
   const known = brand ? BRANDS[brand] : undefined;
   const [favicon, setFavicon] = useState<"try" | "failed">("try");
@@ -67,7 +77,7 @@ export function BrandMark({
   if (known !== undefined) {
     return (
       <span
-        className={`brand-mark${known.light ? " light" : ""}`}
+        className={cn(TILE, known.light ? LIGHT_EDGE : DARK_EDGE, className)}
         style={{ width: size, height: size, borderRadius: radius, background: known.background, color: known.foreground }}
         aria-hidden="true"
       >
@@ -85,14 +95,14 @@ export function BrandMark({
   }
   if (site !== null && favicon === "try") {
     return (
-      <span className="brand-mark light" style={{ width: size, height: size, borderRadius: radius, background: "#fff" }} aria-hidden="true">
+      <span className={cn(TILE, LIGHT_EDGE, "bg-white", className)} style={{ width: size, height: size, borderRadius: radius }} aria-hidden="true">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={`${site}/favicon.ico`} alt="" width={Math.round(size * 0.55)} height={Math.round(size * 0.55)} onError={() => setFavicon("failed")} />
+        <img className="object-contain" src={`${site}/favicon.ico`} alt="" width={Math.round(size * 0.55)} height={Math.round(size * 0.55)} onError={() => setFavicon("failed")} />
       </span>
     );
   }
   return (
-    <span className="brand-mark letter" style={{ width: size, height: size, borderRadius: radius, fontSize: Math.round(size * 0.42) }} aria-hidden="true">
+    <span className={cn(TILE, DARK_EDGE, "bg-primary font-semibold text-primary-foreground", className)} style={{ width: size, height: size, borderRadius: radius, fontSize: Math.round(size * 0.42) }} aria-hidden="true">
       {label.trim().charAt(0).toUpperCase() || "?"}
     </span>
   );
