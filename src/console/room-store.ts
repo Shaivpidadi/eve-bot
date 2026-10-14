@@ -662,6 +662,15 @@ export function roomStore(room: string): RoomStore {
   return store;
 }
 
+/** Bots whose hire line says the QA suite made them as a fixture. */
+export function qaFixtureBots(activity: readonly ActivityEvent[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const event of activity) {
+    if (event.kind === "bot.hired" && event.botId != null && / as QA fixture\.?$/.test(event.text)) ids.add(event.botId);
+  }
+  return ids;
+}
+
 /**
  * The transcript: the room's own events, interleaved with the feed. In a Bot's
  * thread, consecutive steps it logged for one job fold into a single block.
@@ -678,7 +687,11 @@ export function buildTimeline(
   // the result in front of the person either way, skipped when the relay came.
   const relayed = items.filter((item) => item.kind === "notice" && item.label === "Work came back").map((item) => Date.parse(item.at));
   const relayedNear = (at: string) => relayed.some((when) => Math.abs(when - Date.parse(at)) < 3 * 60_000);
+  // Bots the QA suite hired to test the roster (role "QA fixture") come and go
+  // within a minute; their arrival and removal are not news for a person.
+  const fixtures = qaFixtureBots(activity);
   for (const event of activity) {
+    if (event.botId != null && fixtures.has(event.botId)) continue;
     // A thread that was started over shows nothing from before that moment.
     if (member.clearedAt !== null && event.at < member.clearedAt) continue;
     const relevant =

@@ -42,7 +42,22 @@ const checks = [...access, ...roster, ...memory, ...connectors, ...(withJobs ? [
 
 console.log(`Bot QA · ${url} · ${checks.length} checks · ${concurrency} at a time${withJobs ? " · jobs included" : ""}\n`);
 
-const results = await runChecks(checks, { call: client({ url, token }), url, withJobs }, {
+// Fixtures (hired Bots, memories, jobs) belong in a workspace of their own, never the
+// one a person works in. A local dev server takes the workspace from a header; a
+// deployment binds it to the token (BOT_CONSOLE_TOKENS="<qa token>=qa").
+const workspace = process.env.QA_WORKSPACE?.trim() || "qa";
+const call = client({ url, token, workspace });
+const probe = await call("/bot/v1/state");
+const actual = probe.body?.workspaceId;
+if (actual === "default" && process.env.QA_ALLOW_DEFAULT !== "1") {
+  console.error(`This token opens the "default" workspace, where people work. QA would leave its fixtures there.\n`);
+  console.error(`Give QA a workspace of its own: BOT_CONSOLE_TOKENS="<qa token>=qa" on the deployment, and QA_TOKEN=<qa token>.`);
+  console.error("Or, if this deployment is a scratch one, set QA_ALLOW_DEFAULT=1.");
+  process.exit(2);
+}
+console.log(`Workspace: ${actual ?? "unknown"}\n`);
+
+const results = await runChecks(checks, { call, url, withJobs }, {
   concurrency,
   onResult: (result) => {
     const mark = result.skipped ? "○" : result.ok ? "✓" : "✗";
