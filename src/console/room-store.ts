@@ -110,7 +110,7 @@ export function teammateNote(text: string): { from: string; text: string } | nul
 /** Messages the runtime wrote into the room: the dispatcher, the standup, task notices. */
 export function systemNotice(text: string): Notice | null {
   const due = /^Job (job_[a-z0-9]+) is due: "(.*)"\./.exec(text);
-  if (due) return { icon: "clock", label: "Routine started", detail: due[2] ?? "" };
+  if (due) return { icon: "clock", label: "Due now", detail: due[2] ?? "" };
   if (/^Background task \S+ .*is completed\./.test(text)) {
     const job = /"jobId":"(job_[a-z0-9]+)"/.exec(text)?.[1];
     return { icon: "check", label: "Work came back", ...(job === undefined ? {} : { jobId: job }) };
@@ -549,7 +549,15 @@ export class RoomStore {
         if (data.status === "failed") {
           this.items.push({ kind: "notice", key, at, icon: "alert", tone: "error", label: "Work failed", ...(job === undefined ? {} : { jobId: job }) });
         } else if (data.status === "completed" && output.ran === true) {
-          this.items.push({ kind: "notice", key, at, icon: "check", label: "Work came back", ...(job === undefined ? {} : { jobId: job }) });
+          const stopped = output.status === "cancelled";
+          this.items.push({
+            kind: "notice",
+            key,
+            at,
+            icon: stopped ? "x" : "check",
+            label: stopped ? "Work cancelled" : "Work came back",
+            ...(job === undefined ? {} : { jobId: job }),
+          });
         }
         break;
       }
