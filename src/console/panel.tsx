@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
 import { api, errorMessage, SignedOutError } from "./api";
 import { Avatar } from "./avatar";
 import { posterUrl } from "./computer/browser-app";
-import { bytes, PRESENCE_LABEL, scheduleText, shortWhen } from "./format";
-import { Icon } from "./icons";
+import { bytes, clock, PRESENCE_LABEL, scheduleText, shortWhen, withoutEmoji } from "./format";
+import { Icon, type IconName } from "./icons";
 import { RoutineDialog } from "./routine-dialog";
-import type { Hover, Member, Routine } from "./types";
+import type { ActivityEvent, Hover, Member, Routine } from "./types";
 import { modelsOf, tokens, usd } from "../../agent/lib/usage-format";
 
 /**
@@ -55,7 +55,27 @@ function UsageSection({ member }: { member: Member }) {
   );
 }
 
-export type PanelView = "overview" | "settings";
+/** The panel's tabs. A Bot has all but Team; HQ has Team, Activity and Computer. */
+export type PanelView = "activity" | "routines" | "library" | "computer" | "profile" | "team";
+
+const BOT_TABS: readonly { id: PanelView; label: string; icon: IconName }[] = [
+  { id: "activity", label: "Activity", icon: "list" },
+  { id: "routines", label: "Routines", icon: "history" },
+  { id: "library", label: "Library", icon: "folder" },
+  { id: "computer", label: "Computer", icon: "monitor" },
+  { id: "profile", label: "Profile", icon: "card" },
+];
+const HQ_TABS: readonly { id: PanelView; label: string; icon: IconName }[] = [
+  { id: "team", label: "Team", icon: "person" },
+  { id: "activity", label: "Activity", icon: "list" },
+  { id: "computer", label: "Computer", icon: "monitor" },
+];
+
+/** The tab a member shows when asked for one it does not have. */
+export function tabFor(member: Pick<Member, "kind">, view: PanelView): PanelView {
+  const tabs = member.kind === "hq" ? HQ_TABS : BOT_TABS;
+  return tabs.some((tab) => tab.id === view) ? view : (tabs[0]?.id ?? "activity");
+}
 
 /** Lighter in the morning, darker at night: the Bot's computer keeps its own time. */
 function palette(hour: number): readonly [string, string, string] {
@@ -114,6 +134,7 @@ export function useScreen(member: Member): string | null {
 export function DetailsPanel({
   member,
   members,
+  activity,
   view,
   onView,
   onClose,
@@ -125,6 +146,7 @@ export function DetailsPanel({
 }: {
   member: Member;
   members: readonly Member[];
+  activity: readonly ActivityEvent[];
   view: PanelView;
   onView: (view: PanelView) => void;
   onClose: () => void;
@@ -132,43 +154,369 @@ export function DetailsPanel({
   onTakeover: () => void;
   onChanged: () => Promise<void>;
   onHover: (hover: Hover | null) => void;
-  /** Bumped by the roster menu's "Edit profile"; the settings view opens its form. */
+  /** Bumped by the roster menu's "Edit profile"; the profile tab opens its form. */
   editRequest?: number;
 }) {
-  const settings = member.kind === "bot" && view === "settings";
+  const tabs = member.kind === "hq" ? HQ_TABS : BOT_TABS;
+  const tab = tabFor(member, view);
+  const paused = member.status === "paused";
   return (
     <aside className="panel" aria-label="Details">
       <div className="panel-head">
-        {settings ? (
-          <button type="button" className="icon-btn" aria-label="Back" onClick={() => onView("overview")}>
-            <Icon name="left" />
-          </button>
-        ) : null}
         <span className="spacer" />
-        {member.kind === "bot" && !settings ? (
-          <button type="button" className="icon-btn" aria-label="Settings" title="Settings" onClick={() => onView("settings")}>
-            <Icon name="gear" />
-          </button>
-        ) : null}
-        <button type="button" className="icon-btn" aria-label="Close" title="Close" onClick={onClose}>
+        <button type="button" className="icon-btn round" aria-label="Close" title="Close" onClick={onClose}>
           <Icon name="x" />
         </button>
       </div>
-      {settings ? null : (
-        <div className="panel-pinned">
-          <ScreenPreview member={member} members={members} onTakeover={onTakeover} />
-        </div>
-      )}
-      <div className="panel-body">
-        {member.kind === "hq" ? (
-          <HqPanel member={member} members={members} onSelect={onSelect} onHover={onHover} />
-        ) : settings ? (
-          <SettingsPanel key={member.id} member={member} onChanged={onChanged} editRequest={editRequest} />
-        ) : (
-          <BotPanel member={member} members={members} onChanged={onChanged} />
-        )}
+      <div className="panel-hero">
+        <button
+          type="button"
+          className="hero-face"
+          aria-label={member.kind === "bot" ? `Edit ${member.name}'s profile` : member.name}
+          onClick={member.kind === "bot" ? () => onView("profile") : undefined}
+        >
+          <Avatar member={member} size={68} />
+          {member.kind === "bot" ? (
+            <span className="hero-edit" aria-hidden="true">
+              <Icon name="edit" size={12} />
+            </span>
+          ) : null}
+        </button>
+        <h2>{member.name}</h2>
+        <p className="hero-role">{member.title}</p>
+        <p className={`hero-status ${paused ? "paused" : member.presence}`}>
+          <i />
+          {paused ? "Paused" : PRESENCE_LABEL[member.presence]}
+          {member.action && !paused ? <span> · {member.action}</span> : null}
+        </p>
+      </div>
+      <div className="tabs" role="tablist" aria-label={`${member.name}'s details`}>
+        {tabs.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            role="tab"
+            aria-selected={entry.id === tab}
+            className={entry.id === tab ? "tab on" : "tab"}
+            title={entry.label}
+            onClick={() => onView(entry.id)}
+          >
+            <Icon name={entry.icon} size={15} />
+            <span>{entry.label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="panel-body" key={`${member.id}:${tab}`}>
+        {tab === "team" ? <TeamTab member={member} members={members} onSelect={onSelect} onHover={onHover} /> : null}
+        {tab === "activity" ? <ActivityTab member={member} activity={activity} /> : null}
+        {tab === "routines" ? <RoutinesTab member={member} onChanged={onChanged} /> : null}
+        {tab === "library" ? <LibraryTab member={member} /> : null}
+        {tab === "computer" ? <ComputerTab member={member} members={members} onTakeover={onTakeover} /> : null}
+        {tab === "profile" ? <SettingsPanel key={member.id} member={member} onChanged={onChanged} editRequest={editRequest} /> : null}
       </div>
     </aside>
+  );
+}
+
+/** What each kind of feed line looks like on the timeline. */
+const ACTIVITY_ICON: Readonly<Record<string, IconName>> = {
+  "job.assigned": "plus",
+  "job.started": "play",
+  "job.progress": "check",
+  "job.artifact": "file",
+  "job.blocked": "alert",
+  "job.done": "check",
+  "job.failed": "alert",
+  "job.cancelled": "x",
+  "job.learned": "spark",
+  "job.rewound": "history",
+  "job.stranded": "history",
+  "job.crashed": "alert",
+  "job.moved": "history",
+  "memory.saved": "brain",
+  "bot.hired": "person",
+  "bot.updated": "edit",
+  "bot.retired": "x",
+  "computer.takeover": "monitor",
+  "computer.handback": "monitor",
+  "computer.restored": "monitor",
+  "computer.failed": "alert",
+};
+
+/** A feed line's headline: the job it is about, when the line names one in quotes. */
+function headline(event: ActivityEvent): { title: string; detail: string } {
+  const text = withoutEmoji(event.text);
+  const quoted = /"([^"]{2,80})"/.exec(text)?.[1];
+  if (quoted === undefined) return { title: text.length > 70 ? `${text.slice(0, 68)}…` : text, detail: "" };
+  // The job is the heading; the line under it says what happened, without naming it twice.
+  const detail = text.replace(`"${quoted}"`, "it").trim();
+  return { title: quoted, detail };
+}
+
+/** 09.10.26, the way Muse dates its cards. */
+const dateStamp = (at: string): string => {
+  const date = new Date(at);
+  return [date.getMonth() + 1, date.getDate(), date.getFullYear() % 100].map((part) => String(part).padStart(2, "0")).join(".");
+};
+
+function dayLabel(at: string): string {
+  const day = new Date(at);
+  const today = new Date();
+  const yesterday = new Date(today.getTime() - 86_400_000);
+  if (day.toDateString() === today.toDateString()) return "Today";
+  if (day.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return day.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** What the member has been doing, newest first, grouped by day: the feed as a timeline. */
+function ActivityTab({ member, activity }: { member: Member; activity: readonly ActivityEvent[] }) {
+  const [limit, setLimit] = useState(30);
+  const events = useMemo(() => {
+    const mine = activity.filter((event) =>
+      member.kind === "hq" ? event.kind.startsWith("job.") || event.kind.startsWith("bot.") : event.botId === member.id,
+    );
+    return [...mine].sort((left, right) => right.at.localeCompare(left.at));
+  }, [activity, member]);
+  if (events.length === 0) {
+    return <EmptyTab icon="list" title="Nothing yet" text={member.kind === "hq" ? "Work the team does shows up here." : `What ${member.name} does shows up here.`} />;
+  }
+  const shown = events.slice(0, limit);
+  const days: { label: string; events: ActivityEvent[] }[] = [];
+  for (const event of shown) {
+    const label = dayLabel(event.at);
+    const last = days[days.length - 1];
+    if (last !== undefined && last.label === label) last.events.push(event);
+    else days.push({ label, events: [event] });
+  }
+  return (
+    <div className="timeline">
+      {days.map((day) => (
+        <section key={day.label}>
+          <h3>{day.label}</h3>
+          <ul>
+            {day.events.map((event) => {
+              const { title, detail } = headline(event);
+              const bad = event.kind === "job.failed" || event.kind === "job.crashed" || event.kind === "computer.failed";
+              return (
+                <li key={event.id} className={bad ? "bad" : event.kind === "job.done" ? "good" : undefined}>
+                  <span className="dot-icon">
+                    <Icon name={ACTIVITY_ICON[event.kind] ?? "dot"} size={14} />
+                  </span>
+                  <div>
+                    <b>{title}</b>
+                    {detail === "" ? null : <span>{detail}</span>}
+                    <time>{clock(new Date(event.at))}</time>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+      {events.length > limit ? (
+        <button type="button" className="show-more" onClick={() => setLimit((value) => value + 30)}>
+          Show more
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function EmptyTab({ icon, title, text, children }: { icon: IconName; title: string; text: string; children?: React.ReactNode }) {
+  return (
+    <div className="empty-tab">
+      <Icon name={icon} size={22} />
+      <b>{title}</b>
+      <span>{text}</span>
+      {children}
+    </div>
+  );
+}
+
+function RoutinesTab({ member, onChanged }: { member: Member; onChanged: () => Promise<void> }) {
+  const paused = member.status === "paused";
+  const [editing, setEditing] = useState<Routine | null>(null);
+  return (
+    <>
+      {member.routines.length === 0 ? (
+        <EmptyTab icon="history" title="No routines" text={`Ask ${member.name} to do something every day or every week, and it shows up here.`} />
+      ) : (
+        <ul className="card-list">
+          {member.routines.map((routine) => (
+            <li key={routine.jobId}>
+              <div>
+                <b>{routine.title}</b>
+                <span>{scheduleText(routine, paused)}</span>
+              </div>
+              <button type="button" className="btn small" onClick={() => setEditing(routine)} title="Change when it runs, or stop it">
+                Edit
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <RoutineDialog routine={editing} onClose={() => setEditing(null)} onChanged={onChanged} />
+    </>
+  );
+}
+
+const IMAGE = /^image\/(png|jpeg|gif|webp)$/;
+
+/** Files the member saved, newest first: this week's, then older, a few at a time. */
+function LibraryTab({ member }: { member: Member }) {
+  const [more, setMore] = useState<Record<string, boolean>>({});
+  if (member.files.length === 0) {
+    return <EmptyTab icon="folder" title="No files yet" text={`Screenshots, exports and drafts ${member.name} saves land here.`} />;
+  }
+  const week = Date.now() - 7 * 86_400_000;
+  const groups = [
+    { label: "This week", files: member.files.filter((file) => Date.parse(file.at) >= week) },
+    { label: "Older", files: member.files.filter((file) => Date.parse(file.at) < week) },
+  ].filter((group) => group.files.length > 0);
+  return (
+    <>
+      {groups.map((group) => (
+        <section key={group.label} className="library">
+          <h3>{group.label}</h3>
+          <ul className="card-list">
+            {(more[group.label] ? group.files : group.files.slice(0, 5)).map((file) => {
+              const href = `/bot/v1/artifacts/${encodeURIComponent(file.id)}`;
+              return (
+                <li key={file.id}>
+                  <a href={href} target="_blank" rel="noopener noreferrer" className="file-row">
+                    <span className="thumb">{IMAGE.test(file.mediaType) ? <img src={href} alt="" loading="lazy" /> : <Icon name="file" size={14} />}</span>
+                    <span className="file-text">
+                      <b>{file.name}</b>
+                      <span>
+                        {bytes(file.bytes)} · {shortWhen(file.at)}
+                      </span>
+                    </span>
+                  </a>
+                </li>
+              );
+            })}
+            {group.files.length > 5 && !more[group.label] ? (
+              <li className="show-more-row">
+                <button type="button" className="show-more" onClick={() => setMore((value) => ({ ...value, [group.label]: true }))}>
+                  Show more
+                </button>
+              </li>
+            ) : null}
+          </ul>
+        </section>
+      ))}
+    </>
+  );
+}
+
+function TeamTab({
+  member,
+  members,
+  onSelect,
+  onHover,
+}: {
+  member: Member;
+  members: readonly Member[];
+  onSelect: (id: string) => void;
+  onHover: (hover: Hover | null) => void;
+}) {
+  const bots = members.filter((entry) => entry.kind === "bot");
+  const waiting = bots.filter((bot) => bot.presence === "waiting" || bot.pending > 0);
+  return (
+    <>
+      {waiting.length === 0 ? null : (
+        <section>
+          <h3>Waiting on you</h3>
+          <ul className="card-list">
+            {waiting.map((bot) => (
+              <li key={bot.id}>
+                <button type="button" className="team-row" onClick={() => onSelect(bot.id)}>
+                  <Avatar member={bot} size={26} presence="waiting" onHover={onHover} />
+                  <span className="file-text">
+                    <b>{bot.name}</b>
+                    <span>{bot.action ?? "Needs a decision"}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      <section>
+        <h3>Team</h3>
+        {bots.length === 0 ? (
+          <EmptyTab icon="person" title="No Bots yet" text="Ask HQ to hire one, or press + in the sidebar." />
+        ) : (
+          <ul className="card-list">
+            {bots.map((bot) => (
+              <li key={bot.id}>
+                <button type="button" className="team-row" onClick={() => onSelect(bot.id)}>
+                  <Avatar member={bot} size={26} onHover={onHover} />
+                  <span className="file-text">
+                    <b>{bot.name}</b>
+                    <span>
+                      {bot.status === "paused" ? "Paused" : PRESENCE_LABEL[bot.presence]} · {bot.action ?? bot.title}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <UsageSection member={member} />
+    </>
+  );
+}
+
+/** The screen, awake or asleep. Asleep, a press wakes the browser; awake, it opens the computer. */
+function ComputerTab({ member, members, onTakeover }: { member: Member; members: readonly Member[]; onTakeover: () => void }) {
+  const asleep = member.computer.browser !== "on" && member.computer.browser !== "starting";
+  const [waking, setWaking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const wake = async () => {
+    setWaking(true);
+    setError(null);
+    try {
+      const response = await api(`/bot/v1/bots/${encodeURIComponent(member.kind === "hq" ? "hq" : member.id)}/computer/browser`, { method: "POST" });
+      if (!response.ok) setError(await errorMessage(response, "Could not wake the computer."));
+    } catch (caught) {
+      if (!(caught instanceof SignedOutError)) setError("Could not wake the computer.");
+    } finally {
+      setWaking(false);
+    }
+  };
+  return (
+    <>
+      {asleep && member.computer.control === null && !member.computer.active ? (
+        <div className="asleep">
+          <SleepingFace />
+          <b>Computer is asleep</b>
+          <button type="button" className="btn small" disabled={waking} onClick={() => void wake()}>
+            {waking ? "Waking…" : "Wake"}
+          </button>
+          {error === null ? null : <span className="error-text">{error}</span>}
+        </div>
+      ) : (
+        <ScreenPreview member={member} members={members} onTakeover={onTakeover} />
+      )}
+      <p className="screen-caption">
+        {member.kind === "hq" ? "The team's screen" : `${member.name}'s screen`}
+        {member.computer.kind ? <span className="screen-kind"> · {member.computer.kind}</span> : null}
+      </p>
+    </>
+  );
+}
+
+/** A small grey mascot, eyes shut, for a computer that is not running. */
+function SleepingFace() {
+  return (
+    <svg className="sleeping" viewBox="0 0 48 48" aria-hidden="true">
+      <path d="M24 8c8 9 13 14.6 13 21a13 13 0 0 1-26 0c0-6.4 5-12 13-21Z" fill="currentColor" />
+      <path d="M17.5 30.5q2.2 1.8 4.4 0M26.1 30.5q2.2 1.8 4.4 0" fill="none" stroke="var(--side)" strokeWidth={2} strokeLinecap="round" />
+      <text x="35" y="12" className="z1">z</text>
+      <text x="40" y="6" className="z2">z</text>
+    </svg>
   );
 }
 
@@ -197,7 +545,6 @@ function ScreenPreview({
   // stills instead: that way two Bots working at once each show their own tab.
   const screen = useScreen(member);
   const working = usingScreen(member, members);
-  const kind = member.computer.kind ?? null;
 
   return (
     <>
@@ -219,72 +566,6 @@ function ScreenPreview({
           <i />
         </span>
       </button>
-      <div className="screen-caption" title={kind === null ? undefined : `Runs on ${kind}`}>
-        {member.computer.browser === "on" || member.computer.posterAt === null
-          ? "Team computer"
-          : `Team computer · asleep, last seen ${shortWhen(member.computer.posterAt)}`}
-        {kind === null ? null : <span className="screen-kind"> · {kind}</span>}
-      </div>
-    </>
-  );
-}
-
-function BotPanel({
-  member,
-  members,
-  onChanged,
-}: {
-  member: Member;
-  members: readonly Member[];
-  onChanged: () => Promise<void>;
-}) {
-  const paused = member.status === "paused";
-  const [editing, setEditing] = useState<Routine | null>(null);
-
-  return (
-    <>
-      <div className="section">
-        <h3>Routines</h3>
-        <ul className="list">
-          {member.routines.length === 0 ? (
-            <li className="muted-row">No routines yet</li>
-          ) : (
-            member.routines.map((routine) => (
-              <li key={routine.jobId} className="routine-row">
-                <Icon name={paused ? "clock" : "check"} size={15} className={paused ? undefined : "ok"} />
-                <div>
-                  <b>{routine.title}</b>
-                  <span>{scheduleText(routine, paused)}</span>
-                </div>
-                <button type="button" className="btn routine-edit" onClick={() => setEditing(routine)} title="Change when it runs, or stop it">
-                  Edit
-                </button>
-              </li>
-            ))
-          )}
-        </ul>
-      </div>
-      <RoutineDialog routine={editing} onClose={() => setEditing(null)} onChanged={onChanged} />
-      <UsageSection member={member} />
-
-      {member.files.length === 0 ? null : (
-        <div className="section">
-          <h3>Files</h3>
-          <ul className="list">
-            {member.files.map((file) => (
-              <li key={file.id}>
-                <Icon name="file" size={15} />
-                <a href={`/bot/v1/artifacts/${encodeURIComponent(file.id)}`} target="_blank" rel="noopener noreferrer">
-                  <b>{file.name}</b>
-                  <span>
-                    {bytes(file.bytes)} · {shortWhen(file.at)}
-                  </span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </>
   );
 }
@@ -307,6 +588,7 @@ function SettingsPanel({
   }, [editRequest]);
   const profile = member.profile;
   const paused = member.status === "paused";
+  const [open, setOpen] = useState<"soul" | "playbook" | null>(null);
 
   /** Saves the Bot's name, job, and instructions. The next message and the next job use them. */
   const saveProfile = async (form: HTMLFormElement) => {
@@ -395,28 +677,43 @@ function SettingsPanel({
 
   return (
     <>
-      <div className="profile">
-        <Avatar member={member} size={52} />
-        <h2>{member.name}</h2>
-        <p>{member.title}</p>
-        <p className="faint">
-          {paused ? "Paused" : PRESENCE_LABEL[member.presence]}
-          {member.action ? ` · ${member.action}` : ""}
-        </p>
-        {profile === null ? null : (
-          <button type="button" className="btn profile-edit" onClick={() => setEditing(true)}>
-            Edit profile
+      {profile === null ? null : (
+        <div className="identity">
+          <b>{member.name}</b>
+          <button type="button" className="btn wide" onClick={() => setEditing(true)}>
+            <Icon name="edit" size={13} /> Edit
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {profile === null ? null : (
         <>
-          <div className="section">
-            <h3>{`How ${member.name} works`}</h3>
-            <p className="prose">{profile.persona}</p>
+          <div className="soul-cards">
+            <button type="button" className={open === "soul" ? "soul on" : "soul"} onClick={() => setOpen(open === "soul" ? null : "soul")}>
+              <b>Soul</b>
+              <small>How it works</small>
+              <span>
+                <time>{dateStamp(profile.hiredAt)}</time>
+                <Icon name="chev" size={13} />
+              </span>
+            </button>
+            <button type="button" className={open === "playbook" ? "playbook on" : "playbook"} onClick={() => setOpen(open === "playbook" ? null : "playbook")}>
+              <b>Playbook</b>
+              <small>{profile.playbook.length === 1 ? "1 lesson" : `${profile.playbook.length} lessons`}</small>
+              <span>
+                <time>{profile.stats.jobsCompleted} done</time>
+                <Icon name="chev" size={13} />
+              </span>
+            </button>
           </div>
-          <div className="section">
+          {open === "soul" ? (
+            <div className="section reveal">
+              <h3>{`How ${member.name} works`}</h3>
+              <p className="prose">{profile.persona}</p>
+            </div>
+          ) : null}
+          {open !== "playbook" ? null : (
+          <div className="section reveal">
             <h3>Playbook</h3>
             <ul className="list">
               {profile.playbook.length === 0 ? (
@@ -431,6 +728,7 @@ function SettingsPanel({
               )}
             </ul>
           </div>
+          )}
           <div className="section">
             <h3>Record</h3>
             <p className="prose">
@@ -447,69 +745,8 @@ function SettingsPanel({
         </button>
         {error === null ? null : <p className="error-text">{error}</p>}
       </div>
-      <p className="faint">{`To retire ${member.name}, ask HQ. It will ask for your approval first.`}</p>
-    </>
-  );
-}
-
-function HqPanel({
-  member,
-  members,
-  onSelect,
-  onHover,
-}: {
-  member: Member;
-  members: readonly Member[];
-  onSelect: (id: string) => void;
-  onHover: (hover: Hover | null) => void;
-}) {
-  const bots = members.filter((member) => member.kind === "bot");
-  const waiting = bots.filter((bot) => bot.presence === "waiting" || bot.pending > 0);
-
-  return (
-    <>
-      <div className="section">
-        <h3>Team</h3>
-        <ul className="list">
-          {bots.length === 0 ? (
-            <li className="muted-row">No Bots yet. Ask HQ to hire one, or press +.</li>
-          ) : (
-            bots.map((bot) => (
-              <li key={bot.id}>
-                <button type="button" className="team-row" onClick={() => onSelect(bot.id)}>
-                  <Avatar member={bot} size={20} onHover={onHover} />
-                  <div>
-                    <b>{bot.name}</b>
-                    <span>
-                      {bot.status === "paused" ? "Paused" : PRESENCE_LABEL[bot.presence]} · {bot.action ?? bot.title}
-                    </span>
-                  </div>
-                </button>
-              </li>
-            ))
-          )}
-        </ul>
-      </div>
       <UsageSection member={member} />
-
-      {waiting.length === 0 ? null : (
-        <div className="section">
-          <h3>Waiting on you</h3>
-          <ul className="list">
-            {waiting.map((bot) => (
-              <li key={bot.id}>
-                <button type="button" className="team-row" onClick={() => onSelect(bot.id)}>
-                  <Icon name="alert" size={15} />
-                  <div>
-                    <b>{bot.name}</b>
-                    <span>{bot.action ?? "Needs a decision"}</span>
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <p className="faint">{`To retire ${member.name}, ask HQ. It will ask for your approval first.`}</p>
     </>
   );
 }

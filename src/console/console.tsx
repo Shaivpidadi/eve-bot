@@ -87,7 +87,11 @@ export function Console() {
   const [panelOpen, setPanelOpen] = useState(
     () => (read("bot.panel") ?? (window.innerWidth > 1080 ? "open" : "closed")) === "open",
   );
-  const [panelView, setPanelView] = useState<PanelView>("overview");
+  const [panelView, setPanelViewState] = useState<PanelView>(() => (read("bot.tab") as PanelView | null) ?? "activity");
+  const setPanelView = useCallback((next: PanelView) => {
+    setPanelViewState(next);
+    write("bot.tab", next);
+  }, []);
   const [view, setView] = useState<"roster" | "chat">(() => (window.innerWidth > 760 ? "chat" : "roster"));
   const [computer, setComputer] = useState<{ botId: string; requestId: string | null } | null>(null);
   const [hiring, setHiring] = useState(false);
@@ -131,7 +135,6 @@ export function Console() {
   const select = useCallback((id: string) => {
     setSelectedId(id);
     write("bot.selected", id);
-    setPanelView("overview");
     setComputer(null);
     setHover(null);
     setView("chat");
@@ -215,7 +218,7 @@ export function Console() {
           onEditProfile={(id) => {
             select(id);
             showPanel(true);
-            setPanelView("settings");
+            setPanelView("profile");
             setEditRequest((count) => count + 1);
           }}
         />
@@ -227,9 +230,9 @@ export function Console() {
           user={board.user}
           onBack={() => setView("roster")}
           onToggleComputer={() => {
-            // Status → preview: the icon opens the pinned panel, or closes it.
-            showPanel(!(panelOpen && panelView === "overview"));
-            setPanelView("overview");
+            // The icon opens the panel on the computer, or closes it if that is what it shows.
+            showPanel(!(panelOpen && panelView === "computer"));
+            setPanelView("computer");
           }}
           onOpenComputer={(requestId) => setComputer({ botId: computerFor(member, members).id, requestId })}
           onHover={setHover}
@@ -241,6 +244,7 @@ export function Console() {
               <DetailsPanel
                 member={member}
                 members={members}
+                activity={board.activity}
                 view={panelView}
                 onView={setPanelView}
                 onClose={() => showPanel(false)}

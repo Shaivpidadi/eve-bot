@@ -337,7 +337,7 @@ function botMember(
       })),
     files: events
       .filter((event) => event.kind === "job.artifact" && typeof event.data?.artifactId === "string")
-      .slice(0, 8)
+      .slice(0, 40)
       .map((event) => ({
         id: String(event.data?.artifactId),
         name: typeof event.data?.name === "string" ? event.data.name : "file",
