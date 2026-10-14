@@ -157,7 +157,7 @@ Recommendation: extend the SVG system first (A1 to A8), keep a Rive spike
       runtime's size and the file's, and whether its colours can follow the
       theme. Decide whether it earns a place.
 
-## E. eve 0.58.1 to 0.78.0
+## E. eve 0.58.1 to 0.79.1 (done 14 Oct 2026)
 
 Twenty minor versions in six weeks (0.78.0 shipped 13 Oct 2026). Not a
 dependency bump: 0.69 replaced the task model `run_job` is built on, and
@@ -185,22 +185,33 @@ What changes for us, from the changelog and the 0.78 docs:
 | Compaction | event log grows for ever | an idle session moves to a fresh run after compaction | long HQ threads |
 | Web search | | `webSearch({ provider: "native" })` uses the vendor's search on Gateway | optional |
 
-- [ ] **E1 (S)** Branch, bump `eve` to 0.78.0, `ai` to 7.0.139, `@agent-browser/eve`
+- [x] **E1 (S)** Branch, bump `eve` to 0.78.0, `ai` to 7.0.139, `@agent-browser/eve`
       to 0.39.0, run `npm run typecheck`, list every error by file. Done: the
       list is in the PR description.
-- [ ] **E2 (M)** `run_job` on the task model: `task()`, `ctx.agent().send()`,
+- [x] **E2 (M)** `run_job` on the task model: `task()`, `ctx.agent().send()`,
       result reading, the sign-off `ctx.ask` from a task (stays open across
       messages), the heartbeat loop against `turn.waiting`. Done: a job runs,
       parks for sign-off, is approved, closes once.
-- [ ] **E3 (M)** Cancel and fence: `ctx.cancel()` in the fence hook, delete the
+- [x] **E3 (M)** Cancel and fence: `ctx.cancel()` in the fence hook, delete the
       `task_cancel` override, re-test the cancel paths (`tests/turn-stop`,
       `cancel.test`), re-check the "HQ goes deaf after task cancel" note.
-- [ ] **E4 (M)** Console and watchdog on stream version 26: `turn.waiting`,
+- [x] **E4 (M)** Console and watchdog on stream version 26: `turn.waiting`,
       `task.*`, `agent.started`, `409 session_stranded`; recover carries the
       old transcript via `predecessor`. Done: a held turn shows as "working on
       N jobs", not as wedged; a stranded room recovers with its history.
-- [ ] **E5 (S)** Jev on `decide`; sandbox handle hooks in `sharedComputer`;
+- [x] **E5 (S)** Jev on `decide`; sandbox handle hooks in `sharedComputer`;
       bash output `status`; connection tool names in instructions and catalog.
+Landed on 0.79.1 instead of 0.78.0, with these departures from the plan:
+a team-computer sandbox provider (lib/team-computer.ts) replaces
+`sharedComputer`; `run_job` is a resumable task (`serve`) that runs due work
+inside the call and waits idle for later work, waking its room through a
+durable outbox the server flushes by calling itself (lib/outbox.ts,
+lib/self.ts); the fence hook is gone and the model resolver plus `run_job`'s
+abort signal stop a cancelled or halted Bot. Verified live on eve dev and on
+a Vercel preview: a due job, a job scheduled two minutes out (woken on time
+with no console open), a cancel mid-job, a Bot-to-Bot message, and a code
+change with a thread open (no stuck thread).
+
 - [ ] **E6 (S)** Memory: try provider capture again now that history arrives;
       keep the hooks if the provider still misses job turns.
 - [ ] **E7 (M)** Full pass: `npm test`, `npm run qa` with `QA_JOBS=1` against a
