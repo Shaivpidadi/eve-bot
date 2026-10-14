@@ -1,0 +1,7 @@
+/*
+ * Tailwind theme extensions for the console's computer screens: @keyframes and
+ * --animate-* (or other @theme values) their classes need. No class rules
+ * here: styling lives in the components' Tailwind classes.
+ */
+@theme {
+}

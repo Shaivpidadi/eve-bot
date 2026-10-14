@@ -1,6 +1,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "../styles/shell.css";
+@import "../styles/chat.css";
+@import "../styles/panel.css";
+@import "../styles/pages.css";
+@import "../styles/computer.css";
 
 /*
  * shadcn/ui and AI Elements live alongside the console's own styles. Their
