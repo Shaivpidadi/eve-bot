@@ -44,6 +44,11 @@ function hash(text: string): number {
   return value >>> 0;
 }
 
+/** The colour a member is drawn in, for anything that should match its face (its thread's bubbles). */
+export function memberColor(member: Pick<Member, "id" | "kind">): string {
+  return member.kind === "hq" ? HQ_COLOR : (COLORS[hash(member.id) % COLORS.length] ?? HQ_COLOR);
+}
+
 export function Avatar({
   member,
   size = 22,

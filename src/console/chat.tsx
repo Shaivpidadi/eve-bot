@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useSyncExternalStore } from "react";
+import { type CSSProperties, useMemo, useSyncExternalStore } from "react";
 
-import { Avatar } from "./avatar";
+import { Avatar, memberColor } from "./avatar";
 import { Composer } from "./composer";
 import { Icon } from "./icons";
 import { buildTimeline, roomStore } from "./room-store";
@@ -47,13 +47,15 @@ export function ChatPane({
   const busy = useMemo(() => busyIn(member, members, room.live), [member, members, room.live]);
 
   return (
-    <main className="chat">
+    <main className="chat" style={{ "--you": memberColor(member) } as CSSProperties}>
       <header className="chat-head">
         <button type="button" className="icon-btn back" aria-label="Back to Bots" onClick={onBack}>
           <Icon name="left" />
         </button>
-        <Avatar member={member} size={18} onHover={onHover} />
-        <span className="head-name">{member.name}</span>
+        <span className="head-chip">
+          <Avatar member={member} size={22} onHover={onHover} />
+          <span className="head-name">{member.name}</span>
+        </span>
         <button
           type="button"
           className={member.computer.active ? "icon-btn computer-btn active" : "icon-btn computer-btn"}

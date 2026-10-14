@@ -89,11 +89,27 @@ button:disabled { cursor: default; opacity: 0.5; }
   background: var(--side); border-right: 1px solid var(--line);
   display: flex; flex-direction: column; min-height: 0;
 }
-.side-top { display: flex; justify-content: flex-end; padding: 10px 10px 6px; }
+.side-top { display: flex; align-items: center; gap: 8px; padding: 12px 12px 10px; }
 .search {
-  display: flex; align-items: center; gap: 7px; margin: 0 10px 8px;
-  background: var(--field); border-radius: 8px; padding: 0 9px; height: 30px; color: var(--faint);
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px;
+  background: var(--field); border-radius: 99px; padding: 0 11px; height: 32px; color: var(--faint);
+  transition: box-shadow 0.15s;
 }
+.search:focus-within { box-shadow: 0 0 0 2px var(--line-2); }
+
+/* HQ and pinned Bots as tiles. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 6px; padding: 0 12px 10px; }
+.tile {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 10px 4px 8px;
+  border-radius: 14px; transition: background 0.15s, transform 0.15s;
+}
+.tile:hover { background: var(--hover); }
+.tile:active { transform: scale(0.97); }
+.tile[aria-current="true"] { background: var(--selected); }
+.tile-name { font-size: 12px; font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile.paused .tile-name { color: var(--muted); }
+.tile-badge { position: absolute; top: 8px; right: 14px; width: 9px; height: 9px; border-radius: 50%; background: var(--purple); box-shadow: 0 0 0 2px var(--side); }
+.tile-badge.needs { background: var(--warn); }
 .search input {
   flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
   color: var(--text); font: inherit; font-size: 12.5px;
@@ -102,15 +118,15 @@ button:disabled { cursor: default; opacity: 0.5; }
 
 .roster { flex: 1; overflow-y: auto; padding: 2px 6px 8px; }
 .row {
-  width: 100%; display: flex; gap: 10px; align-items: flex-start; text-align: left;
-  padding: 7px 8px; border-radius: 9px;
+  width: 100%; display: flex; gap: 11px; align-items: center; text-align: left;
+  padding: 8px 9px; border-radius: 12px; transition: background 0.12s;
 }
 .row:hover { background: var(--hover); }
 .row[aria-current="true"] { background: var(--selected); }
-.row .av { margin-top: 1px; }
+.row .av { flex: none; }
 .row-main { flex: 1; min-width: 0; }
 .row-top { display: flex; align-items: baseline; gap: 8px; }
-.row-name { font-weight: 500; font-size: 12.5px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-name { font-weight: 500; font-size: 13px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row time { font-size: 10.5px; color: var(--faint); flex: none; font-variant-numeric: tabular-nums; }
 .row-preview {
   display: block; color: var(--muted); font-size: 12px; margin-top: 1px;
@@ -158,7 +174,27 @@ button:disabled { cursor: default; opacity: 0.5; }
 .btn.danger-fill { background: var(--bad); color: #fff; }
 dialog.prompt-dialog { width: min(92vw, 400px); }
 
-.side-bottom { border-top: 1px solid var(--line); padding: 6px; position: relative; }
+.side-bottom { padding: 6px 10px 12px; position: relative; display: flex; flex-direction: column; gap: 4px; }
+.dock-bar { display: flex; align-items: center; gap: 6px; }
+.me-wrap { position: relative; flex: none; }
+.me-btn { display: grid; place-items: center; border-radius: 50%; transition: transform 0.15s; }
+.me-btn:hover { transform: scale(1.05); }
+.me-btn .me-avatar { width: 30px; height: 30px; font-size: 12px; }
+.me-menu { position: absolute; left: 0; bottom: calc(100% + 8px); }
+.me-menu form { margin: 0; }
+.connect-pill {
+  flex: 1; min-width: 0; height: 34px; display: flex; align-items: center; justify-content: center; gap: 7px;
+  border-radius: 99px; background: var(--card); border: 1px solid var(--line-2); font-size: 12.5px; font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); transition: transform 0.15s, box-shadow 0.15s;
+}
+.connect-pill:hover { box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1); }
+.connect-pill:active { transform: scale(0.98); }
+.app-dots { display: inline-flex; }
+.app-dots i { width: 11px; height: 11px; border-radius: 3px; margin-left: -2px; border: 1.5px solid var(--card); display: block; }
+.app-dots i:nth-child(1) { background: #5e6ad2; }
+.app-dots i:nth-child(2) { background: var(--text); }
+.app-dots i:nth-child(3) { background: #2684ff; }
+.me-name-form { margin: 0 0 4px; }
 .side-item {
   width: 100%; display: flex; align-items: center; gap: 9px; padding: 7px 8px;
   border-radius: 8px; color: var(--text); font-size: 12.5px; text-align: left;
@@ -194,25 +230,41 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 
 /* -------------------------------------------------------------------- chat */
 
-.chat { background: var(--chat); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat { position: relative; background: var(--chat); display: flex; flex-direction: column; min-width: 0; min-height: 0; --you: var(--bubble-you); }
+/* The header floats: a chip with the face and name over the top of the thread, which scrolls beneath it. */
 .chat-head {
-  height: 44px; flex: none; display: flex; align-items: center; gap: 8px;
-  padding: 0 10px 0 14px; border-bottom: 1px solid var(--line);
+  position: absolute; top: 0; left: 0; right: 0; z-index: 4; height: 56px; display: flex; align-items: center; gap: 8px;
+  padding: 0 12px; pointer-events: none;
+  background: linear-gradient(var(--chat) 30%, color-mix(in srgb, var(--chat) 0%, transparent));
 }
-.chat-head .back { display: none; margin-left: -6px; }
-.head-name { font-weight: 500; font-size: 13px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-head > * { pointer-events: auto; }
+.chat-head .back { display: none; }
+.head-chip {
+  margin: 0 auto; display: inline-flex; align-items: center; gap: 7px; padding: 4px 12px 4px 5px; border-radius: 99px;
+  background: var(--card); border: 1px solid var(--line); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08); max-width: 60%;
+}
+.head-name { font-weight: 600; font-size: 13px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-head .computer-btn { position: absolute; right: 12px; }
 .computer-btn.active { color: var(--purple); }
 
 .scroll { flex: 1; overflow-y: auto; min-height: 0; }
-.transcript { max-width: 760px; margin: 0 auto; padding: 18px 20px 12px; display: flex; flex-direction: column; }
+.transcript { max-width: 760px; margin: 0 auto; padding: 60px 20px 12px; display: flex; flex-direction: column; }
 
 .divider { text-align: center; color: var(--faint); font-size: 11px; margin: 14px 0 10px; font-variant-numeric: tabular-nums; }
 .msg {
-  max-width: min(72%, 560px); padding: 8px 12px; border-radius: 14px; margin: 2px 0;
-  font-size: 13px; line-height: 1.45; overflow-wrap: anywhere;
+  max-width: min(72%, 560px); padding: 9px 13px; border-radius: 18px; margin: 2px 0;
+  font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere;
 }
 .msg.bot { align-self: flex-start; background: var(--bubble-bot); }
-.msg.you { align-self: flex-end; background: var(--bubble-you); white-space: pre-wrap; }
+/* Your side of a thread wears the colour of the one you are talking to. */
+.msg.you { align-self: flex-end; background: var(--you); color: #fff; white-space: pre-wrap; }
+.msg.you a { color: #fff; }
+@media (prefers-reduced-motion: no-preference) {
+  .msg, .card, .notice, .steps, .working { animation: msg-in 0.22s cubic-bezier(0.2, 0, 0, 1) both; }
+  .msg.you { transform-origin: 100% 100%; }
+  .msg.bot { transform-origin: 0 100%; }
+}
+@keyframes msg-in { from { opacity: 0; transform: translateY(6px) scale(0.985); } }
 .msg.you.sending { opacity: 0.6; }
 .msg + .msg.bot, .msg + .msg.you { margin-top: 4px; }
 .msg.bot + .msg.you, .msg.you + .msg.bot { margin-top: 10px; }
@@ -361,16 +413,18 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .composer-wrap { flex: none; padding: 8px 16px 14px; }
 .composer {
   max-width: 760px; margin: 0 auto; display: flex; align-items: flex-end; gap: 4px;
-  background: var(--field); border: 1px solid var(--line); border-radius: 22px; padding: 6px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 26px; padding: 7px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04); transition: box-shadow 0.2s, border-color 0.2s;
 }
-.composer:focus-within { border-color: var(--line-2); }
+.composer:focus-within { border-color: var(--line-2); box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.05); }
 .composer textarea {
   flex: 1; min-width: 0; resize: none; border: 0; outline: 0; background: transparent; color: var(--text);
   font: inherit; font-size: 13px; line-height: 20px; padding: 4px; max-height: 180px;
 }
 .composer textarea::placeholder { color: var(--faint); }
 .composer .icon-btn { border-radius: 50%; }
-.send-btn { background: var(--primary-bg); color: var(--primary-fg) !important; }
+.send-btn { background: var(--you, var(--primary-bg)); color: #fff !important; transition: transform 0.12s; }
+.send-btn:active { transform: scale(0.92); }
 .send-btn:hover { background: var(--primary-bg) !important; filter: brightness(0.92); }
 .mic-btn.listening { color: var(--bad); }
 .composer-pop { position: relative; }
@@ -446,6 +500,7 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .card-list > li > div { flex: 1; min-width: 0; }
 .card-list b { display: block; font-weight: 500; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-list span { display: block; color: var(--muted); font-size: 11.5px; }
+.card-list .file-text > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .card-list .show-more-row { justify-content: center; padding: 2px; }
 .file-row, .team-row { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; color: inherit; text-decoration: none; text-align: left; }
 .file-row:hover b, .team-row:hover b { text-decoration: underline; text-underline-offset: 2px; }

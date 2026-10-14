@@ -82,6 +82,7 @@ export function Sidebar({
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [showHidden, setShowHidden] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [meOpen, setMeOpen] = useState(false);
 
   const needle = query.trim().toLowerCase();
   const rows = members.filter(
@@ -140,7 +141,7 @@ export function Sidebar({
           onClick={() => onSelect(member.id)}
           onContextMenu={(event) => openMenu(member, event)}
         >
-          <Avatar member={member} size={22} onHover={onHover} />
+          <Avatar member={member} size={32} onHover={onHover} />
           <span className="row-main">
             <span className="row-top">
               <span className="row-name">
@@ -167,32 +168,62 @@ export function Sidebar({
 
   const head = (title: string) => <div className="roster-head">{title}</div>;
 
+  /** HQ and pinned Bots, as tiles above the list: the ones used most, a click away. */
+  const tile = (member: Member) => {
+    const needsYou = member.pending > 0 || member.presence === "waiting";
+    const isUnread = unread.has(member.id) && member.id !== selectedId;
+    return (
+      <button
+        key={member.id}
+        type="button"
+        className={`tile${member.status === "paused" ? " paused" : ""}`}
+        aria-current={member.id === selectedId}
+        title={member.title}
+        onClick={() => onSelect(member.id)}
+        onContextMenu={member.kind === "bot" ? (event) => openMenu(member, event) : undefined}
+      >
+        <Avatar member={member} size={40} onHover={onHover} />
+        <span className="tile-name">{member.name}</span>
+        {needsYou ? <span className="tile-badge needs" aria-label="Needs you" /> : isUnread ? <span className="tile-badge" aria-label="Unread" /> : null}
+      </button>
+    );
+  };
+
   return (
     <aside className="sidebar" aria-label="Your Bots">
       <div className="side-top">
-        <button type="button" className="icon-btn" aria-label="New Bot" title="New Bot" onClick={onHire}>
+        <label className="search">
+          <Icon name="search" />
+          <input
+            type="search"
+            placeholder="Search"
+            autoComplete="off"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+        <button type="button" className="icon-btn round" aria-label="New Bot" title="New Bot" onClick={onHire}>
           <Icon name="plus" />
         </button>
       </div>
-      <label className="search">
-        <Icon name="search" />
-        <input
-          type="search"
-          placeholder="Search"
-          autoComplete="off"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </label>
+      {needle === "" ? (
+        <div className="tiles">
+          {groups.hq === null ? null : tile(groups.hq)}
+          {groups.pinned.map(tile)}
+        </div>
+      ) : null}
 
       <nav className="roster">
         {rows.length === 0 ? (
           <p className="roster-empty">No Bots match.</p>
         ) : (
           <>
-            {groups.hq === null ? null : row(groups.hq)}
-            {groups.pinned.length > 0 ? head("Pinned") : null}
-            {groups.pinned.map(row)}
+            {needle === "" ? null : (
+              <>
+                {groups.hq === null ? null : row(groups.hq)}
+                {groups.pinned.map(row)}
+              </>
+            )}
             {groups.sections.map(([name, bots]) => (
               <div key={`section:${name}`} className="roster-section">
                 {head(name)}
@@ -221,88 +252,100 @@ export function Sidebar({
       )}
 
       <div className="side-bottom">
-        <button type="button" className="side-item" onClick={onConnectors}>
-          <Icon name="plug" />
-          Connectors
-        </button>
-        <button type="button" className="side-item" onClick={onMemory}>
-          <Icon name="brain" />
-          Memory
-        </button>
-        <button type="button" className="side-item" onClick={onUsage}>
-          <Icon name="chart" size={15} />
-          Usage
-        </button>
         <HealthNote health={health} members={members} />
         <UpdateNote />
-        <div className="me">
-          {profile?.avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img className="me-avatar me-photo" src={profile.avatarUrl} alt="" width={20} height={20} />
-          ) : (
-            <span className="me-avatar">{(profile?.name ?? user ?? "You").charAt(0).toUpperCase()}</span>
-          )}
-          {editingName !== null ? (
-            <form
-              className="me-name-form"
-              onSubmit={async (event) => {
-                event.preventDefault();
-                try {
-                  await api("/bot/v1/profile", { method: "PATCH", body: JSON.stringify({ name: editingName }) });
-                  await onChanged();
-                } catch {
-                  // The sidebar keeps its old name; the next refresh tells the truth.
-                }
-                setEditingName(null);
+        {editingName !== null ? (
+          <form
+            className="me-name-form"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              try {
+                await api("/bot/v1/profile", { method: "PATCH", body: JSON.stringify({ name: editingName }) });
+                await onChanged();
+              } catch {
+                // The sidebar keeps its old name; the next refresh tells the truth.
+              }
+              setEditingName(null);
+            }}
+          >
+            <input
+              value={editingName}
+              onChange={(event) => setEditingName(event.target.value)}
+              onBlur={() => setEditingName(null)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setEditingName(null);
               }}
-            >
-              <input
-                value={editingName}
-                onChange={(event) => setEditingName(event.target.value)}
-                onBlur={() => setEditingName(null)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") setEditingName(null);
-                }}
-                placeholder="Your name"
-                maxLength={80}
-                aria-label="Your name"
-                autoFocus
-              />
-            </form>
-          ) : (
+              placeholder="Your name"
+              maxLength={80}
+              aria-label="Your name"
+              autoFocus
+            />
+          </form>
+        ) : null}
+        <div className="dock-bar">
+          <div className="me-wrap">
             <button
               type="button"
-              className="me-name"
-              title={
-                profile?.source === "vercel"
-                  ? "Signed in with Vercel"
-                  : profile?.source === "header"
-                    ? "Named by the caller"
-                    : profile?.source === "workspace"
-                      ? "Click to change your name"
-                      : "Click to tell the team your name"
-              }
-              disabled={profile?.source === "vercel" || profile?.source === "header"}
-              onClick={() => setEditingName(profile?.source === "workspace" ? (profile.name ?? "") : "")}
+              className="me-btn"
+              aria-haspopup="menu"
+              aria-expanded={meOpen}
+              title={profile === undefined || profile === null || profile.source === "none" ? "You" : profile.name}
+              onClick={() => setMeOpen((value) => !value)}
             >
-              {profile === undefined || profile === null || profile.source === "none" ? "Set your name" : profile.name}
-              {workspaceId === "default" ? null : <span className="me-ws"> {workspaceId}</span>}
+              {profile?.avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img className="me-avatar me-photo" src={profile.avatarUrl} alt="" width={30} height={30} />
+              ) : (
+                <span className="me-avatar">{(profile?.name ?? user ?? "You").charAt(0).toUpperCase()}</span>
+              )}
             </button>
-          )}
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            title={theme === "dark" ? "Light theme" : "Dark theme"}
-            onClick={toggleTheme}
-          >
-            <Icon name={theme === "dark" ? "sun" : "moon"} />
+            {meOpen ? (
+              <div className="menu me-menu" role="menu" onMouseLeave={() => setMeOpen(false)}>
+                <div className="menu-head">
+                  {profile === undefined || profile === null || profile.source === "none" ? "You" : profile.name}
+                  {workspaceId === "default" ? "" : ` · ${workspaceId}`}
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={profile?.source === "vercel" || profile?.source === "header"}
+                  title={profile?.source === "vercel" ? "Signed in with Vercel" : profile?.source === "header" ? "Named by the caller" : undefined}
+                  onClick={() => {
+                    setMeOpen(false);
+                    setEditingName(profile?.source === "workspace" ? (profile.name ?? "") : "");
+                  }}
+                >
+                  <Icon name="edit" size={14} />
+                  {profile === undefined || profile === null || profile.source === "none" ? "Set your name" : "Change your name"}
+                </button>
+                <button type="button" role="menuitem" onClick={toggleTheme}>
+                  <Icon name={theme === "dark" ? "sun" : "moon"} size={14} />
+                  {theme === "dark" ? "Light theme" : "Dark theme"}
+                </button>
+                <hr />
+                <form method="post" action="/bot/v1/session/end">
+                  <button type="submit" role="menuitem">
+                    <Icon name="signout" size={14} />
+                    Sign out
+                  </button>
+                </form>
+              </div>
+            ) : null}
+          </div>
+          <button type="button" className="connect-pill" onClick={onConnectors}>
+            Connect apps
+            <span className="app-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
           </button>
-          <form method="post" action="/bot/v1/session/end">
-            <button type="submit" className="icon-btn" aria-label="Sign out" title="Sign out">
-              <Icon name="signout" />
-            </button>
-          </form>
+          <button type="button" className="icon-btn" aria-label="Memory" title="Memory" onClick={onMemory}>
+            <Icon name="brain" />
+          </button>
+          <button type="button" className="icon-btn" aria-label="Usage" title="Usage" onClick={onUsage}>
+            <Icon name="chart" size={15} />
+          </button>
         </div>
       </div>
 
