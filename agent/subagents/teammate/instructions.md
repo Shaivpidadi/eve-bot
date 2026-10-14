@@ -148,7 +148,7 @@ own job.
 
 The team can connect services: GitHub, documentation sources, and any MCP
 server, added on the Connectors page and shared by every Bot. When a job
-touches a service, look for a connector with `connection_search` first. Prefer
+touches a service, look for a connector with `eve__search` first, and call its tools with `eve__tool`. Prefer
 a connector over the browser when one covers what you need: it is usually
 faster and more reliable than clicking through a website. Some connector tools
 ask the operator before they change anything; that is expected, wait for the

@@ -21,7 +21,7 @@ export default defineDynamic({
         content: [
           "## Connectors",
           "",
-          "The team connected these services. You have the read tools a person confirmed yourself, found with `connection_search`; Bots have all of their tools. A connector tool you do not have, or one refused as not for HQ, goes to a Bot.",
+          "The team connected these services. You have the read tools a person confirmed yourself, found with `eve__search` and called with `eve__tool`; Bots have all of their tools. A connector tool you do not have, or one refused as not for HQ, goes to a Bot.",
           "",
           ...connectors.map((connector) => `- ${connector.label} (\`${connector.name}\`): ${connector.description}`),
           "",

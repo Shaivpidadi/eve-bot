@@ -15,7 +15,7 @@ export type ConnectorGate = "none" | "writes" | "all";
 export interface CatalogEntry {
   readonly id: string;
   readonly label: string;
-  /** For the model: what the service is for, the main signal connection_search uses. */
+  /** For the model: what the service is for, the main signal eve__search uses. */
   readonly description: string;
   /** For a person: one line under the name. */
   readonly detail: string;
