@@ -29,7 +29,12 @@ const IDS = oneOfEachShape();
 
 /** Every face in one mood at a time: a browser allows only so many WebGL canvases at once. */
 export function MascotGallery() {
-  const [mood, setMood] = useState<Presence | "paused">(() => {
+  // ?turn= holds every face turned to an angle, in degrees: 180 shows the back.
+  const [turn] = useState(() => {
+    const asked = Number(new URLSearchParams(window.location.search).get("turn"));
+    return Number.isFinite(asked) && asked !== 0 ? (asked * Math.PI) / 180 : undefined;
+  });
+  const [mood] = useState<Presence | "paused">(() => {
     const asked = new URLSearchParams(window.location.search).get("mood");
     return MOODS.find((entry) => entry === asked) ?? "idle";
   });
@@ -60,7 +65,7 @@ export function MascotGallery() {
             status: mood === "paused" ? "paused" : "active",
             presence: mood === "paused" ? "idle" : mood,
           } as unknown as Member;
-          return <Mascot key={`${id}:${mood}`} member={member} size={88} />;
+          return <Mascot key={`${id}:${mood}`} member={member} size={88} {...(turn === undefined ? {} : { turn })} />;
         })}
       </div>
     </div>

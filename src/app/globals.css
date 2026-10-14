@@ -441,15 +441,14 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 
 /* The member, front and centre: face, name, job, and what it is doing now. */
 .panel-hero { flex: none; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 16px 14px; }
-.hero-face { position: relative; border-radius: 50%; padding: 6px; transition: transform 0.18s cubic-bezier(0.2, 0, 0, 1); }
-.hero-face:hover { transform: scale(1.04); }
-.hero-face:active { transform: scale(0.97); }
+.hero-face { position: relative; border-radius: 50%; padding: 6px; }
 .hero-edit {
   position: absolute; right: 2px; bottom: 4px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
   background: var(--card); border: 1px solid var(--line-2); color: var(--muted); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-  opacity: 0; transition: opacity 0.15s;
+  opacity: 0; transition: opacity 0.15s, transform 0.15s; z-index: 1; cursor: pointer;
 }
-.hero-face:hover .hero-edit, .hero-face:focus-visible .hero-edit { opacity: 1; }
+.hero-edit:hover { color: var(--text); transform: scale(1.08); }
+.hero-face:hover .hero-edit, .hero-edit:focus-visible { opacity: 1; }
 .panel-hero h2 { margin: 4px 0 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
 .hero-role { margin: 2px 0 0; color: var(--faint); font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hero-status { margin: 6px 0 0; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); max-width: 100%; }
@@ -1178,6 +1177,7 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .brand-mark img { object-fit: contain; }
 
 /* The WebGL face: drawn larger than its slot so a hop and its shadow have room. */
-.mascot-host { display: block; cursor: pointer; touch-action: manipulation; }
+.mascot-host { display: block; cursor: grab; touch-action: none; }
+.mascot-host:active { cursor: grabbing; }
 .mascot { display: block; }
 .hero-face:hover .mascot { filter: none; }

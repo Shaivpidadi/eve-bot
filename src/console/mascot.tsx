@@ -6,20 +6,23 @@ import { Avatar, faceOf } from "./avatar";
 import type { Member, Presence } from "./types";
 
 /**
- * A member's face, alive: a small WebGL shader that draws the same shape and
- * colour as its SVG avatar as a soft, lit jelly with eyes, and moves by mood.
+ * A member's face, alive: a small raymarched WebGL gummy in the same shape and
+ * colour as its SVG avatar, with eyes in front and a little bum behind.
+ *
+ * Drag it to spin it round (it jiggles as it turns, and swings back to face
+ * you a moment after you let go); tap it for a squish. It moves by mood:
  *
  * - Idle: breathes, glances at your pointer, blinks now and then.
- * - Thinking: a slow swirl, eyes circling up and away.
+ * - Thinking: sways side to side, eyes circling up and away.
  * - Working: hops, squashing on landing and stretching on the way up.
  * - Waiting (needs you): sways, eyes wide and on you.
  * - Blocked: an uneasy shudder every few seconds, eyes narrowed.
- * - Done: happy arc eyes and a little bounce.
+ * - Done: happy arc eyes, a bounce, and now and then a twirl.
  * - Paused: eyes shut, slow breathing, colour drained.
  *
- * A click gives it a springy squish. One canvas, drawn only while it is on
- * screen and the page is visible; with reduced motion it holds still; where
- * WebGL is missing it is the SVG avatar.
+ * One canvas, drawn only while it is on screen and the page is visible; with
+ * reduced motion it holds still unless you turn it; where WebGL is missing it
+ * is the SVG avatar.
  */
 
 const VERTEX = `
@@ -36,11 +39,15 @@ uniform float uTime;
 uniform vec3 uColor;
 uniform float uShape;
 uniform float uEyeY;
+uniform float uSeat;
+uniform vec2 uCenter;
 uniform vec2 uOffset;
 uniform vec2 uScale;
 uniform float uLean;
 uniform float uWobble;
-uniform float uTwist;
+uniform float uYaw;
+uniform float uJiggle;
+uniform float uPitch;
 uniform vec2 uGaze;
 uniform float uOpen;
 uniform float uMood;
@@ -48,6 +55,7 @@ uniform float uSat;
 uniform float uSide;
 
 const float FRAME = 1.32;
+const float RIM = 0.3;
 
 float smin(float a, float b, float k) { float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0); return mix(b, a, h) - k * h * (1.0 - h); }
 float sdRoundBox(vec2 p, vec2 b, float r) { vec2 q = abs(p) - b + r; return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r; }
@@ -70,9 +78,10 @@ float sdUnevenCapsule(vec2 p, float r1, float r2, float h) {
   return dot(p, vec2(a, b)) - r1;
 }
 
-float body(vec2 p) {
+/** The outline, as in the SVG avatar. */
+float outline(vec2 p) {
   if (uShape < 0.5) return length(p) - 0.82;
-  if (uShape < 1.5) return sdHexagon(p.yx, 0.6) - 0.08;
+  if (uShape < 1.5) return sdHexagon(p.yx, 0.54) - 0.14;
   if (uShape < 2.5) return sdTriangle(p - vec2(0.0, -0.22), 0.66) - 0.15;
   if (uShape < 3.5) {
     float d = sdRoundBox(p - vec2(0.0, -0.36), vec2(0.82, 0.26), 0.26);
@@ -86,25 +95,43 @@ float body(vec2 p) {
   return sdRoundBox(p - vec2(0.0, -0.03), vec2(0.86, 0.56), 0.56);
 }
 
-/** How high the jelly stands at p: a rounded dome, steep at the rim, flat on top. */
-float bump(vec2 p) { float x = 1.0 - clamp(-body(p) / 0.75, 0.0, 1.0); return 1.0 - x * x; }
-/** Averaged over a small neighbourhood, so the ridges a distance field has inside corners melt away. */
-float dome(vec2 p) {
-  const float r = 0.07;
-  return (bump(p) * 2.0 + bump(p + vec2(r, r)) + bump(p + vec2(r, -r)) + bump(p + vec2(-r, r)) + bump(p + vec2(-r, -r))) / 6.0;
-}
+/** How far each face bulges at p: one smooth dome over the whole body, so no
+ *  crease from the outline's corners ever reaches the skin. */
+float puff(vec2 p) { vec2 c = p - uCenter; return 0.17 * clamp(1.0 - dot(c, c) / 0.8, 0.0, 1.0); }
 
 mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
 
-/** The body's own space: hop, lean, squash about the base, a jelly wobble, a swirl. */
-vec2 local(vec2 p0) {
-  vec2 p = p0 - uOffset;
-  p = rot(uLean) * (p + vec2(0.0, 0.8)) - vec2(0.0, 0.8);
-  p.x /= uScale.x;
+float seatZ;
+
+/** The outline inflated into a gummy, with two round cheeks on its back. */
+float gummy(vec3 q) {
+  float d = outline(q.xy);
+  vec2 w = vec2(d + RIM, abs(q.z) - puff(q.xy));
+  float f = min(max(w.x, w.y), 0.0) + length(max(w, 0.0)) - RIM;
+  vec3 c = q - vec3(0.0, uSeat, -seatZ + 0.1);
+  float cheeks = min(length(c - vec3(0.165, 0.0, 0.0)), length(c + vec3(0.165, 0.0, 0.0))) - 0.2;
+  return smin(f, cheeks, 0.1);
+}
+
+/** From the world into the gummy's own space: hop, lean, squash, spin with a jelly lag, wobble. */
+vec3 local(vec3 p) {
+  p.xy -= uOffset;
+  p.xy = rot(uLean) * (p.xy + vec2(0.0, 0.8)) - vec2(0.0, 0.8);
+  p.x /= uScale.x; p.z /= uScale.x;
   p.y = (p.y + 0.82) / uScale.y - 0.82;
-  p += uWobble * 0.022 * vec2(sin(p.y * 5.0 + uTime * 3.1), sin(p.x * 4.2 + uTime * 2.4));
-  p = rot(uTwist * 0.5 * smoothstep(1.1, 0.0, length(p))) * p;
+  // The top lags the base as it turns, and overshoots when it stops.
+  p.xz = rot(uYaw + uJiggle * (p.y + 0.85)) * p.xz;
+  p.x += uWobble * 0.016 * sin(p.y * 5.0 + uTime * 3.1);
+  p.y += uWobble * 0.012 * sin(p.x * 4.2 + uTime * 2.4);
   return p;
+}
+
+float map(vec3 p) { return gummy(local(p)) * min(uScale.x, uScale.y) * 0.8; }
+
+vec3 normalAt(vec3 p) {
+  const vec2 k = vec2(1.0, -1.0);
+  const float h = 0.003;
+  return normalize(k.xyy * map(p + k.xyy * h) + k.yyx * map(p + k.yyx * h) + k.yxy * map(p + k.yxy * h) + k.xxx * map(p + k.xxx * h));
 }
 
 float eye(vec2 q) {
@@ -125,52 +152,84 @@ float eye(vec2 q) {
 void main() {
   vec2 p0 = v * FRAME;
   float px = 2.0 * FRAME / uRes.y;
+  seatZ = RIM + puff(vec2(0.0, uSeat));
 
   // A soft contact shadow, smaller and fainter as it leaves the ground.
   float lift = clamp(uOffset.y * 6.0, 0.0, 1.0);
-  vec2 sq = (p0 - vec2(uOffset.x, -0.93)) / vec2(0.62 * (1.0 - 0.35 * lift) * uScale.x, 0.075);
-  float shadow = exp(-dot(sq, sq) * 1.6) * (0.2 - 0.12 * lift);
+  vec2 sq = (p0 - vec2(uOffset.x, -0.95)) / vec2(0.6 * (1.0 - 0.35 * lift) * uScale.x, 0.08);
+  float shadow = exp(-dot(sq, sq) * 1.6) * (0.22 - 0.13 * lift);
 
-  vec2 p = local(p0);
-  float d = body(p);
-  float alpha = 1.0 - smoothstep(-px, px, d);
-  if (alpha <= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, shadow); return; }
+  // An orthographic camera, tipped to look a little down on it.
+  vec3 ro = vec3(p0, 1.4);
+  vec3 rd = vec3(0.0, 0.0, -1.0);
+  ro.yz = rot(-uPitch) * ro.yz;
+  rd.yz = rot(-uPitch) * rd.yz;
 
-  // Light a smooth dome over the shape rather than the shape's edge distance,
-  // whose kinks inside faceted shapes would show as creases.
-  vec2 e = vec2(0.045, 0.0);
-  float hx = dome(p + e.xy) - dome(p - e.xy);
-  float hy = dome(p + e.yx) - dome(p - e.yx);
-  vec3 n = normalize(vec3(-hx, -hy, 2.0 * e.x * 0.9));
-  vec3 light = normalize(vec3(-0.45, 0.7, 0.8));
-  float diff = max(dot(n, light), 0.0);
-  float spec = pow(max(dot(reflect(-light, n), vec3(0.0, 0.0, 1.0)), 0.0), 28.0);
-  float rim = pow(1.0 - n.z, 2.5);
-
-  vec3 base = mix(vec3(dot(uColor, vec3(0.299, 0.587, 0.114))), uColor, uSat);
-  vec3 col = base * (0.52 + 0.62 * diff);
-  col += vec3(1.0) * spec * 0.55;
-  col += mix(base, vec3(1.0), 0.6) * rim * 0.28;
-  col = mix(col * 0.86, col, smoothstep(-0.9, 0.6, p.y));
-
-  // Eyes, in the body's space so they squash with it, looking where it looks.
-  vec2 g = uGaze * vec2(0.075, 0.06);
-  vec2 left = p - (vec2(-0.24 + uSide * 0.03, 0.1 - uEyeY) + g);
-  vec2 right = p - (vec2(0.24 + uSide * 0.03, 0.1 - uEyeY) + g);
-  float de = min(eye(left), eye(right));
-  float eyeMask = 1.0 - smoothstep(-px, px, de);
-  vec3 ink = vec3(0.08, 0.08, 0.09);
-  col = mix(col, ink, eyeMask);
-  if (uMood < 0.5 && uOpen > 0.5) {
-    float glint = min(length(left - vec2(0.03, 0.1 * uOpen)), length(right - vec2(0.03, 0.1 * uOpen))) - 0.03;
-    col = mix(col, vec3(1.0), (1.0 - smoothstep(-px, px, glint)) * 0.9);
+  float t = 0.0;
+  float closest = 1e3;
+  bool hit = false;
+  for (int i = 0; i < 80; i++) {
+    float d = map(ro + rd * t);
+    closest = min(closest, d);
+    if (d < 0.0012) { hit = true; break; }
+    t += d;
+    if (t > 2.8) break;
   }
+  float cover = hit ? 1.0 : 1.0 - smoothstep(0.0, px * 0.8, closest);
+  if (cover <= 0.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, shadow); return; }
 
-  float a = alpha + shadow * (1.0 - alpha);
-  vec3 outc = col * alpha;
-  gl_FragColor = vec4(outc, a);
+  vec3 pos = ro + rd * t;
+  vec3 n = normalAt(pos);
+  vec3 view = -rd;
+  vec3 light = normalize(vec3(-0.5, 0.75, 0.65));
+  vec3 base = mix(vec3(dot(uColor, vec3(0.299, 0.587, 0.114))), uColor, uSat);
+
+  // Gummy: deep, saturated colour in the body; light glowing through where it is
+  // thin; a glassy rim and a sharp highlight on the skin.
+  float wrap = clamp((dot(n, light) + 0.45) / 1.45, 0.0, 1.0);
+  float thick = clamp(-map(pos - n * 0.32) / 0.32, 0.0, 1.0);
+  float glow = 1.0 - thick;
+  float fres = pow(1.0 - clamp(dot(n, view), 0.0, 1.0), 3.0);
+  float spec = pow(max(dot(n, normalize(light + view)), 0.0), 70.0);
+  float sheen = pow(max(dot(n, normalize(vec3(0.7, -0.2, 0.6) + view)), 0.0), 12.0);
+  float ao = clamp(0.35 + map(pos + n * 0.06) / 0.06 * 0.65, 0.0, 1.0);
+
+  vec3 deep = base * base * 0.85;
+  vec3 col = mix(deep, base * 1.02, wrap);
+  col += mix(base, vec3(1.0), 0.3) * glow * 0.32;
+  col += base * 0.14 * clamp(-n.y, 0.0, 1.0);
+  col *= ao;
+  col += mix(base, vec3(1.0), 0.55) * fres * 0.4;
+  col += vec3(1.0) * (spec * 0.95 + sheen * 0.08);
+
+  // The face, painted on the front so it turns with the body.
+  vec3 q = local(pos);
+  float front = smoothstep(0.02, 0.14, q.z);
+  vec2 g = uGaze * vec2(0.075, 0.06);
+  vec2 eyeL = q.xy - (vec2(-0.24 + uSide * 0.03, 0.1 - uEyeY) + g);
+  vec2 eyeR = q.xy - (vec2(0.24 + uSide * 0.03, 0.1 - uEyeY) + g);
+  float eyes = (1.0 - smoothstep(-px, px, min(eye(eyeL), eye(eyeR)))) * front;
+  vec2 bl = vec2(abs(q.x - uSide * 0.03) - 0.39, q.y - (-0.08 - uEyeY)) / vec2(0.11, 0.06);
+  float blush = exp(-dot(bl, bl)) * front * 0.35 * uSat;
+  col = mix(col, mix(col, vec3(1.0, 0.45, 0.55), 0.55), blush);
+  col = mix(col, vec3(0.08, 0.08, 0.09), eyes);
+  if (uMood < 0.5 && uOpen > 0.5) {
+    float glint = min(length(eyeL - vec2(0.03, 0.1 * uOpen)), length(eyeR - vec2(0.03, 0.1 * uOpen))) - 0.03;
+    col = mix(col, vec3(1.0), (1.0 - smoothstep(-px, px, glint)) * 0.9 * front);
+  }
+  // The bum: a touch rosy.
+  vec3 c = q - vec3(0.0, uSeat, -seatZ + 0.1);
+  float bum = smoothstep(0.32, 0.1, min(length(c - vec3(0.165, 0.0, 0.0)), length(c + vec3(0.165, 0.0, 0.0)))) * smoothstep(-0.1, -0.3, q.z);
+  col = mix(col, mix(col, vec3(1.0, 0.5, 0.6), 0.18), bum * uSat);
+
+  gl_FragColor = vec4(col * cover, cover + shadow * (1.0 - cover));
 }
 `;
+
+/** Each shape's bottom (where the bum sits, just above; the hexagon's narrow
+ *  point counts as higher so the bum stays on its back) and top, the dome centred between. */
+const BOTTOM = [-0.82, -0.66, -0.75, -0.62, -0.88, -0.76, -0.59] as const;
+const TOP = [0.82, 0.77, 0.69, 0.66, 0.82, 0.76, 0.53] as const;
 
 function hexToRgb(hex: string): [number, number, number] {
   const value = Number.parseInt(hex.replace("#", ""), 16);
@@ -202,13 +261,23 @@ function compile(gl: WebGLRenderingContext): WebGLProgram | null {
   return gl.getProgramParameter(program, gl.LINK_STATUS) ? program : null;
 }
 
-export function Mascot({ member, size = 68 }: { member: Member; size?: number }) {
+const TURN = Math.PI * 2;
+
+export function Mascot({
+  member,
+  size = 68,
+  turn,
+}: {
+  member: Member;
+  size?: number;
+  /** Holds it turned to this angle (radians), for the gallery. */
+  turn?: number;
+}) {
   const host = useRef<HTMLSpanElement>(null);
   const [failed, setFailed] = useState(false);
   const mood: Mood = member.status === "paused" ? "paused" : member.presence;
   const moodRef = useRef(mood);
   moodRef.current = mood;
-  const boop = useRef({ value: 0, velocity: 0 });
   const face = faceOf(member);
 
   useEffect(() => {
@@ -222,7 +291,7 @@ export function Mascot({ member, size = 68 }: { member: Member; size?: number })
     element.style.width = `${box}px`;
     element.style.height = `${box}px`;
     parent.appendChild(element);
-    const gl = element.getContext("webgl", { premultipliedAlpha: true, alpha: true, antialias: true });
+    const gl = element.getContext("webgl", { premultipliedAlpha: true, alpha: true, antialias: false });
     const program = gl === null ? null : compile(gl);
     if (gl === null || program === null) {
       element.remove();
@@ -244,14 +313,18 @@ export function Mascot({ member, size = 68 }: { member: Member; size?: number })
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     const u = (name: string) => gl.getUniformLocation(program, name);
     const uniforms = {
-      res: u("uRes"), time: u("uTime"), color: u("uColor"), shape: u("uShape"), eyeY: u("uEyeY"), offset: u("uOffset"),
-      scale: u("uScale"), lean: u("uLean"), wobble: u("uWobble"), twist: u("uTwist"), gaze: u("uGaze"), open: u("uOpen"),
-      mood: u("uMood"), sat: u("uSat"), side: u("uSide"),
+      center: u("uCenter"), res: u("uRes"), time: u("uTime"), color: u("uColor"), shape: u("uShape"), eyeY: u("uEyeY"), seat: u("uSeat"),
+      offset: u("uOffset"), scale: u("uScale"), lean: u("uLean"), wobble: u("uWobble"), yaw: u("uYaw"),
+      jiggle: u("uJiggle"), pitch: u("uPitch"), gaze: u("uGaze"), open: u("uOpen"), mood: u("uMood"), sat: u("uSat"),
+      side: u("uSide"),
     };
     gl.uniform2f(uniforms.res, element.width, element.height);
     gl.uniform3f(uniforms.color, ...hexToRgb(face.color));
     gl.uniform1f(uniforms.shape, face.shape);
     gl.uniform1f(uniforms.eyeY, face.eyes / 20);
+    const bottom = BOTTOM[face.shape] ?? -0.8;
+    gl.uniform1f(uniforms.seat, bottom + 0.3);
+    gl.uniform2f(uniforms.center, 0, (bottom + (TOP[face.shape] ?? 0.8)) / 2);
     gl.uniform1f(uniforms.side, member.kind === "hq" ? 0 : 1);
 
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -269,9 +342,54 @@ export function Mascot({ member, size = 68 }: { member: Member; size?: number })
     };
     window.addEventListener("pointermove", onPointer);
 
+    // Spinning it: a drag turns it, a flick keeps it going, and a moment after
+    // you let go it swings back to face you.
+    const spin = {
+      yaw: turn ?? 0, velocity: 0, pitch: 0, jiggle: 0, jiggleVelocity: 0,
+      releasedAt: turn === undefined ? 0 : Number.POSITIVE_INFINITY,
+      drag: null as null | { id: number; x: number; y: number; startX: number; startY: number; at: number; moved: boolean },
+    };
+    const squish = { value: 0, velocity: 0 };
+    const onDown = (event: PointerEvent) => {
+      element.setPointerCapture(event.pointerId);
+      spin.drag = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, at: performance.now(), moved: false };
+      resume();
+    };
+    const onMove = (event: PointerEvent) => {
+      const drag = spin.drag;
+      if (drag === null || drag.id !== event.pointerId) return;
+      const now = performance.now();
+      const dx = event.clientX - drag.x;
+      if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 4) drag.moved = true;
+      if (!drag.moved) return;
+      // Dragging right carries the front to the right.
+      const step = -(dx / box) * 3.4;
+      spin.yaw += step;
+      const dt = Math.max((now - drag.at) / 1000, 1 / 240);
+      spin.velocity = spin.velocity * 0.6 + (step / dt) * 0.4;
+      spin.pitch = Math.max(-0.35, Math.min(0.45, ((event.clientY - drag.startY) / box) * 0.9));
+      drag.x = event.clientX;
+      drag.y = event.clientY;
+      drag.at = now;
+    };
+    const onUp = (event: PointerEvent) => {
+      const drag = spin.drag;
+      if (drag === null || drag.id !== event.pointerId) return;
+      spin.drag = null;
+      spin.releasedAt = performance.now();
+      if (performance.now() - drag.at > 80) spin.velocity = 0;
+      if (!drag.moved) squish.velocity += 3.2;
+      resume();
+    };
+    element.addEventListener("pointerdown", onDown);
+    element.addEventListener("pointermove", onMove);
+    element.addEventListener("pointerup", onUp);
+    element.addEventListener("pointercancel", onUp);
+
     let gaze = { x: 0, y: 0 };
     let nextBlink = performance.now() + 1500 + Math.random() * 3000;
     let blinkUntil = 0;
+    let nextTwirl = performance.now() + 2500 + Math.random() * 3000;
     let visible = true;
     let frame = 0;
     let last = performance.now();
@@ -283,16 +401,29 @@ export function Mascot({ member, size = 68 }: { member: Member; size?: number })
       last = now;
       const m = moodRef.current;
 
-      // The boop: a damped spring on squash.
-      const spring = boop.current;
-      spring.velocity += (-spring.value * 180 - spring.velocity * 12) * dt;
-      spring.value += spring.velocity * dt;
+      // The squish: a damped spring.
+      squish.velocity += (-squish.value * 180 - squish.velocity * 12) * dt;
+      squish.value += squish.velocity * dt;
+
+      // The spin, and the jelly lag behind it.
+      if (spin.drag === null) {
+        spin.yaw += spin.velocity * dt;
+        spin.velocity *= Math.exp(-dt * 1.8);
+        spin.pitch *= Math.exp(-dt * 5);
+        if (now - spin.releasedAt > 2200 && Math.abs(spin.velocity) < 1.5) {
+          const home = Math.round(spin.yaw / TURN) * TURN;
+          spin.velocity += ((home - spin.yaw) * 22 - spin.velocity * 7) * dt;
+        }
+      }
+      const lagTarget = Math.max(-0.5, Math.min(0.5, -spin.velocity * 0.05));
+      spin.jiggleVelocity += ((lagTarget - spin.jiggle) * 170 - spin.jiggleVelocity * 7) * dt;
+      spin.jiggle += spin.jiggleVelocity * dt;
 
       let offset = [0, 0];
       let scale = [1, 1];
       let lean = 0;
       let wobble = 0.5;
-      let twist = 0;
+      let sway = 0;
       let target = pointer.active && now - pointer.at < 4000 ? { x: pointer.x, y: pointer.y } : { x: Math.sin(t * 0.37) * 0.5, y: Math.sin(t * 0.23) * 0.3 };
       let open = 1;
       let moodCode = 0;
@@ -302,7 +433,7 @@ export function Mascot({ member, size = 68 }: { member: Member; size?: number })
       scale = [1 + breathe, 1 - breathe];
       if (m === "thinking") {
         target = { x: Math.cos(t * 1.4) * 0.8, y: 0.55 + Math.sin(t * 1.4) * 0.3 };
-        twist = Math.sin(t * 1.8) * 0.5;
+        sway = Math.sin(t * 0.9) * 0.32;
         wobble = 0.9;
       } else if (m === "working") {
         const phase = Math.abs(Math.sin(t * 4.2));
@@ -323,6 +454,12 @@ export function Mascot({ member, size = 68 }: { member: Member; size?: number })
       } else if (m === "done") {
         moodCode = 1;
         offset = [0, Math.abs(Math.sin(t * 2.4)) * 0.04];
+        // Now and then, a happy twirl (showing off its bum on the way round).
+        if (!still && spin.drag === null && now > nextTwirl && now - spin.releasedAt > 2200) {
+          spin.velocity += 13;
+          spin.releasedAt = now - 1000;
+          nextTwirl = now + 6000 + Math.random() * 4000;
+        }
       } else if (m === "paused") {
         moodCode = 2;
         sat = 0.15;
@@ -330,7 +467,7 @@ export function Mascot({ member, size = 68 }: { member: Member; size?: number })
         scale = [1 + slow, 1 - slow];
         wobble = 0.2;
       }
-      scale = [scale[0]! * (1 + spring.value), scale[1]! * (1 - spring.value * 1.2)];
+      scale = [scale[0]! * (1 + squish.value), scale[1]! * (1 - squish.value * 1.2)];
 
       if (moodCode === 0 && m !== "paused" && now > nextBlink) {
         blinkUntil = now + 130;
@@ -347,21 +484,24 @@ export function Mascot({ member, size = 68 }: { member: Member; size?: number })
       gl.uniform2f(uniforms.scale, scale[0]!, scale[1]!);
       gl.uniform1f(uniforms.lean, lean);
       gl.uniform1f(uniforms.wobble, still ? 0 : wobble);
-      gl.uniform1f(uniforms.twist, still ? 0 : twist);
+      gl.uniform1f(uniforms.yaw, spin.yaw + (still ? 0 : sway));
+      gl.uniform1f(uniforms.jiggle, still ? 0 : spin.jiggle);
+      gl.uniform1f(uniforms.pitch, 0.14 + spin.pitch);
       gl.uniform2f(uniforms.gaze, gaze.x, gaze.y);
       gl.uniform1f(uniforms.open, open);
       gl.uniform1f(uniforms.mood, moodCode);
       gl.uniform1f(uniforms.sat, sat);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-      if (!still && visible && !document.hidden) frame = requestAnimationFrame(draw);
+      const turning = spin.drag !== null || Math.abs(spin.velocity) > 0.01 || Math.abs(spin.yaw - Math.round(spin.yaw / TURN) * TURN) > 0.002 || Math.abs(squish.velocity) > 0.01;
+      if ((!still || turning) && visible && !document.hidden) frame = requestAnimationFrame(draw);
     };
 
-    const resume = () => {
+    function resume() {
       cancelAnimationFrame(frame);
       last = performance.now();
       frame = requestAnimationFrame(draw);
-    };
+    }
     const observer = new IntersectionObserver(([entry]) => {
       visible = entry?.isIntersecting ?? true;
       if (visible) resume();
@@ -383,7 +523,7 @@ export function Mascot({ member, size = 68 }: { member: Member; size?: number })
     };
     // The face is fixed for a member; the mood is read live from a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [member.id, size]);
+  }, [member.id, size, turn]);
 
   if (failed) return <Avatar member={member} size={size} />;
   const box = Math.round(size * 1.32);
@@ -392,10 +532,8 @@ export function Mascot({ member, size = 68 }: { member: Member; size?: number })
       ref={host}
       className="mascot-host"
       style={{ width: box, height: box, margin: -(box - size) / 2 }}
+      title="Drag to spin"
       aria-hidden="true"
-      onPointerDown={() => {
-        boop.current.velocity += 3.2;
-      }}
     />
   );
 }

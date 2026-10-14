@@ -170,19 +170,20 @@ export function DetailsPanel({
         </button>
       </div>
       <div className="panel-hero">
-        <button
-          type="button"
-          className="hero-face"
-          aria-label={member.kind === "bot" ? `Edit ${member.name}'s profile` : member.name}
-          onClick={member.kind === "bot" ? () => onView("profile") : undefined}
-        >
+        <div className="hero-face">
           <Mascot member={member} size={68} />
           {member.kind === "bot" ? (
-            <span className="hero-edit" aria-hidden="true">
+            <button
+              type="button"
+              className="hero-edit"
+              aria-label={`Edit ${member.name}'s profile`}
+              title="Edit profile"
+              onClick={() => onView("profile")}
+            >
               <Icon name="edit" size={12} />
-            </span>
+            </button>
           ) : null}
-        </button>
+        </div>
         <h2>{member.name}</h2>
         <p className="hero-role">{member.title}</p>
         <p className={`hero-status ${paused ? "paused" : member.presence}`}>
