@@ -24,6 +24,11 @@ describe("buildTimeline", () => {
     expect(items[1]).toMatchObject({ kind: "bot", text: "About 2.1 million." });
   });
 
+  it("shows the job's result itself in the Bot's thread when the job kept one", () => {
+    const withResult = { ...done, data: { ...done.data, deliverable: "Rome: **2.75 million** (2025)." } };
+    expect(buildTimeline(wiki, [], [asked, withResult], [hq, wiki])[1]).toMatchObject({ kind: "bot", text: "Rome: **2.75 million** (2025)." });
+  });
+
   it("keeps the steps for work asked in the Bot's own thread", () => {
     const here = (e: ActivityEvent) => ({ ...e, data: { ...e.data, room: "bot-bot_w" } });
     const items = buildTimeline(wiki, [], [here(asked), step, here(done)], [hq, wiki]);

@@ -799,8 +799,10 @@ export function buildTimeline(
         if (title !== undefined) out.push({ kind: "peer", key: `asked:${event.jobId}`, at: event.at, from: nameOfRoom(jobRoom), text: title });
       }
       if (event.kind === "job.done") {
+        // The result itself when the job kept one, else its one-line summary.
+        const deliverable = typeof event.data?.deliverable === "string" && event.data.deliverable.trim() !== "" ? event.data.deliverable : null;
         const summary = typeof event.data?.summary === "string" ? event.data.summary : event.text.slice(event.text.indexOf(": ") + 2);
-        out.push({ kind: "bot", key: event.id, at: event.at, text: summary });
+        out.push({ kind: "bot", key: event.id, at: event.at, text: deliverable ?? summary });
       } else if (event.kind === "job.failed") {
         out.push({ kind: "notice", key: event.id, at: event.at, icon: "alert", tone: "error", label: withoutEmoji(event.text) });
       }

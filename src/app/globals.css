@@ -290,7 +290,7 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .msg.you a { color: #fff; }
 @media (prefers-reduced-motion: no-preference) {
   .transcript { animation: thread-in 0.2s ease-out; }
-  .transcript.settled :is(.msg, .card, .notice, .steps, .working) { animation: msg-in 0.22s cubic-bezier(0.2, 0, 0, 1) both; }
+  .transcript.settled :is(.msg, .card, .notice, .job-trace, .work-trace, .working) { animation: msg-in 0.22s cubic-bezier(0.2, 0, 0, 1) both; }
   .msg.you { transform-origin: 100% 100%; }
   .msg.bot { transform-origin: 0 100%; }
 }
@@ -358,41 +358,15 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .notice .btn { flex-basis: 100%; width: max-content; margin: 4px auto 0; font-size: 12px; padding: 4px 10px; }
 
 .working { align-self: flex-start; margin: 8px 2px; font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 8px; max-width: 100%; }
-.working .shimmer { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.shimmer {
+.working .shine { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shine {
   background: linear-gradient(90deg, var(--faint) 0%, var(--text) 50%, var(--faint) 100%);
   background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
-  animation: shimmer 1.8s linear infinite;
+  animation: shine 1.8s linear infinite;
 }
-@keyframes shimmer { to { background-position: -200% 0; } }
+@keyframes shine { to { background-position: -200% 0; } }
 
-.steps { align-self: stretch; margin: 8px 0; }
-.steps-head {
-  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-  color: var(--text-2); font-size: 12px; padding: 4px 2px;
-}
-.steps-head:hover { color: var(--text); }
-.steps-head .title { color: var(--text); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
-.steps-head .latest { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.steps-head .chev { transition: transform 0.15s; }
-.steps.open .steps-head .chev { transform: rotate(180deg); }
-.steps-list { list-style: none; margin: 4px 0 4px 11px; padding: 2px 0 2px 16px; border-left: 1px solid var(--line-2); }
-.steps-list li { display: flex; gap: 10px; padding: 3px 0; font-size: 12px; color: var(--text-2); }
-.steps-list li .k { color: var(--text); font-weight: 500; flex: none; }
-.steps-list li span { flex: 1; min-width: 0; }
-.steps-list li time { color: var(--faint); font-size: 10.5px; flex: none; font-variant-numeric: tabular-nums; }
-.steps-list li.bad .k { color: var(--bad); }
-.steps-list li.good .k { color: var(--ok); }
-.steps-list li .rewind { flex: none; visibility: hidden; border: 0; background: none; padding: 0 4px; font: inherit; font-size: 11px; color: var(--faint); cursor: pointer; }
-.steps-list li:hover .rewind, .steps-list li .rewind:focus-visible { visibility: visible; }
-.steps-list li .rewind:hover { color: var(--text); text-decoration: underline; }
-.steps-list li.rewind-ask { align-items: center; gap: 8px; padding: 6px 8px; margin: 2px 0; border-radius: 6px; background: var(--bg-2, rgba(127,127,127,.08)); color: var(--text); }
-.steps-list li.rewind-ask button { flex: none; font: inherit; font-size: 11.5px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line-2); background: none; color: var(--text); cursor: pointer; }
-.steps-list li.rewind-ask button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
 .screen-kind { color: var(--faint); }
-.steps-list li.decision .k { color: var(--accent, var(--text)); }
-.steps-list li a { color: inherit; text-decoration: underline; text-decoration-color: var(--faint); }
-.steps-list li.resumed { color: var(--faint); font-size: 11px; justify-content: center; border-top: 1px dashed var(--line-2); margin-top: 4px; padding-top: 6px; }
 
 .card {
   align-self: flex-start; width: min(100%, 440px); margin: 8px 0;
@@ -727,7 +701,7 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .screen-skeleton::after {
   content: ""; position: absolute; inset: 0;
   background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.07) 50%, transparent 70%);
-  background-size: 200% 100%; animation: shimmer 1.6s linear infinite;
+  background-size: 200% 100%; animation: shine 1.6s linear infinite;
 }
 .sk-bar { display: flex; align-items: center; gap: 2.2cqw; padding: 2.2cqw 3cqw; background: #26262a; }
 .sk-bar i { width: 2.6cqw; height: 2.6cqw; border-radius: 50%; background: #3a3a40; display: block; }
@@ -1238,16 +1212,6 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .msg.peer { border-top-left-radius: 6px; }
 .peer-name { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-2); margin-bottom: 2px; }
 
-/* Someone on work for this thread: their live face, what they took on, and the step they are on. */
-.work-row {
-  align-self: flex-start; display: flex; align-items: center; gap: 10px; margin: 8px 0; padding: 8px 14px 8px 8px;
-  max-width: min(100%, 560px); border-radius: 16px; background: var(--bubble-bot);
-}
-.work-row-text { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
-.work-row-head { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.work-row-head b { font-weight: 600; }
-.work-row-title { color: var(--text-2); }
-.work-row-step { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notice .av { flex: none; }
 
 
@@ -1319,3 +1283,25 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
   --radius-xl: calc(var(--radius) * 1.4);
   --radius-2xl: calc(var(--radius) * 1.8);
 }
+
+/* ------------------------------------------------- AI Elements trace (jobs) */
+
+/* A job's steps as a trace: the Bot's face, the job, and its steps and time; it opens to each step. */
+.job-trace { align-self: stretch; margin: 8px 0; font-size: 12.5px; }
+.job-trace [data-slot="trace-title"] { color: var(--text); }
+.job-trace [data-slot="trace-collapsible-content"] [data-slot="trace-title"] { color: inherit; }
+.trace-step { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.trace-step > :first-child { min-width: 0; }
+.trace-rewind { visibility: hidden; flex: none; }
+.trace-step:hover .trace-rewind, .trace-rewind:focus-visible { visibility: visible; }
+.rewind-ask {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px;
+  background: var(--field); color: var(--text); font-size: 12px;
+}
+.rewind-ask span { flex: 1; min-width: 0; }
+
+/* Someone on work for this thread: a running trace line with their live face, and the step they are on. */
+.work-trace { align-self: flex-start; margin: 8px 0; gap: 2px; max-width: min(100%, 560px); font-size: 13px; }
+.work-trace [data-slot="trace-line"] { color: var(--text); }
+.work-trace-face { width: 24px; height: 24px; }
+.work-trace .work-trace-step { padding-left: 32px; font-size: 12px; color: var(--text-2); }

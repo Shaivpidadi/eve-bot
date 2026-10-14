@@ -872,7 +872,7 @@ export async function completeJob(
       botId: job.botId,
       jobId,
       text: `Finished "${job.title}"${result.completion === "recovered" ? " (recovered, unverified)" : ""}${spent(job)}: ${result.summary}`,
-      data: { room: job.room, title: job.title, summary: result.summary },
+      data: { room: job.room, title: job.title, summary: result.summary, ...(result.deliverable ? { deliverable: result.deliverable.slice(0, 4000) } : {}) },
     });
   }
   return job;

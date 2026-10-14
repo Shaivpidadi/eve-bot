@@ -3,6 +3,34 @@
 import type { InputRequest, InputResolution } from "eve/client";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import {
+  CheckIcon,
+  CircleCheckIcon,
+  CircleXIcon,
+  FilePenIcon,
+  GitBranchIcon,
+  GlobeIcon,
+  HandIcon,
+  HistoryIcon,
+  type LucideIcon,
+  MessageCircleQuestionIcon,
+  PaperclipIcon,
+  RotateCcwIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Trace,
+  TraceCollapsible,
+  TraceCollapsibleContent,
+  TraceCollapsibleTrigger,
+  TraceDescription,
+  TraceIcon,
+  TraceLine,
+  TraceTitle,
+} from "@/components/ui/trace";
+
 import { AskCard } from "./ask-card";
 import { Avatar } from "./avatar";
 import { clock, dividerWhen, needsDivider } from "./format";
@@ -233,25 +261,27 @@ export function Transcript({
       rows.push(
         <div key="working" className="working">
           <Avatar member={member} size={16} presence="thinking" />
-          <span className="shimmer">{room.liveLabel ?? "Thinking"}</span>
+          <span className="shine">{room.liveLabel ?? "Thinking"}</span>
         </div>,
       );
     }
-    // Whoever is on work for this thread: their live face, the job, and the step they are on.
+    // Whoever is on work for this thread, as a running trace line: their live face, the job, and the step they are on.
     busy.forEach(({ bot, job }, index) => {
       const own = bot.id === member.id;
       rows.push(
-        <div key={`busy:${bot.id}:${job.id}`} className="work-row">
-          <LiveAvatar member={bot} size={28} alive={index === 0} />
-          <span className="work-row-text">
-            <span className="work-row-head">
-              {own ? "Working on" : <b>{bot.name}</b>}
-              {own ? " " : " is working on "}
-              <span className="work-row-title">{job.title}</span>
-            </span>
-            {bot.action === null ? null : <span className="work-row-step shimmer">{bot.action}</span>}
-          </span>
-        </div>,
+        <Trace key={`busy:${bot.id}:${job.id}`} className="work-trace">
+          <TraceLine status="running">
+            <TraceIcon className="work-trace-face">
+              <LiveAvatar member={bot} size={24} alive={index === 0} />
+            </TraceIcon>
+            <TraceTitle>{own ? `Working on ${job.title}` : `${bot.name} is working on ${job.title}`}</TraceTitle>
+          </TraceLine>
+          {bot.action === null ? null : (
+            <TraceLine className="work-trace-step">
+              <TraceTitle>{bot.action}</TraceTitle>
+            </TraceLine>
+          )}
+        </Trace>,
       );
     });
     body = rows;
@@ -329,21 +359,71 @@ function useJournal(jobId: string | null, open: boolean, live: boolean): { lines
 }
 
 /** A page line links to the page; the rest are text. The label already says the verb, so a line that repeats it drops it. */
-function JournalText({ line }: { line: JournalLine }) {
-  const word = JOURNAL_WORDS[line.kind];
-  const text = line.text.startsWith(`${word} `) ? line.text.slice(word.length + 1) : line.text;
-  const url = line.kind === "page" && typeof line.data?.url === "string" ? line.data.url : null;
-  if (url === null || !/^https?:\/\//.test(url)) return <span>{text}</span>;
-  return (
-    <span>
-      <a href={url} target="_blank" rel="noreferrer noopener">
-        {text}
+
+/** How long a stretch of work took, in a few characters: "48s", "3m 05s", "1h 12m". */
+function took(fromIso: string, toIso: string): string {
+  const seconds = Math.max(0, Math.round((Date.parse(toIso) - Date.parse(fromIso)) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
+const JOURNAL_ICONS: Readonly<Record<JournalLine["kind"], LucideIcon>> = {
+  progress: CheckIcon,
+  decision: GitBranchIcon,
+  page: GlobeIcon,
+  file: FilePenIcon,
+  artifact: PaperclipIcon,
+  asked: MessageCircleQuestionIcon,
+  handover: HandIcon,
+  error: TriangleAlertIcon,
+};
+
+/** A step's words, opening to the whole of them when they run past a line. */
+function StepLine({
+  icon: StepIcon,
+  text,
+  at,
+  status,
+  href,
+}: {
+  icon: LucideIcon;
+  text: string;
+  at: string;
+  status?: "error";
+  href?: string | null;
+}) {
+  const line = (
+    <TraceLine {...(status === undefined ? {} : { status })}>
+      <TraceIcon>
+        <StepIcon />
+      </TraceIcon>
+      <TraceTitle>{text}</TraceTitle>
+      <TraceDescription>{clock(new Date(at))}</TraceDescription>
+    </TraceLine>
+  );
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noreferrer noopener">
+        {line}
       </a>
-    </span>
+    );
+  }
+  if (text.length <= 90) return <div>{line}</div>;
+  return (
+    <TraceCollapsible>
+      <TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
+      <TraceCollapsibleContent>{text}</TraceCollapsibleContent>
+    </TraceCollapsible>
   );
 }
 
-/** The steps a Bot logged for one job, folded into a line that opens. */
+/**
+ * The steps a Bot logged for one job, as an AI Elements trace: one line with
+ * the Bot's face, the job, how many steps and how long, shimmering while it
+ * runs; open it for each step, and a long step opens to its whole text.
+ */
 function StepsBlock({
   block,
   member,
@@ -356,57 +436,59 @@ function StepsBlock({
   onToggle: () => void;
 }) {
   const latest = block.events[block.events.length - 1];
-  if (latest === undefined) return null;
+  const first = block.events[0];
   const title =
     block.events.map((event) => /"([^"]+)"/.exec(event.text)?.[1]).find((value) => value !== undefined) ?? "Work";
-  const live = !["job.done", "job.failed", "job.cancelled"].includes(latest.kind);
-  const journal = useJournal(block.jobId, open, live);
+  const closed = latest !== undefined && ["job.done", "job.failed", "job.cancelled"].includes(latest.kind);
+  const failed = latest?.kind === "job.failed";
+  const journal = useJournal(block.jobId, open, !closed);
+  if (latest === undefined || first === undefined) return null;
   const count = journal?.lines.length ?? block.events.length;
+  const span = took(first.at, closed ? latest.at : new Date().toISOString());
 
   return (
-    <div className={open ? "steps open" : "steps"}>
-      <button type="button" className="steps-head" aria-expanded={open} onClick={onToggle}>
-        <Avatar member={member} size={16} presence={latest.kind === "job.done" ? "done" : member.presence} />
-        <span className="title">{title}</span>
-        <span className="latest">
-          · {count} {count === 1 ? "step" : "steps"} · {latest.text}
-        </span>
-        <Icon name="chev" size={14} className="chev" />
-      </button>
-      {open && journal !== null ? (
-        <ol className="steps-list">
-          {journal.lines.map((line, index) => (
-            <JournalRow
-              key={`${line.at}:${index}`}
-              line={line}
-              resumedHere={journal.resumedFrom > 0 && index === journal.resumedFrom ? (journal.rewoundBy === null ? "Continued from here after a restart" : `Rewound to here by ${journal.rewoundBy}`) : null}
-              undoes={journal.lines.length - (index + 1)}
-              onRewind={block.jobId === null ? null : () => rewindTo(block.jobId as string, index + 1)}
-            />
-          ))}
-          {latest.kind === "job.done" || latest.kind === "job.failed" || latest.kind === "job.cancelled" ? (
-            <li className={latest.kind === "job.failed" ? "bad" : latest.kind === "job.done" ? "good" : undefined}>
-              <span className="k">{STEP_WORDS[latest.kind] ?? "Did"}</span>
-              <span>{latest.text}</span>
-              <time>{clock(new Date(latest.at))}</time>
-            </li>
-          ) : null}
-        </ol>
-      ) : open ? (
-        <ol className="steps-list">
-          {block.events.map((event) => (
-            <li
-              key={event.id}
-              className={event.kind === "job.failed" ? "bad" : event.kind === "job.done" ? "good" : undefined}
-            >
-              <span className="k">{STEP_WORDS[event.kind] ?? "Did"}</span>
-              <span>{event.text}</span>
-              <time>{clock(new Date(event.at))}</time>
-            </li>
-          ))}
-        </ol>
-      ) : null}
-    </div>
+    <Trace className="job-trace">
+      <TraceCollapsible open={open} onOpenChange={onToggle}>
+        <TraceCollapsibleTrigger>
+          <TraceLine {...(closed ? (failed ? { status: "error" as const } : {}) : { status: "running" as const })}>
+            <TraceIcon>
+              <Avatar member={member} size={16} presence={latest.kind === "job.done" ? "done" : member.presence} />
+            </TraceIcon>
+            <TraceTitle>{title}</TraceTitle>
+            <TraceDescription>
+              {count} {count === 1 ? "step" : "steps"} · {closed ? (failed ? `failed after ${span}` : `took ${span}`) : `${span} so far`}
+            </TraceDescription>
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+        <TraceCollapsibleContent>
+          <Trace>
+            {journal !== null
+              ? journal.lines.map((line, index) => (
+                  <JournalRow
+                    key={`${line.at}:${index}`}
+                    line={line}
+                    resumedHere={journal.resumedFrom > 0 && index === journal.resumedFrom ? (journal.rewoundBy === null ? "Continued from here after a restart" : `Rewound to here by ${journal.rewoundBy}`) : null}
+                    undoes={journal.lines.length - (index + 1)}
+                    onRewind={block.jobId === null ? null : () => rewindTo(block.jobId as string, index + 1)}
+                  />
+                ))
+              : block.events
+                  .filter((event) => !["job.done", "job.failed", "job.cancelled"].includes(event.kind))
+                  .map((event) => (
+                    <StepLine key={event.id} icon={CheckIcon} text={event.kind === "job.progress" ? event.text : `${STEP_WORDS[event.kind] ?? "Did"}: ${event.text}`} at={event.at} />
+                  ))}
+            {closed ? (
+              <StepLine
+                icon={failed ? CircleXIcon : CircleCheckIcon}
+                text={latest.text}
+                at={latest.at}
+                {...(failed ? { status: "error" as const } : {})}
+              />
+            ) : null}
+          </Trace>
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
   );
 }
 
@@ -434,31 +516,46 @@ function JournalRow({
   const [asking, setAsking] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const word = JOURNAL_WORDS[line.kind];
+  const url = line.kind === "page" && typeof line.data?.url === "string" && /^https?:\/\//.test(line.data.url) ? line.data.url : null;
+  const said = line.text.startsWith(`${word} `) ? line.text.slice(word.length + 1) : line.text;
+  // A page whose title came back as raw data reads as its address instead.
+  const text = url !== null && /^\s*[[{]/.test(said) ? url.replace(/^https?:\/\//, "").replace(/\/$/, "") : said;
+  // Progress lines already say what was done ("Opened the page…"); the other kinds take their verb.
+  const shown = line.kind === "progress" ? text : `${word} ${text}`;
   return (
     <>
       {resumedHere !== null ? (
-        <li className="resumed" role="separator">
-          <span>{resumedHere}</span>
-        </li>
+        <TraceLine role="separator">
+          <TraceIcon>
+            <HistoryIcon />
+          </TraceIcon>
+          <TraceTitle>{resumedHere}</TraceTitle>
+        </TraceLine>
       ) : null}
-      <li className={line.kind === "error" ? "bad" : line.kind === "decision" ? "decision" : undefined}>
-        <span className="k">{JOURNAL_WORDS[line.kind] ?? "Did"}</span>
-        <JournalText line={line} />
+      <div className="trace-step">
+        <StepLine
+          icon={JOURNAL_ICONS[line.kind] ?? CheckIcon}
+          text={shown}
+          at={line.at}
+          {...(line.kind === "error" ? { status: "error" as const } : {})}
+          href={url}
+        />
         {onRewind !== null && undoes > 0 && !asking ? (
-          <button type="button" className="rewind" onClick={() => setAsking(true)} title="Take the job back to just after this step">
+          <Button variant="ghost" size="xs" className="trace-rewind" onClick={() => setAsking(true)} title="Take the job back to just after this step">
+            <RotateCcwIcon data-icon="inline-start" />
             Rewind to here
-          </button>
+          </Button>
         ) : null}
-        <time>{clock(new Date(line.at))}</time>
-      </li>
+      </div>
       {asking && onRewind !== null ? (
-        <li className="rewind-ask">
+        <div className="rewind-ask" data-slot="rewind-ask">
           <span>
             Undo the {undoes} later {undoes === 1 ? "step" : "steps"}, put this job&apos;s files back as they were, and run it again from here? Emails already sent stay sent.
           </span>
-          <button
-            type="button"
-            className="danger"
+          <Button
+            variant="destructive"
+            size="xs"
             disabled={busy}
             onClick={async () => {
               setBusy(true);
@@ -468,16 +565,19 @@ function JournalRow({
             }}
           >
             {busy ? "Rewinding…" : "Rewind"}
-          </button>
-          <button type="button" disabled={busy} onClick={() => setAsking(false)}>
+          </Button>
+          <Button variant="ghost" size="xs" disabled={busy} onClick={() => setAsking(false)}>
             Keep
-          </button>
-        </li>
+          </Button>
+        </div>
       ) : null}
       {note === null ? null : (
-        <li className="resumed">
-          <span>{note}</span>
-        </li>
+        <TraceLine>
+          <TraceIcon>
+            <HistoryIcon />
+          </TraceIcon>
+          <TraceTitle>{note}</TraceTitle>
+        </TraceLine>
       )}
     </>
   );
