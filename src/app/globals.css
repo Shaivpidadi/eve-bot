@@ -1181,3 +1181,9 @@ dialog .dialog-body { padding: 18px; display: flex; flex-direction: column; gap:
 .mascot-host:active { cursor: grabbing; }
 .mascot { display: block; }
 .hero-face:hover .mascot { filter: none; }
+
+/* A list face that comes alive under the pointer: the mascot over the flat avatar. */
+.live-av { position: relative; display: inline-grid; place-items: center; flex: none; }
+.live-av-mascot { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.live-av.ready > .av { opacity: 0; }
+.mascot-host.passive { pointer-events: none; cursor: inherit; }

@@ -267,11 +267,17 @@ export function Mascot({
   member,
   size = 68,
   turn,
+  interactive = true,
+  onReady,
 }: {
   member: Member;
   size?: number;
   /** Holds it turned to this angle (radians), for the gallery. */
   turn?: number;
+  /** Whether it can be spun and squished; off where it sits inside something clickable. */
+  interactive?: boolean;
+  /** Called once its first frame is on screen, so a stand-in can step aside without a flash. */
+  onReady?: () => void;
 }) {
   const host = useRef<HTMLSpanElement>(null);
   const [failed, setFailed] = useState(false);
@@ -279,6 +285,8 @@ export function Mascot({
   const moodRef = useRef(mood);
   moodRef.current = mood;
   const face = faceOf(member);
+  const ready = useRef(onReady);
+  ready.current = onReady;
 
   useEffect(() => {
     const parent = host.current;
@@ -383,10 +391,13 @@ export function Mascot({
       if (!drag.moved) squish.velocity += 3.2;
       resume();
     };
-    element.addEventListener("pointerdown", onDown);
-    element.addEventListener("pointermove", onMove);
-    element.addEventListener("pointerup", onUp);
-    element.addEventListener("pointercancel", onUp);
+    if (interactive) {
+      element.addEventListener("pointerdown", onDown);
+      element.addEventListener("pointermove", onMove);
+      element.addEventListener("pointerup", onUp);
+      element.addEventListener("pointercancel", onUp);
+    }
+    let shown = false;
 
     let gaze = { x: 0, y: 0 };
     let lookWeight = 0;
@@ -498,6 +509,10 @@ export function Mascot({
       gl.uniform1f(uniforms.mood, moodCode);
       gl.uniform1f(uniforms.sat, sat);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      if (!shown) {
+        shown = true;
+        ready.current?.();
+      }
 
       const turning = spin.drag !== null || Math.abs(spin.velocity) > 0.01 || Math.abs(spin.yaw - Math.round(spin.yaw / TURN) * TURN) > 0.002 || Math.abs(squish.velocity) > 0.01;
       if ((!still || turning) && visible && !document.hidden) frame = requestAnimationFrame(draw);
@@ -529,16 +544,16 @@ export function Mascot({
     };
     // The face is fixed for a member; the mood is read live from a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [member.id, size, turn]);
+  }, [member.id, size, turn, interactive]);
 
   if (failed) return <Avatar member={member} size={size} />;
   const box = Math.round(size * 1.32);
   return (
     <span
       ref={host}
-      className="mascot-host"
+      className={interactive ? "mascot-host" : "mascot-host passive"}
       style={{ width: box, height: box, margin: -(box - size) / 2 }}
-      title="Drag to spin"
+      title={interactive ? "Drag to spin" : undefined}
       aria-hidden="true"
     />
   );

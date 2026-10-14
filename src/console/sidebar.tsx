@@ -4,7 +4,7 @@ import { BrandMark } from "./brands";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { api, errorMessage, SignedOutError } from "./api";
-import { Avatar } from "./avatar";
+import { LiveAvatar } from "./live-avatar";
 import { shortWhen, withoutEmoji } from "./format";
 import { Icon, type IconName } from "./icons";
 import { PromptDialog, type Prompt } from "./prompt-dialog";
@@ -123,6 +123,8 @@ export function Sidebar({
   const [showHidden, setShowHidden] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [meOpen, setMeOpen] = useState(false);
+  // The row or tile under the pointer, whose face is alive.
+  const [hovered, setHovered] = useState<string | null>(null);
   const apps = useConnectedApps();
 
   const needle = query.trim().toLowerCase();
@@ -181,8 +183,10 @@ export function Sidebar({
           aria-current={member.id === selectedId}
           onClick={() => onSelect(member.id)}
           onContextMenu={(event) => openMenu(member, event)}
+          onPointerEnter={() => setHovered(member.id)}
+          onPointerLeave={() => setHovered((current) => (current === member.id ? null : current))}
         >
-          <Avatar member={member} size={32} onHover={onHover} />
+          <LiveAvatar member={member} size={32} alive={hovered === member.id} onHover={onHover} />
           <span className="row-main">
             <span className="row-top">
               <span className="row-name">
@@ -222,8 +226,10 @@ export function Sidebar({
         title={member.title}
         onClick={() => onSelect(member.id)}
         onContextMenu={member.kind === "bot" ? (event) => openMenu(member, event) : undefined}
+        onPointerEnter={() => setHovered(member.id)}
+        onPointerLeave={() => setHovered((current) => (current === member.id ? null : current))}
       >
-        <Avatar member={member} size={40} onHover={onHover} />
+        <LiveAvatar member={member} size={40} alive={hovered === member.id} onHover={onHover} />
         <span className="tile-name">{member.name}</span>
         {needsYou ? <span className="tile-badge needs" aria-label="Needs you" /> : isUnread ? <span className="tile-badge" aria-label="Unread" /> : null}
       </button>
