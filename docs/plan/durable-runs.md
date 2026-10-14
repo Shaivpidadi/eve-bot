@@ -206,7 +206,8 @@ facts a run produced, written into the job record under the fence.
   through `write_file`, so the journal sees those files only through the Bot's own progress
   note. The check now waits for that note and judges redo by the file itself. Journaling
   shell writes would need parsing commands; left as is.
-- **Done when:** the QA check passes on Vercel Sandbox and on Docker, and the ratio is recorded. Docker done; Vercel Sandbox waits on a fresh OIDC token.
+- **Vercel Sandbox (14 Oct 2026, project eve-bot-test):** resume, re-run by HQ, passed in 221 s: resumed from step 2 of 6, file `first`, `second`, job done.
+- **Done when:** the QA check passes on Vercel Sandbox and on Docker, and the ratio is recorded. Both done.
 
 ### D1.5 A note to self `[done]`
 
@@ -464,7 +465,8 @@ D1 and the backup generations.
   user, so the Bot's folder came back without the `bot-team` group's write bit and the Bot's
   shell could not write in it (the Bot reported it and blocked). Restore now keeps the
   archive's permissions and re-applies the shared-folder rules.
-- **Done when:** the QA check passes on Vercel Sandbox and Docker. Docker done; Vercel Sandbox waits on a fresh OIDC token.
+- **Vercel Sandbox (14 Oct 2026, project eve-bot-test):** passed in 155 s: rewound to step 3, files from step 3, job done.
+- **Done when:** the QA check passes on Vercel Sandbox and Docker. Both done.
 
 ### D5.3 Rewind a conversation `[to-do]`
 
@@ -490,7 +492,7 @@ D1 and the backup generations.
 
 1. The two helpers (fault routes, `qa/lib/wait.mjs`) `[done]` (`agent/lib/qa.ts`, routes in `ops.ts`, `tests/qa.test.ts`)
 2. D0.1 `[done]`, D0.2 `[done]` (QA check written, not yet run live: needs a model and `BOT_QA=1`)
-3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[done]` (Docker; Vercel Sandbox pending a fresh OIDC token)
+3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[done]` (Docker and Vercel Sandbox)
 4. D2.1 `[done]`, D2.2 `[done]`, D2.4 `[done]`
 5. D1.5 `[done]`, D1.6 `[done]`, D0.3 (after E4) `[to-do]`
 6. D3.1 `[done]`, D3.2 `[done]`
@@ -498,6 +500,6 @@ D1 and the backup generations.
 8. D5.1 `[done]`, D5.2 `[done]`
 9. D3.3 `[to-do]` (blocked: needs a Mac reachable over SSH), D3.4 `[to-do]` (after D3.3), D5.3 `[to-do]` (after E4), D5.4 `[done]`, D2.3 `[done]`
 
-Also waiting on track E (the eve upgrade): D0.3. Waiting on a fresh Vercel OIDC token (`npx vercel env pull`): the Vercel Sandbox runs of D1.4 and D5.2.
+Also waiting on track E (the eve upgrade): D0.3.
 
 Update the status board at the top with each commit.
