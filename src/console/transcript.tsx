@@ -104,12 +104,24 @@ export function Transcript({
   const [openSteps, setOpenSteps] = useState<ReadonlySet<string>>(() => new Set());
   const [notes, setNotes] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [showMore, setShowMore] = useState(false);
-  // What was already in the thread when it opened appears with it; only what arrives after eases in.
-  const [settled, setSettled] = useState(false);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setSettled(true), 400);
-    return () => window.clearTimeout(timer);
-  }, []);
+  // What was already in the thread when it opened appears with it, at once; only
+  // what arrives afterwards eases in. Each row's element is marked the first
+  // time it is seen, so an element already on screen never animates again
+  // (marking the whole thread instead replayed every row's entrance).
+  const seen = useRef(new WeakSet<Element>());
+  const armedAt = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const list = scroller.current?.querySelector(".transcript");
+    if (list === null || list === undefined) return;
+    // The history a thread opens with lands in a burst; it is not news.
+    if (armedAt.current === null && room.loaded) armedAt.current = performance.now() + 300;
+    const armed = armedAt.current !== null && performance.now() > armedAt.current;
+    for (const row of Array.from(list.children)) {
+      if (seen.current.has(row)) continue;
+      seen.current.add(row);
+      if (armed) (row as HTMLElement).dataset.arrived = "";
+    }
+  });
 
   // Keep the latest message in view, unless the reader scrolled up to look back.
   useLayoutEffect(() => {
@@ -298,7 +310,7 @@ export function Transcript({
         }
       }}
     >
-      <div className={settled ? "transcript settled" : "transcript"} aria-live="polite">
+      <div className="transcript" aria-live="polite">
         {body}
       </div>
     </div>
