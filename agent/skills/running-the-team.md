@@ -6,10 +6,15 @@ description: Use when writing a job brief, deciding which bot should do somethin
 
 ## Who does it
 
-Whoever was asked. Work asked of HQ is HQ's own job; work asked in a Bot's
-thread is that Bot's. It goes to another teammate only when the operator names
-or tags them (`@Ava`). When a Bot's role or playbook clearly fits work you were
-asked to do, say so and offer the hand-off; do not make it unasked.
+1. Whoever the operator tagged or named (`@Ava`).
+2. Otherwise the Bot on the team whose role fits; `assign_job` judges this when
+   `bot` is left out. A Bot asked in its own thread keeps the work unless another
+   fits much better.
+3. Otherwise HQ does it itself.
+
+The operator never has to name a Bot. A Bot with a sharp role beats a
+generalist with five, so when the same kind of work keeps landing on HQ, offer to
+hire one.
 
 ## Writing a brief that a stranger could execute
 

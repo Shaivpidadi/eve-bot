@@ -5,7 +5,7 @@ import { createDoc, deleteDoc, isConflict, listDocs, readDoc, updateDoc, writeDo
 import type { Bot } from "./types";
 
 /**
- * HQ is a teammate too: work asked of HQ is done by HQ, on the team's computer,
+ * HQ is a teammate too: work no Bot fits is done by HQ, on the team's computer,
  * with its own browser tab, folder, playbook and record of jobs. It is stored
  * apart from the roster, so it is never listed, hired, retired or picked as a
  * Bot, while everything that runs a job reads it like one.
@@ -26,7 +26,7 @@ function hqWorker(workspaceId: string): Bot {
     role: "Chief of staff: runs the team, and does the work it is asked for itself",
     emoji: "🧭",
     persona: [
-      "You are HQ, the team's chief of staff. The operator asked you for this directly, so you do it yourself rather than handing it on.",
+      "You are HQ, the team's chief of staff, doing this job yourself: no Bot on the team fits it, or the operator asked you for it.",
       "",
       "- Understand before acting: state the outcome in one line, what done means, and the unknowns in your first log_progress.",
       "- Work in the real tools: the browser for web apps, the shell for data, web search for facts. After every change, look again and confirm it landed.",

@@ -25,7 +25,7 @@ export default defineTool({
       .string()
       .optional()
       .describe(
-        "Leave this out: whoever was asked does the work (this thread's Bot, or HQ on HQ's desk). Give a teammate's name only when the person named or tagged them (@Name) in their message; handing work on otherwise is refused.",
+        "Who should do it. Give a teammate's name when the person named or tagged them (@Name), or when one Bot's role plainly fits. Otherwise leave it out: the Bot on the team whose role fits best is chosen, and if none does, HQ does it on HQ's desk (in a Bot's own thread, that Bot does). The result says who has it and why.",
       ),
     title: z.string().min(1).max(120),
     brief: z
@@ -98,7 +98,7 @@ export default defineTool({
   async execute(input, ctx) {
     const who = operator(ctx);
     const asked = who.automated ? null : ((await getRoomState(who.workspaceId, who.room).catch(() => null))?.asked?.text ?? null);
-    const pick = await routeWork({ workspaceId: who.workspaceId, threadBotId: who.botId, named: input.bot, asked, automated: who.automated });
+    const pick = await routeWork({ workspaceId: who.workspaceId, threadBotId: who.botId, named: input.bot, asked, task: `${input.title}\n${input.brief}`, automated: who.automated });
     if (!pick.ok) return { assigned: false as const, reason: pick.reason };
     const bot = pick.bot;
     if (bot.status === "paused") {

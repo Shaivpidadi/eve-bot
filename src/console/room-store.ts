@@ -126,7 +126,7 @@ export function actionNotice(toolName: string, output: unknown): Notice | null {
       if (output.assigned !== true) return null;
       return typeof job.everyMinutes === "number"
         ? { icon: "clock", label: "Created Routine", detail: text(job.title) ?? "" }
-        : output.bot !== undefined && bot.pickedBy === "named"
+        : bot.pickedBy === "named" || bot.pickedBy === "fit"
           ? { icon: "folder", label: `Handed to ${text(bot.name) ?? "a teammate"}`, detail: text(job.title) ?? "" }
           : { icon: "folder", label: "Took it on", detail: text(job.title) ?? "" };
     case "update_bot":
