@@ -67,8 +67,8 @@ export default defineTool({
     request: always(),
     // Always allowed, as with `always()` alone; this only remembers who said
     // yes so the ledger can name the approver.
-    response: async ({ responder, request, session }) => {
-      await noteApproval(session.id, request.callId, responder.principalId);
+    response: async ({ response, request, session }) => {
+      await noteApproval(session.id, request.callId, response.principal.principalId);
       return { status: "allowed" };
     },
   },
