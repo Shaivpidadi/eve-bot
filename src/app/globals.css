@@ -260,10 +260,12 @@ dialog.prompt-dialog { width: min(92vw, 400px); }
 .msg.you { align-self: flex-end; background: var(--you); color: #fff; white-space: pre-wrap; }
 .msg.you a { color: #fff; }
 @media (prefers-reduced-motion: no-preference) {
-  .msg, .card, .notice, .steps, .working { animation: msg-in 0.22s cubic-bezier(0.2, 0, 0, 1) both; }
+  .transcript { animation: thread-in 0.2s ease-out; }
+  .transcript.settled :is(.msg, .card, .notice, .steps, .working) { animation: msg-in 0.22s cubic-bezier(0.2, 0, 0, 1) both; }
   .msg.you { transform-origin: 100% 100%; }
   .msg.bot { transform-origin: 0 100%; }
 }
+@keyframes thread-in { from { opacity: 0; } }
 @keyframes msg-in { from { opacity: 0; transform: translateY(6px) scale(0.985); } }
 .msg.you.sending { opacity: 0.6; }
 .msg + .msg.bot, .msg + .msg.you { margin-top: 4px; }

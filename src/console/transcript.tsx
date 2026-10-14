@@ -70,6 +70,12 @@ export function Transcript({
   const [openSteps, setOpenSteps] = useState<ReadonlySet<string>>(() => new Set());
   const [notes, setNotes] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [showMore, setShowMore] = useState(false);
+  // What was already in the thread when it opened appears with it; only what arrives after eases in.
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSettled(true), 400);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // Keep the latest message in view, unless the reader scrolled up to look back.
   useLayoutEffect(() => {
@@ -236,7 +242,7 @@ export function Transcript({
         }
       }}
     >
-      <div className="transcript" aria-live="polite">
+      <div className={settled ? "transcript settled" : "transcript"} aria-live="polite">
         {body}
       </div>
     </div>
