@@ -1,12 +1,17 @@
 "use client";
 
 import type { InputRequest } from "eve/client";
+import { EyeIcon, FolderIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type * as React from "react";
+
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+
 
 import { api, errorMessage, isRecord, SignedOutError } from "../api";
 import { Avatar } from "../avatar";
 import { PRESENCE_LABEL } from "../format";
-import { Icon } from "../icons";
 import { roomStore, type RoomSnapshot } from "../room-store";
 import type { Member } from "../types";
 import { BrowserApp } from "./browser-app";
@@ -212,7 +217,10 @@ export function ComputerView({
 
   return (
     <div
-      className="computer"
+      className={cn(
+        DARK_SCOPE,
+        "computer fixed inset-0 z-50 flex animate-computer-overlay-in flex-col bg-[rgba(8,8,10,0.78)] text-[#eee] backdrop-blur-[18px] backdrop-saturate-[0.8]",
+      )}
       role="dialog"
       aria-modal="true"
       aria-label="Team computer"
@@ -221,26 +229,41 @@ export function ComputerView({
         if (event.target === event.currentTarget && !controllingNow.current) close();
       }}
     >
-      <div className="computer-bar">
-        <button type="button" className="computer-close" aria-label="Close" title="Close" onClick={close}>
-          <Icon name="x" size={14} />
-        </button>
+      <div className="flex h-11 flex-none items-center gap-2.5 px-3">
+        <Button
+          size="icon-sm"
+          className="size-[26px] rounded-full bg-[#ff5f57] text-black/70 hover:bg-[#ff5f57] hover:brightness-110 [&_svg]:opacity-85 [&_svg]:hover:opacity-100"
+          aria-label="Close"
+          title="Close"
+          onClick={close}
+        >
+          <XIcon strokeWidth={2.2} className="size-3.5" />
+        </Button>
         <Avatar member={member} size={18} />
-        <b>Team computer</b>
-        <span className="what">{status}</span>
-        {error === null ? null : <span className="error-text">{error}</span>}
-        <button
-          type="button"
-          className={filesOpen ? "btn subtle on" : "btn subtle"}
+        <b className="text-[13px] font-medium whitespace-nowrap text-[#eee] max-[760px]:hidden">Team computer</b>
+        <span className="max-w-[60%] min-w-0 flex-1 truncate text-[12.5px] text-[#9b9ba2]">{status}</span>
+        {error === null ? null : <span className="max-w-[32%] truncate text-xs text-destructive">{error}</span>}
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-pressed={filesOpen}
+          className="text-[#b5b5bb] hover:bg-[#222225] hover:text-white aria-pressed:bg-[#222225] aria-pressed:text-white"
           title="Upload to or download from the computer"
           onClick={() => setFilesOpen((open) => !open)}
         >
-          <Icon name="folder" size={14} /> Files
-        </button>
+          <FolderIcon data-icon="inline-start" /> Files
+        </Button>
       </div>
 
-      <div className="computer-stage">
-        <div className={controlling ? "screen-frame controlling" : "screen-frame"}>
+      <div className="pointer-events-none flex min-h-0 flex-1 gap-3 px-7 pb-[78px] *:pointer-events-auto max-[760px]:flex-col max-[760px]:px-2 max-[760px]:pb-2">
+        <div
+          className={cn(
+            "relative mx-auto aspect-[16/10] max-h-full min-w-0 flex-1 animate-computer-window-in self-center overflow-hidden rounded-[14px] border border-white/12 bg-[#161618] shadow-[0_30px_90px_rgba(0,0,0,0.6)]",
+            // Stacked on a phone: as wide as the screen, as tall as that makes it, centred while the files are closed.
+            "max-[760px]:my-auto max-[760px]:w-full max-[760px]:flex-none",
+            controlling && "shadow-[0_0_0_2px_var(--brand),0_24px_70px_rgba(0,0,0,0.55)]",
+          )}
+        >
           <BrowserApp
             member={member}
             controlling={controlling}
@@ -253,7 +276,7 @@ export function ComputerView({
           {controlling ? null : (
             // Watching is view-only, so a click on the picture would otherwise do nothing at all.
             <div
-              className="take-catcher"
+              className="absolute inset-0 cursor-default"
               role="button"
               tabIndex={-1}
               aria-label="Take control of the computer"
@@ -263,102 +286,150 @@ export function ComputerView({
           )}
 
           {asking && !controlling ? (
-            <div className="handover take-prompt" role="alertdialog" aria-modal="true" aria-label="Take control?">
-              <div className="handover-head">
-                <Avatar member={member} size={22} />
-                <b>{working === null ? "Take control of the computer?" : `${working} is working right now`}</b>
-              </div>
-              <p>
+            <HandoverCard className="top-1/2 -translate-y-1/2" role="alertdialog" aria-modal="true" aria-label="Take control?">
+              <HandoverHead member={member}>{working === null ? "Take control of the computer?" : `${working} is working right now`}</HandoverHead>
+              <p className="mt-2 mb-0 [overflow-wrap:anywhere] text-[#e4e4e7]">
                 {working === null
                   ? "Your mouse and keyboard go straight to the computer until you return control."
                   : `Taking control pauses ${working}'s browser actions until you return control. Anything you sign in to stays signed in for the team.`}
               </p>
-              <div className="handover-actions">
-                <button type="button" className="btn primary" disabled={busy} autoFocus onClick={() => void take()}>
+              <div className="mt-3 flex gap-2">
+                <Button size="sm" disabled={busy} autoFocus onClick={() => void take()}>
                   Take control
-                </button>
-                <button type="button" className="btn" disabled={busy} onClick={() => setAsking(false)}>
+                </Button>
+                <Button variant="secondary" size="sm" disabled={busy} onClick={() => setAsking(false)}>
                   Keep watching
-                </button>
+                </Button>
               </div>
-            </div>
+            </HandoverCard>
           ) : null}
 
           {waiting && !controlling ? (
-            <div className="handover" role="alert">
-              <div className="handover-head">
-                <Avatar member={member} size={22} />
-                <b>{`${member.name} needs you`}</b>
-              </div>
-              {reason === null ? null : <p>{reason}</p>}
-              <p className="faint">Take control, do this step on the screen, then return control. What you type goes straight to the page, never into the chat.</p>
-              <div className="handover-actions">
-                <button type="button" className="btn primary" disabled={busy || heldByOther} onClick={() => void take()}>
+            <HandoverCard className="top-[18px]" role="alert">
+              <HandoverHead member={member}>{`${member.name} needs you`}</HandoverHead>
+              {reason === null ? null : <p className="mt-2 mb-0 [overflow-wrap:anywhere] text-[#e4e4e7]">{reason}</p>}
+              <p className="mt-2 mb-0 text-xs text-[#8a8a92]">
+                Take control, do this step on the screen, then return control. What you type goes straight to the page, never into the chat.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <Button size="sm" disabled={busy || heldByOther} onClick={() => void take()}>
                   Take control
-                </button>
+                </Button>
                 {request === null ? null : (
-                  <button type="button" className="btn" disabled={busy} onClick={() => void skip()}>
+                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => void skip()}>
                     Skip
-                  </button>
+                  </Button>
                 )}
               </div>
-            </div>
+            </HandoverCard>
           ) : null}
-
         </div>
 
         {filesOpen ? (
-          <aside className="files-drawer" aria-label="Files">
-            <div className="files-drawer-head">
-              <b>Files on the computer</b>
-              <button type="button" className="icon-btn" aria-label="Close files" onClick={() => setFilesOpen(false)}>
-                <Icon name="x" size={14} />
-              </button>
+          <aside
+            className="flex w-[min(420px,40%)] flex-none flex-col overflow-hidden rounded-[10px] border border-[#242427] bg-[#121214] max-[760px]:h-1/2 max-[760px]:w-auto"
+            aria-label="Files"
+          >
+            <div className="flex h-10 flex-none items-center justify-between border-b border-[#222] pr-2 pl-3 text-[12.5px]">
+              <b className="font-semibold">Files on the computer</b>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-[#aaa] hover:bg-[#222] hover:text-white"
+                aria-label="Close files"
+                onClick={() => setFilesOpen(false)}
+              >
+                <XIcon />
+              </Button>
             </div>
-            <div className="files-drawer-body">
+            <div className="relative min-h-0 flex-1">
               <FilesApp />
             </div>
           </aside>
         ) : null}
       </div>
 
-      <div className={controlling ? "control-pill controlling" : "control-pill"} role="group" aria-label="Control">
+      <div
+        className="absolute bottom-[22px] left-1/2 z-[3] flex -translate-x-1/2 animate-computer-pill-in items-center gap-1 rounded-full bg-[rgba(250,250,252,0.96)] p-1 text-[#1a1a1d] shadow-[0_10px_30px_rgba(0,0,0,0.35)]"
+        role="group"
+        aria-label="Control"
+      >
         {controlling ? (
           <>
-            <span className="pill-state">
-              <i className="live-dot" />
+            <span className="inline-flex items-center gap-[7px] pr-3 pl-2.5 text-[13px] whitespace-nowrap text-[#4a4a50]">
+              <i className="size-2 animate-computer-live rounded-full bg-brand" />
               You&apos;re in control
             </span>
             <input
-              className="control-note"
+              className="w-[min(300px,28vw)] rounded-full border-0 bg-[#ececef] px-3 py-[7px] text-[12.5px] text-[#1a1a1d] placeholder:text-[#8a8a92] focus:outline-2 focus:outline-brand max-[760px]:w-[30vw] max-[760px]:min-w-[90px]"
               value={note}
               placeholder={waiting ? `Tell ${member.name} what you did` : "Note for the Bot (optional)"}
               aria-label={`Note for ${member.name}`}
               onChange={(event) => setNote(event.target.value)}
               onKeyDown={(event) => event.stopPropagation()}
             />
-            <button type="button" className="pill-action" disabled={busy} onClick={() => void returnControl()}>
+            <PillAction disabled={busy} onClick={() => void returnControl()}>
               {returnLabel}
-            </button>
+            </PillAction>
           </>
         ) : (
           <>
-            <span className="pill-state">
-              <Icon name="eye" size={14} />
+            <span className="inline-flex items-center gap-[7px] pr-3 pl-2.5 text-[13px] whitespace-nowrap text-[#4a4a50]">
+              <EyeIcon className="size-3.5" />
               {heldByOther ? `${control.by} has control` : "Watching"}
             </span>
-            <button
-              type="button"
-              className="pill-action"
+            <PillAction
               disabled={busy || heldByOther}
               title={heldByOther ? `${control.by} has control` : "Use this computer yourself"}
               onClick={() => void take()}
             >
               Take control
-            </button>
+            </PillAction>
           </>
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * The computer is always dark, whatever the console's theme: its own shadcn
+ * palette, set on the overlay so every component inside draws dark.
+ */
+const DARK_SCOPE =
+  "[color-scheme:dark] [--background:#111113] [--foreground:#eeeeee] [--card:#18181b] [--card-foreground:#eeeeee] [--popover:#1b1b1e] [--popover-foreground:#eeeeee] [--primary:#f1f1f2] [--primary-foreground:#111111] [--secondary:#2a2a2e] [--secondary-foreground:#eeeeee] [--muted:#202023] [--muted-foreground:#9b9ba2] [--accent:#222225] [--accent-foreground:#ffffff] [--destructive:#f36b6b] [--border:#242427] [--input:#2e2e32] [--ring:#9b7bff]";
+
+/** A card over the screen: a Bot that needs you, or the question before taking control. */
+function HandoverCard({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(
+        "absolute left-1/2 w-[min(92%,440px)] -translate-x-1/2 rounded-[14px] border border-white/14 bg-[rgba(24,24,27,0.96)] px-4 py-3.5 text-[13px] shadow-[0_18px_50px_rgba(0,0,0,0.5)]",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+function HandoverHead({ member, children }: { member: Member; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Avatar member={member} size={22} />
+      <b className="text-[13.5px] font-semibold">{children}</b>
+    </div>
+  );
+}
+
+/** The dark action at the end of the control pill. */
+function PillAction({ className, ...props }: React.ComponentProps<typeof Button>) {
+  return (
+    <Button
+      className={cn(
+        "h-8 rounded-full bg-[#17171a] px-3.5 text-[13px] text-white hover:bg-[#17171a] hover:brightness-125 active:scale-96",
+        className,
+      )}
+      {...props}
+    />
   );
 }
