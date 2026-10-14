@@ -41,10 +41,10 @@ export function LiveAvatar({
   }, [alive]);
 
   return (
-    <span className={ready ? "live-av ready" : "live-av"} style={{ width: size, height: size }}>
-      <Avatar member={member} size={size} {...(onHover === undefined ? {} : { onHover })} />
+    <span className="live-av relative inline-grid flex-none place-items-center" style={{ width: size, height: size }}>
+      <Avatar member={member} size={size} className={ready ? "opacity-0" : undefined} {...(onHover === undefined ? {} : { onHover })} />
       {awake ? (
-        <span className="live-av-mascot">
+        <span className="pointer-events-none absolute inset-0 grid place-items-center">
           <Mascot member={member} size={size} interactive={false} onReady={() => setReady(true)} />
         </span>
       ) : null}

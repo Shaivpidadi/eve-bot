@@ -1,5 +1,7 @@
 import { type CSSProperties, type ReactNode, useId } from "react";
 
+import { cn } from "@/lib/utils";
+
 import type { Hover, Member, Presence } from "./types";
 
 /**
@@ -56,17 +58,38 @@ export function memberColor(member: Pick<Member, "id" | "kind">): string {
   return member.kind === "hq" ? HQ_COLOR : (COLORS[hash(member.id) % COLORS.length] ?? HQ_COLOR);
 }
 
+/**
+ * How a face moves for what it is doing (keyframes in src/styles/shell.css),
+ * only for people who have not asked for less motion. A paused face holds still.
+ */
+const BODY_MOTION: Partial<Record<Presence, string>> = {
+  working: "motion-safe:animate-av-hop",
+  waiting: "motion-safe:animate-av-sway origin-[50%_90%]",
+  blocked: "motion-safe:animate-av-shiver",
+  done: "motion-safe:animate-av-settle",
+};
+const EYE_MOTION: Partial<Record<Presence, string>> = {
+  idle: "motion-safe:animate-av-idle",
+  thinking: "motion-safe:animate-av-ponder",
+  working: "motion-safe:animate-av-blink",
+};
+
+/** The face squishes once when the row, tile, hero or header chip it sits in is pointed at. */
+const BOOP = "motion-safe:[:is(.row,.tile,.hero-face,.head-chip):hover_&]:animate-av-boop";
+
 export function Avatar({
   member,
   size = 22,
   presence,
   onHover,
+  className,
 }: {
   member: Member;
   size?: number;
   /** Overrides the member's presence, for a face shown in a specific context. */
   presence?: Presence;
   onHover?: (hover: Hover | null) => void;
+  className?: string;
 }) {
   const seed = hash(member.id);
   const color = member.kind === "hq" ? HQ_COLOR : (COLORS[seed % COLORS.length] ?? HQ_COLOR);
@@ -75,11 +98,18 @@ export function Avatar({
   const id = useId().replaceAll(":", "");
   // Bots lean a little and look up and to the side; HQ looks straight at you.
   const gaze = member.kind === "hq" ? "" : " translate(1.2 -0.4) rotate(7 20 20)";
+  const paused = member.status === "paused";
+  const mood = presence ?? member.presence;
+  const part = "[transform-box:view-box] origin-[50%_55%]";
 
   return (
     <span
-      className={member.status === "paused" ? "av paused" : "av"}
-      data-presence={presence ?? member.presence}
+      className={cn(
+        "av relative inline-grid flex-none place-items-center",
+        paused && "paused brightness-90 grayscale-[0.85]",
+        className,
+      )}
+      data-presence={mood}
       style={style}
       onPointerEnter={
         onHover === undefined
@@ -88,7 +118,11 @@ export function Avatar({
       }
       onPointerLeave={onHover === undefined ? undefined : () => onHover(null)}
     >
-      <svg viewBox="0 0 40 40" aria-hidden="true">
+      <svg
+        viewBox="0 0 40 40"
+        aria-hidden="true"
+        className={cn("block size-full overflow-visible", !paused && BODY_MOTION[mood], !paused && BOOP)}
+      >
         <defs>
           {/* Lit from above: a lighter crown, a deeper base, and a soft sheen. */}
           <linearGradient id={`f${id}`} x1="0" y1="0" x2="0" y2="1">
@@ -102,19 +136,22 @@ export function Avatar({
           </radialGradient>
           <clipPath id={`c${id}`}>{shape.body}</clipPath>
         </defs>
-        <g className="body" fill={`url(#f${id})`}>
+        <g className={part} fill={`url(#f${id})`}>
           {shape.body}
           <rect width="40" height="40" fill={`url(#s${id})`} clipPath={`url(#c${id})`} />
         </g>
         <g transform={`translate(0 ${shape.eyes})${gaze}`}>
-          <g className="eyes" fill="var(--eye)">
-            <rect x="13.8" y="14.2" width="3.3" height="7.6" rx="1.65" />
-            <rect x="22.9" y="14.2" width="3.3" height="7.6" rx="1.65" />
-          </g>
-          <g className="happy" fill="none" stroke="var(--eye)" strokeWidth={2.3} strokeLinecap="round">
-            <path d="M13.4 19.2q2.1-3 4.2 0" />
-            <path d="M22.4 19.2q2.1-3 4.2 0" />
-          </g>
+          {mood === "done" ? (
+            <g className={part} fill="none" stroke="var(--eye)" strokeWidth={2.3} strokeLinecap="round">
+              <path d="M13.4 19.2q2.1-3 4.2 0" />
+              <path d="M22.4 19.2q2.1-3 4.2 0" />
+            </g>
+          ) : (
+            <g className={cn(part, mood === "blocked" && "scale-y-[0.62]", !paused && EYE_MOTION[mood])} fill="var(--eye)">
+              <rect x="13.8" y="14.2" width="3.3" height="7.6" rx="1.65" />
+              <rect x="22.9" y="14.2" width="3.3" height="7.6" rx="1.65" />
+            </g>
+          )}
         </g>
       </svg>
     </span>

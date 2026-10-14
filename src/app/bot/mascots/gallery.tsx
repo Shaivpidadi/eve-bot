@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { faceOf } from "@/console/avatar";
 import type { Member, Presence } from "@/console/types";
 
@@ -39,13 +40,14 @@ export function MascotGallery() {
     return MOODS.find((entry) => entry === asked) ?? "idle";
   });
   return (
-    <div style={{ padding: 28, background: "var(--bg)", minHeight: "100vh", color: "var(--text)", font: "13px var(--font)" }}>
-      <div style={{ display: "flex", gap: 6, marginBottom: 28 }}>
+    <div className="min-h-screen bg-background p-7 text-[13px] text-foreground">
+      <div className="mb-7 flex gap-1.5">
         {MOODS.map((entry) => (
-          <button
+          <Button
             key={entry}
             type="button"
-            className={entry === mood ? "btn primary" : "btn"}
+            variant={entry === mood ? "default" : "secondary"}
+            size="sm"
             data-mood={entry}
             onClick={() => {
               // A fresh page per mood: a browser allows only so many WebGL contexts.
@@ -53,10 +55,10 @@ export function MascotGallery() {
             }}
           >
             {entry}
-          </button>
+          </Button>
         ))}
       </div>
-      <div style={{ display: "flex", gap: 34, flexWrap: "wrap", alignItems: "center" }}>
+      <div className="flex flex-wrap items-center gap-[34px]">
         {IDS.map((id) => {
           const member = {
             id,

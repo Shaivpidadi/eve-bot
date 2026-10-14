@@ -294,7 +294,7 @@ export function Mascot({
     // A canvas of this run's own: releasing a context on cleanup must never leave
     // the next run (a remount, another member) holding a lost one.
     const element = document.createElement("canvas");
-    element.className = "mascot";
+    element.className = "mascot block";
     const box = Math.round(size * 1.32);
     element.style.width = `${box}px`;
     element.style.height = `${box}px`;
@@ -551,7 +551,11 @@ export function Mascot({
   return (
     <span
       ref={host}
-      className={interactive ? "mascot-host" : "mascot-host passive"}
+      className={
+        interactive
+          ? "mascot-host block cursor-grab touch-none active:cursor-grabbing"
+          : "mascot-host pointer-events-none block cursor-[inherit] touch-none"
+      }
       style={{ width: box, height: box, margin: -(box - size) / 2 }}
       title={interactive ? "Drag to spin" : undefined}
       aria-hidden="true"

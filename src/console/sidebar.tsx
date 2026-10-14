@@ -1,23 +1,71 @@
 "use client";
 
+import {
+  ArrowUpIcon,
+  BrainIcon,
+  ChartColumnIcon,
+  CopyIcon,
+  EllipsisIcon,
+  EraserIcon,
+  EyeOffIcon,
+  FolderIcon,
+  FolderMinusIcon,
+  FolderPlusIcon,
+  LogOutIcon,
+  MailIcon,
+  MailOpenIcon,
+  MoonIcon,
+  PencilIcon,
+  PinIcon,
+  PlusIcon,
+  SearchIcon,
+  SunIcon,
+  Trash2Icon,
+  TriangleAlertIcon,
+  UserIcon,
+} from "lucide-react";
+import { type ComponentType, type ReactNode, useEffect, useRef, useState } from "react";
+
+import { Avatar as UserAvatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
+
 import { BrandMark } from "./brands";
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { api, errorMessage, SignedOutError } from "./api";
 import { LiveAvatar } from "./live-avatar";
 import { shortWhen, withoutEmoji } from "./format";
-import { Icon, type IconName } from "./icons";
 import { PromptDialog, type Prompt } from "./prompt-dialog";
 import { roomStore } from "./room-store";
 import { useTheme } from "./theme";
 import type { Board, Hover, Member, Profile } from "./types";
-
-/** Where a row's menu is anchored, and for whom. */
-interface Menu {
-  readonly member: Member;
-  readonly x: number;
-  readonly y: number;
-}
 
 /** The roster: HQ, then pinned Bots, then each section, then the rest; hidden ones folded away. */
 function grouped(rows: readonly Member[]) {
@@ -118,11 +166,10 @@ export function Sidebar({
   const [editingName, setEditingName] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [theme, toggleTheme] = useTheme();
-  const [menu, setMenu] = useState<Menu | null>(null);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [showHidden, setShowHidden] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [meOpen, setMeOpen] = useState(false);
+  const signOut = useRef<HTMLFormElement>(null);
   // The row or tile under the pointer, whose face is alive.
   const [hovered, setHovered] = useState<string | null>(null);
   const apps = useConnectedApps();
@@ -144,15 +191,6 @@ export function Sidebar({
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  const openMenu = (member: Member, event: ReactMouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    // From a right-click the menu sits at the pointer; from the ⋯ button, under it.
-    const fromPointer = event.type === "contextmenu";
-    setMenu({ member, x: fromPointer ? event.clientX : rect.right, y: fromPointer ? event.clientY : rect.bottom + 4 });
-  };
-
   /** One change to a Bot's record; the roster re-reads after. */
   const patch = async (member: Member, body: Record<string, unknown>, failing: string): Promise<string | null> => {
     try {
@@ -170,140 +208,292 @@ export function Sidebar({
     if (problem !== null) setNotice(problem);
   };
 
+  const menuFor = (member: Member, kit: MenuKit) => (
+    <RowMenuItems
+      kit={kit}
+      member={member}
+      sections={sectionNames}
+      isUnread={unread.has(member.id)}
+      onPin={(target) => void act(patch(target, { pinned: !target.pinned }, "Could not pin the Bot."))}
+      onSection={(target, section) => void act(patch(target, { section }, "Could not move the Bot."))}
+      onNewSection={(target) =>
+        setPrompt({
+          title: "New section",
+          description: `${target.name} moves into it. Sections group Bots in the roster.`,
+          label: "Section name",
+          placeholder: "Sales",
+          maxLength: 40,
+          confirm: "Create",
+          onConfirm: (value) => patch(target, { section: value }, "Could not create the section."),
+        })
+      }
+      onUnread={(target) => onUnread(target.id, !unread.has(target.id))}
+      onRename={(target) =>
+        setPrompt({
+          title: "Rename Bot",
+          description: "Bots are addressed by name in every thread, so pick one the team will recognise.",
+          label: "Name",
+          defaultValue: target.name,
+          maxLength: 40,
+          confirm: "Rename",
+          onConfirm: (value) => patch(target, { name: value }, "Could not rename the Bot."),
+        })
+      }
+      onEditProfile={(target) => onEditProfile(target.id)}
+      onDuplicate={(target) =>
+        void act(
+          (async () => {
+            try {
+              const response = await api(`/bot/v1/bots/${encodeURIComponent(target.id)}/duplicate`, { method: "POST" });
+              if (!response.ok) return await errorMessage(response, "Could not duplicate the Bot.");
+              const created = (await response.json()) as { bot: { id: string } };
+              await onChanged();
+              onSelect(created.bot.id);
+              return null;
+            } catch (caught) {
+              return caught instanceof SignedOutError ? null : "Could not duplicate the Bot.";
+            }
+          })(),
+        )
+      }
+      onClearChat={(target) =>
+        setPrompt({
+          title: `Clear chat with ${target.name}?`,
+          description:
+            target.kind === "hq"
+              ? "HQ's desk starts over: the conversation is cleared and its open one-off jobs are cancelled. The roster, finished work, and memory stay."
+              : `${target.name}'s thread starts over: the conversation is cleared and its open one-off jobs are cancelled. ${target.name}, its finished work, and what it learned stay.`,
+          confirm: "Clear chat",
+          danger: true,
+          onConfirm: async () => {
+            try {
+              const response = await api(`/bot/v1/rooms/${encodeURIComponent(target.room)}/reset`, { method: "POST" });
+              if (!response.ok) return await errorMessage(response, "Could not clear the chat.");
+              // The open transcript, if it is this one, empties at once rather than on the next poll.
+              roomStore(target.room).restart();
+              onUnread(target.id, false);
+              await onChanged();
+              return null;
+            } catch (caught) {
+              return caught instanceof SignedOutError ? null : "Could not clear the chat.";
+            }
+          },
+        })
+      }
+      onCopyId={(target) =>
+        void act(
+          navigator.clipboard
+            .writeText(target.room)
+            .then(() => {
+              setNotice(`Copied ${target.room}`);
+              return null;
+            })
+            .catch(() => `Could not copy. The conversation id is ${target.room}.`),
+        )
+      }
+      onHide={(target) => void act(patch(target, { hidden: !target.hidden }, "Could not hide the Bot."))}
+      onDelete={(target) =>
+        setPrompt({
+          title: `Delete ${target.name}?`,
+          description: `${target.name} leaves the team for good: its open jobs are cancelled and what it learned is discarded. Its thread stays readable. Pausing keeps everything if you might want it back.`,
+          confirm: "Delete",
+          danger: true,
+          onConfirm: async () => {
+            try {
+              const response = await api(`/bot/v1/bots/${encodeURIComponent(target.id)}`, { method: "DELETE" });
+              if (!response.ok) return await errorMessage(response, "Could not delete the Bot.");
+              await onChanged();
+              if (target.id === selectedId) onSelect("hq");
+              return null;
+            } catch (caught) {
+              return caught instanceof SignedOutError ? null : "Could not delete the Bot.";
+            }
+          },
+        })
+      }
+    />
+  );
+
   const row = (member: Member) => {
     const preview = withoutEmoji(member.preview?.text ?? member.title);
     const needsYou = member.pending > 0 || member.presence === "waiting";
     const isUnread = unread.has(member.id) && member.id !== selectedId;
-    const classes = ["row", needsYou ? "needs" : "", member.status === "paused" ? "paused" : "", isUnread ? "unread" : ""];
+    const paused = member.status === "paused";
     return (
-      <div key={member.id} className={`row-wrap${menu?.member.id === member.id ? " menu-open" : ""}`}>
-        <button
-          type="button"
-          className={classes.filter(Boolean).join(" ")}
-          aria-current={member.id === selectedId}
-          onClick={() => onSelect(member.id)}
-          onContextMenu={(event) => openMenu(member, event)}
-          onPointerEnter={() => setHovered(member.id)}
-          onPointerLeave={() => setHovered((current) => (current === member.id ? null : current))}
-        >
-          <LiveAvatar member={member} size={32} alive={hovered === member.id} onHover={onHover} />
-          <span className="row-main">
-            <span className="row-top">
-              <span className="row-name">
-                {member.name}
-                {member.pinned ? <Icon name="pin" size={11} className="row-pin" /> : null}
+      <ContextMenu key={member.id}>
+        {/* A right-click anywhere on the row opens its menu; so does the ⋯ that appears on hover. */}
+        <ContextMenuTrigger className="group/row relative select-auto">
+          <button
+            type="button"
+            className="row flex w-full cursor-pointer items-center gap-[11px] rounded-xl px-[9px] py-2 text-left transition-colors hover:bg-sidebar-accent aria-[current=true]:bg-selected"
+            aria-current={member.id === selectedId}
+            onClick={() => onSelect(member.id)}
+            onPointerEnter={() => setHovered(member.id)}
+            onPointerLeave={() => setHovered((current) => (current === member.id ? null : current))}
+          >
+            <LiveAvatar member={member} size={32} alive={hovered === member.id} onHover={onHover} />
+            <span className="min-w-0 flex-1">
+              <span className="flex items-baseline gap-2">
+                <span className={cn("min-w-0 flex-1 truncate text-[13px] font-medium", paused && "text-muted-foreground")}>
+                  {isUnread ? <span className="mr-1.5 inline-block size-[7px] rounded-full bg-brand align-[1px]" aria-label="Unread" /> : null}
+                  {member.name}
+                  {member.pinned ? <PinIcon className="ml-1 inline size-[11px] align-[-1px] text-faint" aria-label="Pinned" /> : null}
+                </span>
+                <time className="flex-none text-[10.5px] text-faint tabular-nums group-hover/row:invisible group-has-data-popup-open/row:invisible group-data-popup-open/row:invisible">
+                  {shortWhen(member.preview?.at)}
+                </time>
               </span>
-              <time>{shortWhen(member.preview?.at)}</time>
+              <span className={cn("mt-px block truncate text-xs text-muted-foreground", (needsYou || isUnread) && "text-foreground")}>
+                {paused ? `Paused · ${preview}` : preview}
+              </span>
             </span>
-            <span className="row-preview">{member.status === "paused" ? `Paused · ${preview}` : preview}</span>
-          </span>
-        </button>
-        <button
-          type="button"
-          className="icon-btn row-menu-btn"
-          aria-label={`Options for ${member.name}`}
-          aria-haspopup="menu"
-          onClick={(event) => openMenu(member, event)}
-        >
-          <Icon name="more" size={14} />
-        </button>
-      </div>
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="absolute top-[5px] right-1.5 bg-sidebar-accent text-muted-foreground opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 group-data-popup-open/row:opacity-100 data-popup-open:opacity-100"
+                  aria-label={`Options for ${member.name}`}
+                />
+              }
+            >
+              <EllipsisIcon />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              {menuFor(member, DROPDOWN_KIT)}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-52">{menuFor(member, CONTEXT_KIT)}</ContextMenuContent>
+      </ContextMenu>
     );
   };
 
-  const head = (title: string) => <div className="roster-head">{title}</div>;
+  const head = (title: string) => (
+    <div className="px-2 pt-2.5 pb-[3px] text-[10.5px] font-semibold tracking-[0.04em] text-faint uppercase">{title}</div>
+  );
 
   /** HQ and pinned Bots, as tiles above the list: the ones used most, a click away. */
   const tile = (member: Member) => {
     const needsYou = member.pending > 0 || member.presence === "waiting";
     const isUnread = unread.has(member.id) && member.id !== selectedId;
-    return (
+    const face = (
       <button
         key={member.id}
         type="button"
-        className={`tile${member.status === "paused" ? " paused" : ""}`}
+        className="tile relative flex w-full cursor-pointer flex-col items-center gap-[5px] rounded-[14px] px-1 pt-2.5 pb-2 transition-[background-color,transform] duration-150 hover:bg-sidebar-accent active:scale-[0.97] aria-[current=true]:bg-selected"
         aria-current={member.id === selectedId}
         title={member.title}
         onClick={() => onSelect(member.id)}
-        onContextMenu={member.kind === "bot" ? (event) => openMenu(member, event) : undefined}
         onPointerEnter={() => setHovered(member.id)}
         onPointerLeave={() => setHovered((current) => (current === member.id ? null : current))}
       >
         <LiveAvatar member={member} size={40} alive={hovered === member.id} onHover={onHover} />
-        <span className="tile-name">{member.name}</span>
-        {needsYou ? <span className="tile-badge needs" aria-label="Needs you" /> : isUnread ? <span className="tile-badge" aria-label="Unread" /> : null}
+        <span className={cn("max-w-full truncate text-xs font-medium", member.status === "paused" && "text-muted-foreground")}>
+          {member.name}
+        </span>
+        {needsYou || isUnread ? (
+          <span
+            className={cn(
+              "absolute top-2 right-3.5 size-[9px] rounded-full shadow-[0_0_0_2px_var(--sidebar)]",
+              needsYou ? "bg-warning" : "bg-brand",
+            )}
+            aria-label={needsYou ? "Needs you" : "Unread"}
+          />
+        ) : null}
       </button>
+    );
+    if (member.kind !== "bot") return face;
+    return (
+      <ContextMenu key={member.id}>
+        <ContextMenuTrigger className="select-auto">{face}</ContextMenuTrigger>
+        <ContextMenuContent className="w-52">{menuFor(member, CONTEXT_KIT)}</ContextMenuContent>
+      </ContextMenu>
     );
   };
 
+  const meName = profile === undefined || profile === null || profile.source === "none" ? "You" : profile.name;
+
   return (
-    <aside className="sidebar" aria-label="Your Bots">
-      <div className="side-top">
-        <label className="search">
-          <Icon name="search" />
-          <input
+    <aside className="flex min-h-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground" aria-label="Your Bots">
+      <div className="flex items-center gap-2 px-3 pt-3 pb-2.5">
+        <InputGroup className="h-8 flex-1 rounded-full border-transparent bg-secondary dark:bg-secondary">
+          <InputGroupAddon className="pl-3 text-faint">
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
             type="search"
             placeholder="Search"
             autoComplete="off"
+            aria-label="Search Bots"
+            className="text-[12.5px] placeholder:text-faint"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
-        </label>
-        <button type="button" className="icon-btn round" aria-label="New Bot" title="New Bot" onClick={onHire}>
-          <Icon name="plus" />
-        </button>
+        </InputGroup>
+        <Button variant="outline" size="icon" className="size-[30px] rounded-full bg-card" aria-label="New Bot" title="New Bot" onClick={onHire}>
+          <PlusIcon />
+        </Button>
       </div>
       {needle === "" ? (
-        <div className="tiles">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(76px,1fr))] gap-1.5 px-3 pb-2.5">
           {groups.hq === null ? null : tile(groups.hq)}
           {groups.pinned.map(tile)}
         </div>
       ) : null}
 
-      <nav className="roster">
-        {rows.length === 0 ? (
-          <p className="roster-empty">No Bots match.</p>
-        ) : (
-          <>
-            {needle === "" ? null : (
-              <>
-                {groups.hq === null ? null : row(groups.hq)}
-                {groups.pinned.map(row)}
-              </>
-            )}
-            {groups.sections.map(([name, bots]) => (
-              <div key={`section:${name}`} className="roster-section">
-                {head(name)}
-                {bots.map(row)}
-              </div>
-            ))}
-            {groups.grouping && groups.rest.length > 0 ? head("Bots") : null}
-            {groups.rest.map(row)}
-            {groups.hidden.length > 0 ? (
-              <>
-                <button type="button" className="roster-toggle" onClick={() => setShowHidden((value) => !value)}>
-                  <Icon name={showHidden ? "eyeoff" : "eyeoff"} size={12} />
-                  {showHidden ? "Hide hidden Bots" : `Hidden (${groups.hidden.length})`}
-                </button>
-                {showHidden ? groups.hidden.map(row) : null}
-              </>
-            ) : null}
-          </>
-        )}
-      </nav>
+      <ScrollArea className="min-h-0 flex-1">
+        <nav className="px-1.5 pt-0.5 pb-2">
+          {rows.length === 0 ? (
+            <p className="m-0 p-2.5 text-xs text-faint">No Bots match.</p>
+          ) : (
+            <>
+              {needle === "" ? null : (
+                <>
+                  {groups.hq === null ? null : row(groups.hq)}
+                  {groups.pinned.map(row)}
+                </>
+              )}
+              {groups.sections.map(([name, bots]) => (
+                <div key={`section:${name}`}>
+                  {head(name)}
+                  {bots.map(row)}
+                </div>
+              ))}
+              {groups.grouping && groups.rest.length > 0 ? head("Bots") : null}
+              {groups.rest.map(row)}
+              {groups.hidden.length > 0 ? (
+                <>
+                  <Button
+                    variant="ghost"
+                    className="mt-1.5 h-auto w-full justify-start gap-1.5 px-2 py-[7px] text-[11.5px] font-normal text-faint hover:text-muted-foreground"
+                    onClick={() => setShowHidden((value) => !value)}
+                  >
+                    <EyeOffIcon className="size-3" />
+                    {showHidden ? "Hide hidden Bots" : `Hidden (${groups.hidden.length})`}
+                  </Button>
+                  {showHidden ? groups.hidden.map(row) : null}
+                </>
+              ) : null}
+            </>
+          )}
+        </nav>
+      </ScrollArea>
 
       {notice === null ? null : (
-        <p className="side-note" role="status">
+        <p className="mx-2.5 mt-0 mb-1.5 rounded-lg border border-input bg-card px-2 py-1.5 text-[11.5px] text-muted-foreground" role="status">
           {notice}
         </p>
       )}
 
-      <div className="side-bottom">
+      <div className="relative flex flex-col gap-1 px-2.5 pt-1.5 pb-3">
         <HealthNote health={health} members={members} />
         <UpdateNote />
         {editingName !== null ? (
           <form
-            className="me-name-form"
+            className="mb-1"
             onSubmit={async (event) => {
               event.preventDefault();
               try {
@@ -315,7 +505,8 @@ export function Sidebar({
               setEditingName(null);
             }}
           >
-            <input
+            <Input
+              className="h-7 text-[12.5px]"
               value={editingName}
               onChange={(event) => setEditingName(event.target.value)}
               onBlur={() => setEditingName(null)}
@@ -329,189 +520,120 @@ export function Sidebar({
             />
           </form>
         ) : null}
-        <div className="dock-bar">
-          <div className="me-wrap">
-            <button
-              type="button"
-              className="me-btn"
-              aria-haspopup="menu"
-              aria-expanded={meOpen}
-              title={profile === undefined || profile === null || profile.source === "none" ? "You" : profile.name}
-              onClick={() => setMeOpen((value) => !value)}
+        <div className="flex items-center gap-1.5">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-[30px] flex-none rounded-full p-0 transition-transform hover:scale-105 hover:bg-transparent"
+                  title={meName}
+                  aria-label="You"
+                />
+              }
             >
-              {profile?.avatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img className="me-avatar me-photo" src={profile.avatarUrl} alt="" width={30} height={30} />
-              ) : (
-                <span className="me-avatar">{(profile?.name ?? user ?? "You").charAt(0).toUpperCase()}</span>
-              )}
-            </button>
-            {meOpen ? (
-              <div className="menu me-menu" role="menu" onMouseLeave={() => setMeOpen(false)}>
-                <div className="menu-head">
-                  {profile === undefined || profile === null || profile.source === "none" ? "You" : profile.name}
+              <UserAvatar className="size-[30px]">
+                {profile?.avatarUrl ? <AvatarImage src={profile.avatarUrl} alt="" /> : null}
+                <AvatarFallback className="bg-linear-135 from-[#c9a37c] to-[#7d5a44] text-xs font-semibold text-white">
+                  {(profile?.name ?? user ?? "You").charAt(0).toUpperCase()}
+                </AvatarFallback>
+              </UserAvatar>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-52">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>
+                  {meName}
                   {workspaceId === "default" ? "" : ` · ${workspaceId}`}
-                </div>
-                <button
-                  type="button"
-                  role="menuitem"
+                </DropdownMenuLabel>
+                <DropdownMenuItem
                   disabled={profile?.source === "vercel" || profile?.source === "header"}
                   title={profile?.source === "vercel" ? "Signed in with Vercel" : profile?.source === "header" ? "Named by the caller" : undefined}
-                  onClick={() => {
-                    setMeOpen(false);
-                    setEditingName(profile?.source === "workspace" ? (profile.name ?? "") : "");
-                  }}
+                  onClick={() => setEditingName(profile?.source === "workspace" ? (profile.name ?? "") : "")}
                 >
-                  <Icon name="edit" size={14} />
-                  {profile === undefined || profile === null || profile.source === "none" ? "Set your name" : "Change your name"}
-                </button>
-                <button type="button" role="menuitem" onClick={toggleTheme}>
-                  <Icon name={theme === "dark" ? "sun" : "moon"} size={14} />
+                  <PencilIcon />
+                  {meName === "You" ? "Set your name" : "Change your name"}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={toggleTheme}>
+                  {theme === "dark" ? <SunIcon /> : <MoonIcon />}
                   {theme === "dark" ? "Light theme" : "Dark theme"}
-                </button>
-                <hr />
-                <form method="post" action="/bot/v1/session/end">
-                  <button type="submit" role="menuitem">
-                    <Icon name="signout" size={14} />
-                    Sign out
-                  </button>
-                </form>
-              </div>
-            ) : null}
-          </div>
-          <button type="button" className="connect-pill" onClick={onConnectors} title={apps.connected ? "Your connected apps" : "Connect the apps your team uses"}>
-            {apps.connected ? "Apps" : "Connect apps"}
-            <span className="app-dots" aria-hidden="true">
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => signOut.current?.requestSubmit()}>
+                <LogOutIcon />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <form ref={signOut} method="post" action="/bot/v1/session/end" hidden />
+          <Button
+            variant="outline"
+            className="h-[34px] min-w-0 flex-1 gap-[7px] rounded-full bg-card px-2 text-[12.5px] font-medium shadow-xs transition-[box-shadow,transform] hover:bg-card hover:shadow-md active:scale-[0.98] dark:bg-card dark:hover:bg-card"
+            onClick={onConnectors}
+            title={apps.connected ? "Your connected apps" : "Connect the apps your team uses"}
+          >
+            <span className="min-w-0 text-center leading-[1.15] whitespace-normal">{apps.connected ? "Apps" : "Connect apps"}</span>
+            <span className="inline-flex flex-none *:-ml-0.5 *:ring-2 *:ring-card *:first:ml-0" aria-hidden="true">
               {apps.list.slice(0, 3).map((app) => (
                 <BrandMark key={app.key} brand={app.brand} label={app.label} url={app.url} size={18} />
               ))}
             </span>
-          </button>
-          <button type="button" className="icon-btn" aria-label="Memory" title="Memory" onClick={onMemory}>
-            <Icon name="brain" />
-          </button>
-          <button type="button" className="icon-btn" aria-label="Usage" title="Usage" onClick={onUsage}>
-            <Icon name="chart" size={15} />
-          </button>
+          </Button>
+          <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="Memory" title="Memory" onClick={onMemory}>
+            <BrainIcon />
+          </Button>
+          <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="Usage" title="Usage" onClick={onUsage}>
+            <ChartColumnIcon />
+          </Button>
         </div>
       </div>
 
-      {menu === null ? null : (
-        <RowMenu
-          menu={menu}
-          sections={sectionNames}
-          isUnread={unread.has(menu.member.id)}
-          onClose={() => setMenu(null)}
-          onPin={(member) => void act(patch(member, { pinned: !member.pinned }, "Could not pin the Bot."))}
-          onSection={(member, section) => void act(patch(member, { section }, "Could not move the Bot."))}
-          onNewSection={(member) =>
-            setPrompt({
-              title: "New section",
-              description: `${member.name} moves into it. Sections group Bots in the roster.`,
-              label: "Section name",
-              placeholder: "Sales",
-              maxLength: 40,
-              confirm: "Create",
-              onConfirm: (value) => patch(member, { section: value }, "Could not create the section."),
-            })
-          }
-          onUnread={(member) => onUnread(member.id, !unread.has(member.id))}
-          onRename={(member) =>
-            setPrompt({
-              title: "Rename Bot",
-              description: "Bots are addressed by name in every thread, so pick one the team will recognise.",
-              label: "Name",
-              defaultValue: member.name,
-              maxLength: 40,
-              confirm: "Rename",
-              onConfirm: (value) => patch(member, { name: value }, "Could not rename the Bot."),
-            })
-          }
-          onEditProfile={(member) => onEditProfile(member.id)}
-          onDuplicate={(member) =>
-            void act(
-              (async () => {
-                try {
-                  const response = await api(`/bot/v1/bots/${encodeURIComponent(member.id)}/duplicate`, { method: "POST" });
-                  if (!response.ok) return await errorMessage(response, "Could not duplicate the Bot.");
-                  const created = (await response.json()) as { bot: { id: string } };
-                  await onChanged();
-                  onSelect(created.bot.id);
-                  return null;
-                } catch (caught) {
-                  return caught instanceof SignedOutError ? null : "Could not duplicate the Bot.";
-                }
-              })(),
-            )
-          }
-          onClearChat={(member) =>
-            setPrompt({
-              title: `Clear chat with ${member.name}?`,
-              description:
-                member.kind === "hq"
-                  ? "HQ's desk starts over: the conversation is cleared and its open one-off jobs are cancelled. The roster, finished work, and memory stay."
-                  : `${member.name}'s thread starts over: the conversation is cleared and its open one-off jobs are cancelled. ${member.name}, its finished work, and what it learned stay.`,
-              confirm: "Clear chat",
-              danger: true,
-              onConfirm: async () => {
-                try {
-                  const response = await api(`/bot/v1/rooms/${encodeURIComponent(member.room)}/reset`, { method: "POST" });
-                  if (!response.ok) return await errorMessage(response, "Could not clear the chat.");
-                  // The open transcript, if it is this one, empties at once rather than on the next poll.
-                  roomStore(member.room).restart();
-                  onUnread(member.id, false);
-                  await onChanged();
-                  return null;
-                } catch (caught) {
-                  return caught instanceof SignedOutError ? null : "Could not clear the chat.";
-                }
-              },
-            })
-          }
-          onCopyId={(member) =>
-            void act(
-              navigator.clipboard
-                .writeText(member.room)
-                .then(() => {
-                  setNotice(`Copied ${member.room}`);
-                  return null;
-                })
-                .catch(() => `Could not copy. The conversation id is ${member.room}.`),
-            )
-          }
-          onHide={(member) => void act(patch(member, { hidden: !member.hidden }, "Could not hide the Bot."))}
-          onDelete={(member) =>
-            setPrompt({
-              title: `Delete ${member.name}?`,
-              description: `${member.name} leaves the team for good: its open jobs are cancelled and what it learned is discarded. Its thread stays readable. Pausing keeps everything if you might want it back.`,
-              confirm: "Delete",
-              danger: true,
-              onConfirm: async () => {
-                try {
-                  const response = await api(`/bot/v1/bots/${encodeURIComponent(member.id)}`, { method: "DELETE" });
-                  if (!response.ok) return await errorMessage(response, "Could not delete the Bot.");
-                  await onChanged();
-                  if (member.id === selectedId) onSelect("hq");
-                  return null;
-                } catch (caught) {
-                  return caught instanceof SignedOutError ? null : "Could not delete the Bot.";
-                }
-              },
-            })
-          }
-        />
-      )}
       <PromptDialog prompt={prompt} onClose={() => setPrompt(null)} />
     </aside>
   );
 }
 
+/**
+ * The parts a row's menu is built from. The ⋯ button opens a dropdown and a
+ * right-click a context menu; both list the same items.
+ */
+interface MenuKit {
+  readonly Item: ComponentType<{ onClick?: () => void; disabled?: boolean; variant?: "default" | "destructive"; children: ReactNode }>;
+  readonly Separator: ComponentType;
+  readonly Group: ComponentType<{ children: ReactNode }>;
+  readonly Label: ComponentType<{ children: ReactNode }>;
+  readonly Sub: ComponentType<{ children: ReactNode }>;
+  readonly SubTrigger: ComponentType<{ children: ReactNode }>;
+  readonly SubContent: ComponentType<{ className?: string; children: ReactNode }>;
+}
+
+const DROPDOWN_KIT: MenuKit = {
+  Item: DropdownMenuItem,
+  Separator: DropdownMenuSeparator,
+  Group: DropdownMenuGroup,
+  Label: DropdownMenuLabel,
+  Sub: DropdownMenuSub,
+  SubTrigger: DropdownMenuSubTrigger,
+  SubContent: DropdownMenuSubContent,
+};
+
+const CONTEXT_KIT: MenuKit = {
+  Item: ContextMenuItem,
+  Separator: ContextMenuSeparator,
+  Group: ContextMenuGroup,
+  Label: ContextMenuLabel,
+  Sub: ContextMenuSub,
+  SubTrigger: ContextMenuSubTrigger,
+  SubContent: ContextMenuSubContent,
+};
+
 /** The row menu: what you can do to a Bot without opening its thread. */
-function RowMenu({
-  menu,
+function RowMenuItems({
+  kit: { Item, Separator, Group, Label, Sub, SubTrigger, SubContent },
+  member,
   sections,
   isUnread,
-  onClose,
   onPin,
   onSection,
   onNewSection,
@@ -524,10 +646,10 @@ function RowMenu({
   onHide,
   onDelete,
 }: {
-  menu: Menu;
+  kit: MenuKit;
+  member: Member;
   sections: readonly string[];
   isUnread: boolean;
-  onClose: () => void;
   onPin: (member: Member) => void;
   onSection: (member: Member, section: string | null) => void;
   onNewSection: (member: Member) => void;
@@ -540,101 +662,95 @@ function RowMenu({
   onHide: (member: Member) => void;
   onDelete: (member: Member) => void;
 }) {
-  const element = useRef<HTMLDivElement>(null);
-  const { member } = menu;
-  const [showSections, setShowSections] = useState(false);
-
-  // Anything outside the menu closes it, as does Escape or scrolling the roster.
-  useEffect(() => {
-    const away = (event: Event) => {
-      if (element.current !== null && event.target instanceof Node && element.current.contains(event.target)) return;
-      onClose();
-    };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("pointerdown", away, true);
-    window.addEventListener("keydown", key);
-    window.addEventListener("resize", onClose);
-    document.querySelector(".roster")?.addEventListener("scroll", onClose, { once: true });
-    return () => {
-      window.removeEventListener("pointerdown", away, true);
-      window.removeEventListener("keydown", key);
-      window.removeEventListener("resize", onClose);
-    };
-  }, [onClose]);
-
-  // Keep the menu on screen; it is measured after the first paint.
-  const [placed, setPlaced] = useState<{ left: number; top: number } | null>(null);
-  useEffect(() => {
-    const box = element.current?.getBoundingClientRect();
-    if (box === undefined) return;
-    setPlaced({
-      left: Math.max(8, Math.min(menu.x, window.innerWidth - box.width - 8)),
-      top: Math.max(8, Math.min(menu.y, window.innerHeight - box.height - 8)),
-    });
-  }, [menu.x, menu.y, showSections]);
-
-  const item = (icon: IconName, label: string, run: () => void, extra?: { danger?: boolean; disabled?: boolean }) => (
-    <button
-      type="button"
-      role="menuitem"
-      className={extra?.danger ? "danger" : undefined}
-      disabled={extra?.disabled}
-      onClick={() => {
-        onClose();
-        run();
-      }}
-    >
-      <Icon name={icon} size={14} />
-      {label}
-    </button>
-  );
-
   const bot = member.kind === "bot";
   const others = sections.filter((name) => name !== member.section);
-
   return (
-    <div
-      ref={element}
-      className="menu"
-      role="menu"
-      aria-label={`${member.name} options`}
-      style={{ left: placed?.left ?? menu.x, top: placed?.top ?? menu.y, visibility: placed === null ? "hidden" : "visible" }}
-    >
-      {bot ? item("pin", member.pinned ? "Unpin" : "Pin", () => onPin(member)) : null}
+    <>
+      <Group>
+        {bot ? (
+          <Item onClick={() => onPin(member)}>
+            <PinIcon />
+            {member.pinned ? "Unpin" : "Pin"}
+          </Item>
+        ) : null}
+        {bot ? (
+          <Sub>
+            <SubTrigger>
+              <FolderIcon />
+              {others.length > 0 || member.section !== null ? "Move to section" : "Move to new section"}
+            </SubTrigger>
+            <SubContent className="w-48">
+              <Group>
+                {others.length > 0 ? <Label>Move to</Label> : null}
+                {others.map((name) => (
+                  <Item key={name} onClick={() => onSection(member, name)}>
+                    <FolderIcon />
+                    {name}
+                  </Item>
+                ))}
+                <Item onClick={() => onNewSection(member)}>
+                  <FolderPlusIcon />
+                  New section…
+                </Item>
+                {member.section === null ? null : (
+                  <Item onClick={() => onSection(member, null)}>
+                    <FolderMinusIcon />
+                    {`Remove from ${member.section}`}
+                  </Item>
+                )}
+              </Group>
+            </SubContent>
+          </Sub>
+        ) : null}
+        <Item onClick={() => onUnread(member)}>
+          {isUnread ? <MailOpenIcon /> : <MailIcon />}
+          {isUnread ? "Mark as read" : "Mark as unread"}
+        </Item>
+        <Item onClick={() => onClearChat(member)}>
+          <EraserIcon />
+          Clear chat
+        </Item>
+      </Group>
       {bot ? (
-        showSections ? (
-          <>
-            <div className="menu-head">Move to</div>
-            {others.map((name) => (
-              <button key={name} type="button" role="menuitem" onClick={() => { onClose(); onSection(member, name); }}>
-                <Icon name="folder" size={14} />
-                {name}
-              </button>
-            ))}
-            {item("plus", "New section…", () => onNewSection(member))}
-            {member.section === null ? null : item("x", `Remove from ${member.section}`, () => onSection(member, null))}
-          </>
-        ) : (
-          <button type="button" role="menuitem" aria-haspopup="menu" onClick={() => setShowSections(true)}>
-            <Icon name="folder" size={14} />
-            {others.length > 0 || member.section !== null ? "Move to section…" : "Move to new section…"}
-          </button>
-        )
+        <>
+          <Separator />
+          <Group>
+            <Item onClick={() => onRename(member)}>
+              <PencilIcon />
+              Rename Bot
+            </Item>
+            <Item onClick={() => onEditProfile(member)}>
+              <UserIcon />
+              Edit profile
+            </Item>
+            <Item onClick={() => onDuplicate(member)}>
+              <CopyIcon />
+              Duplicate
+            </Item>
+          </Group>
+        </>
       ) : null}
-      {item("mail", isUnread ? "Mark as read" : "Mark as unread", () => onUnread(member))}
-      {item("eraser", "Clear chat", () => onClearChat(member))}
-      {bot ? <hr /> : null}
-      {bot ? item("edit", "Rename Bot", () => onRename(member)) : null}
-      {bot ? item("person", "Edit profile", () => onEditProfile(member)) : null}
-      {bot ? item("copy", "Duplicate", () => onDuplicate(member)) : null}
-      <hr />
-      {item("copy", "Copy conversation ID", () => onCopyId(member))}
-      {bot ? <hr /> : null}
-      {bot ? item("eyeoff", member.hidden ? "Show in sidebar" : "Hide from sidebar", () => onHide(member)) : null}
-      {bot ? item("trash", "Delete", () => onDelete(member), { danger: true }) : null}
-    </div>
+      <Separator />
+      <Item onClick={() => onCopyId(member)}>
+        <CopyIcon />
+        Copy conversation ID
+      </Item>
+      {bot ? (
+        <>
+          <Separator />
+          <Group>
+            <Item onClick={() => onHide(member)}>
+              <EyeOffIcon />
+              {member.hidden ? "Show in sidebar" : "Hide from sidebar"}
+            </Item>
+            <Item variant="destructive" onClick={() => onDelete(member)}>
+              <Trash2Icon />
+              Delete
+            </Item>
+          </Group>
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -653,8 +769,11 @@ function HealthNote({ health, members }: { health: Board["health"] | undefined; 
     ...health.staleRuns.map((job) => `${name(job.botId)}: "${job.title}" stopped mid-run`),
   ];
   return (
-    <div className="side-item side-health" title={`${lines.join("\n")}\nThe watchdog retries these on its next pass.`}>
-      <Icon name="alert" size={15} />
+    <div
+      className="flex w-full cursor-default items-center gap-[9px] rounded-lg px-2 py-[7px] text-[12.5px] text-warning"
+      title={`${lines.join("\n")}\nThe watchdog retries these on its next pass.`}
+    >
+      <TriangleAlertIcon className="size-[15px] flex-none" />
       {count === 1 ? "1 job is stuck" : `${count} jobs are stuck`}
     </div>
   );
@@ -695,7 +814,7 @@ function UpdateNote() {
   if (update === null) return null;
   return (
     <a
-      className="side-item side-update"
+      className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-[12.5px] text-brand no-underline hover:bg-sidebar-accent"
       href={update.howToUpdate}
       target="_blank"
       rel="noopener noreferrer"
@@ -705,7 +824,7 @@ function UpdateNote() {
           : `You run ${update.version}; ${update.latest} is out. How to update.`
       }
     >
-      <Icon name="up" size={15} />
+      <ArrowUpIcon className="size-[15px] flex-none" />
       {update.runsItself ? `Update now to ${update.latest}` : `Update to ${update.latest}`}
     </a>
   );
