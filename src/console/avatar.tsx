@@ -44,6 +44,13 @@ function hash(text: string): number {
   return value >>> 0;
 }
 
+/** Which of the shapes and colours a member has, for faces drawn elsewhere (the WebGL mascot). */
+export function faceOf(member: Pick<Member, "id" | "kind">): { readonly color: string; readonly shape: number; readonly eyes: number } {
+  const seed = hash(member.id);
+  const shape = member.kind === "hq" ? 0 : (seed >>> 7) % SHAPES.length;
+  return { color: memberColor(member), shape, eyes: SHAPES[shape]?.eyes ?? 0 };
+}
+
 /** The colour a member is drawn in, for anything that should match its face (its thread's bubbles). */
 export function memberColor(member: Pick<Member, "id" | "kind">): string {
   return member.kind === "hq" ? HQ_COLOR : (COLORS[hash(member.id) % COLORS.length] ?? HQ_COLOR);

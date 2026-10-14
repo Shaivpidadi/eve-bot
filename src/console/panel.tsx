@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 
 import { api, errorMessage, SignedOutError } from "./api";
 import { Avatar } from "./avatar";
+import { Mascot } from "./mascot";
 import { posterUrl } from "./computer/browser-app";
 import { bytes, clock, PRESENCE_LABEL, scheduleText, shortWhen, withoutEmoji } from "./format";
 import { Icon, type IconName } from "./icons";
@@ -175,7 +176,7 @@ export function DetailsPanel({
           aria-label={member.kind === "bot" ? `Edit ${member.name}'s profile` : member.name}
           onClick={member.kind === "bot" ? () => onView("profile") : undefined}
         >
-          <Avatar member={member} size={68} />
+          <Mascot member={member} size={68} />
           {member.kind === "bot" ? (
             <span className="hero-edit" aria-hidden="true">
               <Icon name="edit" size={12} />
