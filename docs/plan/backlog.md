@@ -231,8 +231,10 @@ change with a thread open (no stuck thread).
       sign-in takeover, a connector call with approval. Update the safety doc
       where behaviour moved.
       Done on Vercel (15 Oct 2026): `QA_JOBS=1` against a protected preview
-      (`QA_BYPASS`), 13 of 15 pass with 2 skipped by design and none failing,
-      after three fixes it found (a Bot locked out of its own folder, a
+      (`QA_BYPASS`): 11 pass and 4 skip by design (the two "stranger is
+      refused" checks behind Vercel's protection, no key-based connector, the
+      stranded check on a shared world), none failing. The two that failed
+      first were rerun on their own after three fixes the run found (a Bot locked out of its own folder, a
       rewind point racing a write in the same step, the stranded check on a
       shared world). Left: Docker, a sign-in takeover and a connector call
       with approval, which need a person at the keyboard.
