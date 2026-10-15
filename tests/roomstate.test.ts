@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as rooms0 from "../agent/lib/roomstate";
 import { isWedged, WEDGED_AFTER_MS } from "../agent/lib/roomstate";
 
 const t0 = Date.parse("2026-09-22T09:00:00.000Z");
@@ -47,5 +48,18 @@ describe("a thread's earlier sessions", () => {
     expect(await rooms.getRoomState("ws", "desk")).toMatchObject({ sessionId: "s3", sessions: ["s1", "s2"] });
     await rooms.resetRoom("ws", "desk");
     expect(await rooms.getRoomState("ws", "desk")).toMatchObject({ sessionId: null, sessions: [] });
+  });
+});
+
+describe("predecessorIn", () => {
+  it("names the session a new one took over from, and nothing in a fresh room", () => {
+    expect(rooms0.predecessorIn(null, "s1")).toBeNull();
+    expect(rooms0.predecessorIn({ sessionId: null, sessions: [] }, "s1")).toBeNull();
+    // Restarted: the old session moved to the list, the new one has not been noted yet.
+    expect(rooms0.predecessorIn({ sessionId: null, sessions: ["s1", "s2"] }, "s3")).toBe("s2");
+    // Already noted as current.
+    expect(rooms0.predecessorIn({ sessionId: "s3", sessions: ["s1", "s2"] }, "s3")).toBe("s2");
+    // eve replaced a stranded session at the same address: the room still names the old one.
+    expect(rooms0.predecessorIn({ sessionId: "s2", sessions: ["s1"] }, "s3")).toBe("s2");
   });
 });

@@ -44,14 +44,14 @@ Two helpers every track needs, built first:
 | Track | Status | Tasks done |
 | --- | --- | --- |
 | E. eve upgrade, landed on 0.79.1 (see backlog) | [done] | 5/7, E6 and E7 open |
-| D0. Stranded runs | [in-progress] | 2/3 |
+| D0. Stranded runs | [done] | 3/3 |
 | D1. The job record as the session log | [done] | 6/6 |
 | D2. A workspace that follows its owner | [done] | 4/4 |
 | D3. Thin hands | [done] for now | 2/4, D3.3 and D3.4 parked |
 | D4. One Workflow world | [done] | 2/2 |
 | D5. Rewind | [in-progress] | 3/4 |
 
-## D0. Stranded runs `[in-progress]`
+## D0. Stranded runs `[done]`
 
 A code change under `eve dev` quarantines active Workflow runs; a standalone
 rebuild does the same. The job's lease then sits unexpired for up to 20
@@ -98,21 +98,31 @@ when the Workflow world is local.
   a server starts, so a real rebuild re-dispatches in about 70 s.
 - **Done when:** a rebuild mid-job re-runs the job within two minutes and says so.
 
-### D0.3 Stranded conversations `[to-do]`
+### D0.3 Stranded conversations `[done]`
 
 E4 has landed. Since 0.3.0 a thread reads back across all its sessions, and a stranded
 session's history still shows (the stream route falls back on `SessionStrandedError`). What
 is left is carrying the conversation itself into the new session.
 
-- `[to-do]` D0.3.1 The console's recover path treats `409 session_stranded` like a wedged
-  room: fresh session, message re-sent, thread note.
-- `[to-do]` D0.3.2 A `session.started` dynamic instruction folds the predecessor's transcript
+- `[done]` D0.3.1 (as built: in the send path, not only the console's recover route) A send that
+  fails because the session is gone, `SessionStrandedError` or `eve dev`'s
+  `DevelopmentRunUnavailableError` after a restart, moves the room to a fresh session and sends
+  again (`sendToRoom` in `ops.ts`, `sessionIsGone` in `lib/session.ts`). The same path serves
+  teammate notes, the outbox flush, the start-up sweep and rewind's re-dispatch. The thread
+  says it moved.
+- `[done]` D0.3.2 A `session.started` dynamic instruction folds the predecessor's transcript
   (eve's `transcriptReducer`) into the new session, capped at the last 40 messages, so a
-  recovered room remembers its conversation and not only Memory.
+  recovered room remembers its conversation and not only Memory (`agent/instructions/earlier.ts`).
+  Our restarts move a room to a new address, so eve sets no `predecessor`; the room's own list
+  of earlier sessions names it (`predecessorIn` in `lib/roomstate.ts`).
 - **Tests:** turn test: a session with a predecessor sees the earlier transcript in its
   first turn's instructions. QA: `qa/checks/recover.mjs` asks a question, strands the room
   through the QA route, asks a follow-up that needs the earlier answer, and expects it answered.
 - **Done when:** a recovered thread answers a follow-up that needs what was said before.
+- **Checked live (15 Oct 2026, `eve dev`):** told HQ "I moved to Austin", restarted the dev
+  server (every send to the thread then failed with `DevelopmentRunUnavailableError`), asked
+  "which city did I say I moved to?": the send came back `recovered: true` and the new session
+  answered "Austin". Unit tests: `tests/roomstate.test.ts`, `tests/session-gone.test.ts`.
 
 ## D1. The job record as the session log `[done]`
 
@@ -504,12 +514,12 @@ D1 and the backup generations.
 2. D0.1 `[done]`, D0.2 `[done]` (QA check written, not yet run live: needs a model and `BOT_QA=1`)
 3. D1.1 `[done]`, D1.2 `[done]`, D1.3 `[done]`, D1.4 `[done]` (Docker and Vercel Sandbox)
 4. D2.1 `[done]`, D2.2 `[done]`, D2.4 `[done]`
-5. D1.5 `[done]`, D1.6 `[done]`, D0.3 (after E4) `[to-do]`
+5. D1.5 `[done]`, D1.6 `[done]`, D0.3 `[done]`
 6. D3.1 `[done]`, D3.2 `[done]`
 7. D4.1 `[done]`, D4.2 `[done]`
 8. D5.1 `[done]`, D5.2 `[done]`
 9. D3.3 `[parked]`, D3.4 `[parked]`, D5.3 `[to-do]`, D5.4 `[done]`, D2.3 `[done]`
 
-Track E has landed, so D0.3 and D5.3 are no longer blocked.
+Track E has landed, so D5.3 is no longer blocked.
 
 Update the status board at the top with each commit.

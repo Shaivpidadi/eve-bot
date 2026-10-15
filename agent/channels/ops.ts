@@ -28,6 +28,7 @@ import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
+import { sessionIsGone } from "../lib/session";
 import { crashRun, qaEnabled } from "../lib/qa";
 import { rewind } from "../lib/rewind";
 import { exportEnabled, exportTo } from "../lib/store/transfer";
@@ -107,6 +108,7 @@ async function restartWedgedRoom(
   workspaceId: string,
   room: string,
   attachSession: (sessionId: string) => { cancel(options?: { turnId?: string }): Promise<unknown> },
+  why: "wedged" | "gone" = "wedged",
 ): Promise<number> {
   const old = (await getRoomState(workspaceId, room))?.sessionId ?? null;
   const generation = await restartRoom(workspaceId, room);
@@ -119,10 +121,38 @@ async function restartWedgedRoom(
     workspaceId,
     kind: "bot.updated",
     botId: bot?.id ?? null,
-    text: `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} stopped answering and was restarted; the last message was sent again.`,
-    data: { room, generation, restarted: true },
+    text:
+      why === "gone"
+        ? `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} moved to a fresh session after the server restarted; the conversation carries on.`
+        : `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} stopped answering and was restarted; the last message was sent again.`,
+    data: { room, generation, restarted: true, ...(why === "gone" ? { reason: "session-gone" } : {}) },
   }).catch(() => undefined);
   return generation;
+}
+
+type Sender = (address: string) => { send: (message: string, options: { auth: SessionAuthContext }) => Promise<{ id: string }> };
+type Attacher = (sessionId: string) => { cancel(options?: { turnId?: string }): Promise<unknown> };
+
+/**
+ * Sends into a room, and when its session is gone, moves the room to a fresh
+ * one (earlier sessions kept, so the thread still reads back and the new session
+ * picks up the conversation) and sends once more.
+ */
+async function sendToRoom(
+  from: Sender,
+  attachSession: Attacher,
+  workspaceId: string,
+  room: string,
+  message: string,
+  auth: SessionAuthContext,
+): Promise<{ readonly session: { id: string }; readonly moved: boolean }> {
+  try {
+    return { session: await from(await addressOf(workspaceId, room)).send(message, { auth }), moved: false };
+  } catch (error) {
+    if (!sessionIsGone(error)) throw error;
+    await restartWedgedRoom(workspaceId, room, attachSession, "gone");
+    return { session: await from(await addressOf(workspaceId, room)).send(message, { auth }), moved: true };
+  }
 }
 
 /** This deployment's public address, for redirect URIs: the configured one, else what the request came in on. */
@@ -141,9 +171,9 @@ let lastSweepAt = 0;
 /** The app itself, acting in a room: what a schedule sends as. */
 /** Hands a teammate's note to its thread, as the runtime (see `teammail.ts`). */
 const sendInto =
-  (from: (address: string) => { send: (message: string, options: { auth: SessionAuthContext }) => Promise<unknown> }) =>
+  (from: Sender, attachSession: Attacher) =>
   async (workspaceId: string, room: string, message: string): Promise<void> => {
-    await from(await addressOf(workspaceId, room)).send(message, { auth: runtimePrincipal(workspaceId, room) });
+    await sendToRoom(from, attachSession, workspaceId, room, message, runtimePrincipal(workspaceId, room));
     await noteSent(workspaceId, room).catch(() => undefined);
   };
 
@@ -270,13 +300,13 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /** Everything the console needs: the roster with presence, and the feed. */
-    GET("/bot/v1/state", async (request, { from, waitUntil }) => {
+    GET("/bot/v1/state", async (request, { attachSession, from, waitUntil }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       void noteOrigin(request);
       const after = new URL(request.url).searchParams.get("after");
       // The console polls this every few seconds, so teammates' notes to each other go out here.
-      waitUntil(deliverNotes(sendInto(from), { workspaceId: gate.access.workspaceId }).catch(() => 0));
+      waitUntil(deliverNotes(sendInto(from, attachSession), { workspaceId: gate.access.workspaceId }).catch(() => 0));
       const board = await buildBoard(gate.access.workspaceId, {
         ...(after !== null && !Number.isNaN(Date.parse(after)) ? { after } : {}),
       });
@@ -287,9 +317,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * The server asking itself to deliver its outbox (see lib/self.ts): a job's
      * wake-up or a teammate's note, from a workflow that cannot reach a room.
      */
-    POST("/bot/v1/internal/flush", async (request, { from, waitUntil }) => {
+    POST("/bot/v1/internal/flush", async (request, { attachSession, from, waitUntil }) => {
       if (!(await isInternal(request))) return json({ error: "not found" }, 404);
-      waitUntil(deliverNotes(sendInto(from)).catch(() => 0));
+      waitUntil(deliverNotes(sendInto(from, attachSession)).catch(() => 0));
       return json({ flushing: true }, 202);
     }),
 
@@ -313,12 +343,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const { workspaceId } = gate.access;
       const recovered = isWedged(await getRoomState(workspaceId, room)) ? await restartWedgedRoom(workspaceId, room, attachSession) : false;
 
-      const session = await from(await addressOf(workspaceId, room)).send(message, {
-        auth: principal(gate.access, room),
-      });
+      const { session, moved } = await sendToRoom(from, attachSession, workspaceId, room, message, principal(gate.access, room));
       await noteSent(workspaceId, room).catch(() => undefined);
-      waitUntil(deliverNotes(sendInto(from), { workspaceId }).catch(() => 0));
-      return json({ room, sessionId: session.id, ...(recovered ? { recovered: true } : {}) });
+      waitUntil(deliverNotes(sendInto(from, attachSession), { workspaceId }).catch(() => 0));
+      return json({ room, sessionId: session.id, ...(recovered || moved ? { recovered: true } : {}) });
     }),
 
     /**
@@ -944,9 +972,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const interrupt = interruptVia(attachSession, `Rewound to step ${index} by ${gate.access.user}`);
       for (const sessionId of outcome.sessions) await interrupt(sessionId).catch(() => undefined);
       if (outcome.sessions.length > 0) await stopRunCommands(outcome.sessions).catch(() => null);
-      const dispatched = await dispatchDue(async (job, message) => {
-        await from(await addressOf(job.workspaceId, job.room)).send(message, { auth: runtimePrincipal(job.workspaceId, job.room) });
-      });
+      const dispatched = await dispatchDue((job, message) => sendInto(from, attachSession)(job.workspaceId, job.room, message));
       return json({
         rewound: true,
         job: { id: outcome.job.id, title: outcome.job.title, status: outcome.job.status, steps: (outcome.job.journal ?? []).length },
@@ -1020,14 +1046,12 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * when it opens, so a job stranded by a restart is picked up in a minute
      * rather than at the next cron. At most one pass a minute per process.
      */
-    POST("/bot/v1/jobs/sweep", async (request, { from }) => {
+    POST("/bot/v1/jobs/sweep", async (request, { attachSession, from }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       if (Date.now() - lastSweepAt < SWEEP_EVERY_MS) return json({ swept: false, reason: "swept recently" });
       lastSweepAt = Date.now();
-      const outcome = await dispatchDue(async (job, message) => {
-        await from(await addressOf(job.workspaceId, job.room)).send(message, { auth: runtimePrincipal(job.workspaceId, job.room) });
-      });
+      const outcome = await dispatchDue((job, message) => sendInto(from, attachSession)(job.workspaceId, job.room, message));
       if (outcome.due > 0) console.log(`[bot] sweep: ${outcome.due} due, ${outcome.dispatched} dispatched, ${outcome.stranded} stranded, ${outcome.ms}ms`);
       return json({ swept: true, build: buildId(), ...outcome });
     }),

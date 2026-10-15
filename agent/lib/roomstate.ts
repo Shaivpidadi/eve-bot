@@ -217,6 +217,18 @@ function withEarlier(sessions: readonly string[] | undefined, previous: string |
   return previous === null ? list : [...list, previous].slice(-MAX_EARLIER_SESSIONS);
 }
 
+/**
+ * The session a new one in this room took over from: the latest earlier session
+ * that is not `sessionId` itself. A room only gets a new session when it is first
+ * opened, restarted (which keeps the old ones), or reset (which forgets them), so
+ * this is the conversation the new session should carry on. Null for a fresh room.
+ */
+export function predecessorIn(state: Pick<RoomState, "sessionId" | "sessions"> | null, sessionId: string): string | null {
+  if (state === null) return null;
+  const earlier = withEarlier(state.sessions, state.sessionId ?? null).filter((id) => id !== sessionId);
+  return earlier.at(-1) ?? null;
+}
+
 export function noteSession(workspaceId: string, room: string, sessionId: string): Promise<void> {
   return updateRoom(workspaceId, room, (state) =>
     state.sessionId === sessionId
