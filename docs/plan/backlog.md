@@ -230,6 +230,12 @@ change with a thread open (no stuck thread).
       scratch deployment, a manual job on Vercel Sandbox and on Docker, a
       sign-in takeover, a connector call with approval. Update the safety doc
       where behaviour moved.
+      Done on Vercel (15 Oct 2026): `QA_JOBS=1` against a protected preview
+      (`QA_BYPASS`), 13 of 15 pass with 2 skipped by design and none failing,
+      after three fixes it found (a Bot locked out of its own folder, a
+      rewind point racing a write in the same step, the stranded check on a
+      shared world). Left: Docker, a sign-in takeover and a connector call
+      with approval, which need a person at the keyboard.
 
 ## S. Each Bot on its own screen
 
@@ -250,10 +256,16 @@ held one screen per Bot, so the machinery for the other design is there.
       own tab into that Bot's poster, and the poster route falls back to the
       latest frame for HQ. Left: members share the screen's `posterAt`, so a
       new frame from one Bot refetches every thumbnail (correct, just wasteful).
-- [ ] **S2 (M)** Smooth switching: one live connection per screen kept while
+- [x] **S2 (M)** Smooth switching: one live connection per screen kept while
       the console is open, poster crossfades to live instead of
       "Connecting…", posters prefetched for every working Bot, and opening a
       thread brings that Bot's tab to the front only when a person takes over.
+      As built (`computer/parked.ts`): closing the computer parks its live
+      connection for a minute and the next open adopts it; the still frame
+      stays under the picture while it fades in. Opening still brings that
+      Bot's tab to the front, so the picture is its work. Measured on a
+      Vercel preview: first open live in 2.7 s, reopen in 7 ms. No poster
+      prefetch: the board already carries each frame's time.
 - [ ] ~~**S3 (L)**~~ *parked: one browser profile per workspace is deliberate, so sign-ins carry across Bots.* A screen per working Bot: its own display and Chrome, the
       profile seeded from the identity jar at start and exported back at the
       end so sign-ins still carry across. The pool caps concurrency (a fifth
@@ -305,6 +317,5 @@ what a good persona is.
 
 Track E and most of D shipped in 0.3.0. Still open, roughly in order:
 
-1. E7 (the full pass on a scratch deployment)
-2. S2 (smooth switching between threads' screens; needs a running computer to test)
-3. A track, re-scoped against the mascot
+1. E7's manual part: Docker, a sign-in takeover, a connector call with approval
+2. A track, re-scoped against the mascot
