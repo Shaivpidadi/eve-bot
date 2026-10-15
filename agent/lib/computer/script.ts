@@ -1112,6 +1112,10 @@ const commands = {
     try {
       await browser.send("Target.closeTarget", { targetId: path });
       print({ ok: true, targetId: path });
+    } catch (error) {
+      // Already gone (closed by hand, or the browser restarted): nothing left to close.
+      if (!/no target/i.test(String(error?.message ?? error))) throw error;
+      print({ ok: true, closed: false, targetId: path });
     } finally {
       browser.close();
     }

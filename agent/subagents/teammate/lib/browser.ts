@@ -14,6 +14,7 @@ import {
   allocateScreen,
   bindSession,
   liveControl,
+  noteRunTab,
   screenPorts,
   sessionBinding,
   setBotTab,
@@ -28,6 +29,8 @@ import { posterKey, saveScreen } from "../../../lib/screens";
 import { operator } from "../../../lib/session";
 import { journal } from "./journal";
 import { sessionState } from "./session-state";
+import { within } from "../../../lib/cancel";
+import { closeFinishedTabs } from "../../../lib/computer/tab-sweep";
 
 /**
  * The Bot's browser: the Google Chrome on the team's one screen, which every
@@ -126,6 +129,12 @@ async function ensureRunTab(ctx: ToolContext, binding: SessionBinding, n: number
   openedTabs.set(ctx.session.id, { targetId, at: Date.now() });
   const { workspaceId } = operator(ctx);
   await setBotTab(workspaceId, binding.botId, { targetId, sessionId: ctx.session.id, at: new Date().toISOString() });
+  await noteRunTab(workspaceId, targetId, { n, sessionId: ctx.session.id, jobId: binding.jobId, at: new Date().toISOString() }).catch(() => undefined);
+  // A new tab is a good moment to close the tabs of jobs that are over; bounded, and never the reason a step fails.
+  await within(
+    (async () => closeFinishedTabs(workspaceId, await toolHands(ctx), targetId))(),
+    10_000,
+  ).catch(() => 0);
   if (binding.targetId !== targetId || binding.tabLabel !== label) {
     await bindSession({ ...binding, targetId, tabLabel: label });
   }

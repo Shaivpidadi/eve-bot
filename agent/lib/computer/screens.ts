@@ -104,6 +104,33 @@ export async function setBotTab(workspaceId: string, botId: string, tab: BotTab)
   await updateDoc<Record<string, BotTab>>(tabsKey(workspaceId), (current) => ({ ...(current ?? {}), [botId]: tab }));
 }
 
+/** A tab a run opened, kept until its job is over so the tab can be closed then. */
+export interface RunTab {
+  readonly n: number;
+  readonly sessionId: string;
+  readonly jobId: string;
+  readonly at: string;
+}
+
+const runTabsKey = (workspaceId: string) => `computer/${COMPUTER_NAME}/run-tabs/${workspaceId}.json`;
+
+/** Every run tab still open in a workspace, by target id. */
+export async function readRunTabs(workspaceId: string): Promise<Record<string, RunTab>> {
+  return (await readDoc<Record<string, RunTab>>(runTabsKey(workspaceId)))?.value ?? {};
+}
+
+export async function noteRunTab(workspaceId: string, targetId: string, tab: RunTab): Promise<void> {
+  await updateDoc<Record<string, RunTab>>(runTabsKey(workspaceId), (current) => ({ ...(current ?? {}), [targetId]: tab }));
+}
+
+export async function forgetRunTabs(workspaceId: string, targetIds: readonly string[]): Promise<void> {
+  if (targetIds.length === 0) return;
+  await updateDoc<Record<string, RunTab>>(runTabsKey(workspaceId), (current) => {
+    if (current === null) return null;
+    return Object.fromEntries(Object.entries(current).filter(([targetId]) => !targetIds.includes(targetId)));
+  });
+}
+
 /** Forget a Bot's tab, but only if it is still the run that claimed it. */
 export async function clearBotTab(workspaceId: string, botId: string, sessionId?: string): Promise<void> {
   await updateDoc<Record<string, BotTab>>(tabsKey(workspaceId), (current) => {
