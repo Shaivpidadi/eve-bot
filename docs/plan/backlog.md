@@ -219,8 +219,13 @@ a Vercel preview: a due job, a job scheduled two minutes out (woken on time
 with no console open), a cancel mid-job, a Bot-to-Bot message, and a code
 change with a thread open (no stuck thread).
 
-- [ ] **E6 (S)** Memory: try provider capture again now that history arrives;
-      keep the hooks if the provider still misses job turns.
+- [x] **E6 (S)** Memory: try provider capture again now that history arrives;
+      keep the hooks if the provider still misses job turns. Kept the hooks:
+      the provider's history is bare model messages, with no way to tell the
+      person from a teammate's note or a task result, and no declined
+      approvals. Checked live on 0.79.1: a turn saved "three bullets at most"
+      and "small design studio". The memory model must return structured
+      output; the free Nemotron model fails its schema.
 - [ ] **E7 (M)** Full pass: `npm test`, `npm run qa` with `QA_JOBS=1` against a
       scratch deployment, a manual job on Vercel Sandbox and on Docker, a
       sign-in takeover, a connector call with approval. Update the safety doc
@@ -280,8 +285,8 @@ what a good persona is.
 
 Track E and most of D shipped in 0.3.0. Still open, roughly in order:
 
-1. E7 (the full pass on a scratch deployment) and E6 (memory capture)
-2. D0.3 (a recovered thread remembers its conversation) and D5.3 (rewind a conversation)
+1. E7 (the full pass on a scratch deployment)
+2. D5.3 (rewind a conversation)
 3. S1, S2 (each Bot's thread shows its own tab; smooth switching)
 4. H1, H3, H2 (hiring templates, a Bot's first hello, describe-your-team)
 5. A track, re-scoped against the mascot; H4, H5
