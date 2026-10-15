@@ -391,9 +391,46 @@ def as_bot():
     return account, gid, ports
 
 
+def heal(gid, targets):
+    """As root, before dropping: shares the work folders the computer's user made since setup.
+
+    The browser, the console's uploads and other work done as the computer's user
+    create folders with its own umask, so a Bot's folder made that way (a
+    screenshot saved to it, a file uploaded into it) is not the team's to write,
+    and the Bot is locked out of its own folder. Each of the team's folders one
+    level down, and the folders on the way to where this command works, get the
+    group and setgid setup gives the roots. Only folders the computer's user
+    owns, checked by descriptor, never through a link."""
+    state = load_state() or {}
+    try:
+        owner = pwd.getpwnam(state.get("owner") or "").pw_uid
+    except (KeyError, TypeError):
+        return
+    folders = []
+    for name in ("bots", "shared"):
+        root = os.path.join(WORKSPACE, name)
+        try:
+            folders.extend(entry.path for entry in os.scandir(root) if entry.is_dir(follow_symlinks=False))
+        except OSError:
+            pass
+    for target in targets:
+        path = os.path.normpath(target or "")
+        while path.startswith(WORKSPACE + "/") and path.count("/") > 2:
+            folders.append(path)
+            path = os.path.dirname(path)
+    for path in set(folders):
+        try:
+            info = os.lstat(path)
+            if stat.S_ISDIR(info.st_mode) and info.st_uid == owner and (info.st_gid != gid or stat.S_IMODE(info.st_mode) & 0o2070 != 0o2070):
+                share_dir(path, owner, gid)
+        except (OSError, RuntimeError):
+            continue
+
+
 def cmd_run(argv):
     command, cwd, extra, run_id = decode(argv[0]), decode(argv[1]), json.loads(decode(argv[2]) or "{}"), decode(argv[3])
     account, gid, ports = as_bot()
+    heal(gid, [cwd])
     drop(account, gid, ports, run_gid(run_id, True) if run_id else None)
     for directory in (cwd, WORKSPACE, BOT_HOME):
         try:
@@ -437,6 +474,7 @@ def cmd_write(argv):
     with os.fdopen(fd, "rb") as handle:
         data = handle.read()
     account, gid, ports = as_bot()
+    heal(gid, [os.path.dirname(path)])
     drop(account, gid, ports)
     try:
         parent = os.path.dirname(path)
