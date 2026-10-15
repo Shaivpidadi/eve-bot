@@ -41,6 +41,8 @@ export function client({ url, token, workspace, timeoutMs = 20_000 }) {
         // A server with no console tokens (a local dev server) takes the workspace from this header;
         // with tokens, the token decides and this is ignored.
         ...(workspace ? { "x-bot-workspace": workspace } : {}),
+        // A Vercel preview behind Deployment Protection: the project's automation bypass secret.
+        ...(process.env.QA_BYPASS ? { "x-vercel-protection-bypass": process.env.QA_BYPASS } : {}),
         ...(options.body === undefined ? {} : { "content-type": "application/json" }),
         ...options.headers,
       },
