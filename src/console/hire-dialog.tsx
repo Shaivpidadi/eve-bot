@@ -1,14 +1,16 @@
 "use client";
 
-import { ActivityIcon, ChevronLeftIcon, FlaskConicalIcon, HandshakeIcon, InboxIcon, type LucideIcon, PencilLineIcon, SearchIcon, ShuffleIcon } from "lucide-react";
+import { ActivityIcon, ChevronLeftIcon, FlaskConicalIcon, HandshakeIcon, InboxIcon, type LucideIcon, PencilLineIcon, SearchIcon, ShuffleIcon, SparklesIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
+import type { ProposedBot } from "../../agent/lib/roster";
 import { type BotTemplate, suggestName, TEMPLATES } from "../../agent/lib/templates";
 import { api, errorMessage, SignedOutError } from "./api";
 
@@ -37,7 +39,10 @@ export function HireDialog({
   onClose: () => void;
   onHired: (botId: string) => Promise<void>;
 }) {
-  const [step, setStep] = useState<"pick" | "adjust">("pick");
+  const [step, setStep] = useState<"pick" | "adjust" | "team">("pick");
+  const [need, setNeed] = useState("");
+  const [proposed, setProposed] = useState<readonly ProposedBot[]>([]);
+  const [keep, setKeep] = useState<ReadonlySet<number>>(new Set());
   const [template, setTemplate] = useState<BotTemplate | null>(null);
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
@@ -50,6 +55,7 @@ export function HireDialog({
     if (!open) return;
     setStep("pick");
     setTemplate(null);
+    setProposed([]);
     setError(null);
   }, [open]);
 
@@ -64,6 +70,47 @@ export function HireDialog({
   };
   const clash = taken.some((other) => other.toLowerCase() === name.trim().toLowerCase());
 
+  const propose = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await api("/bot/v1/bots/propose", { method: "POST", body: JSON.stringify({ need: need.trim() }) });
+      if (!response.ok) {
+        setError(await errorMessage(response, "Could not propose a team."));
+        return;
+      }
+      const { bots } = (await response.json()) as { bots: ProposedBot[] };
+      setProposed(bots);
+      setKeep(new Set(bots.map((_, index) => index)));
+      setStep("team");
+    } catch (caught) {
+      if (!(caught instanceof SignedOutError)) setError("Could not propose a team.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const hireTeam = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const bots = proposed.filter((_, index) => keep.has(index)).map((bot) => ({ ...bot, ...(bot.template === "none" ? {} : { template: bot.template }) }));
+      const response = await api("/bot/v1/bots/batch", { method: "POST", body: JSON.stringify({ bots }) });
+      const result = (await response.json().catch(() => null)) as { hired?: { id: string }[]; skipped?: { name: string; error: string }[] } | null;
+      const first = result?.hired?.[0];
+      if (first === undefined) {
+        setError(result?.skipped?.[0]?.error ?? "Could not hire the team.");
+        return;
+      }
+      onClose();
+      await onHired(first.id);
+    } catch (caught) {
+      if (!(caught instanceof SignedOutError)) setError("Could not hire the team.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
       <DialogContent className="sm:max-w-[460px]">
@@ -71,8 +118,36 @@ export function HireDialog({
           <div className="flex flex-col gap-4">
             <DialogHeader>
               <DialogTitle>New Bot</DialogTitle>
-              <DialogDescription>Pick a starting point. You can change everything on the next step.</DialogDescription>
+              <DialogDescription>Describe what you need and get a team, or pick one starting point.</DialogDescription>
             </DialogHeader>
+            <form
+              className="flex flex-col gap-2 rounded-xl border border-border bg-muted/40 p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (need.trim().length >= 10) void propose();
+              }}
+            >
+              <label htmlFor="hire-need" className="flex items-center gap-1.5 text-[13px] font-semibold">
+                <SparklesIcon className="size-4 text-muted-foreground" />
+                Describe your team
+              </label>
+              <Textarea
+                id="hire-need"
+                value={need}
+                onChange={(event) => setNeed(event.target.value)}
+                rows={2}
+                maxLength={2000}
+                placeholder="I run a small online shop. I lose track of customer emails and want to know what competitors charge."
+                className="bg-card"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && need.trim().length >= 10) void propose();
+                }}
+              />
+              {error === null ? null : <FieldError>{error}</FieldError>}
+              <Button type="submit" size="sm" className="self-end" disabled={busy || need.trim().length < 10}>
+                {busy ? "Thinking\u2026" : "Propose a team"}
+              </Button>
+            </form>
             <div className="grid grid-cols-2 gap-2 max-[420px]:grid-cols-1">
               {TEMPLATES.map((entry) => {
                 const Icon = ICONS[entry.id] ?? SearchIcon;
@@ -102,6 +177,47 @@ export function HireDialog({
             <DialogFooter>
               <Button type="button" variant="outline" onClick={onClose}>
                 Cancel
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : step === "team" ? (
+          <div className="flex flex-col gap-4">
+            <DialogHeader>
+              <DialogTitle>Your proposed team</DialogTitle>
+              <DialogDescription>Keep the ones you want. Each can be edited from its thread later.</DialogDescription>
+            </DialogHeader>
+            <div className="flex max-h-[52vh] flex-col gap-2 overflow-y-auto">
+              {proposed.map((bot, index) => (
+                <label key={bot.name} className="flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-card p-3 has-[[data-checked]]:border-foreground/25">
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={keep.has(index)}
+                    onCheckedChange={(checked) =>
+                      setKeep((current) => {
+                        const next = new Set(current);
+                        if (checked) next.add(index);
+                        else next.delete(index);
+                        return next;
+                      })
+                    }
+                  />
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-[13px] font-semibold">
+                      {bot.name} <span className="font-normal text-muted-foreground">· {bot.role}</span>
+                    </span>
+                    <span className="text-[12px] leading-snug text-muted-foreground">{bot.why}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {error === null ? null : <FieldError>{error}</FieldError>}
+            <DialogFooter className="sm:justify-between">
+              <Button type="button" variant="ghost" onClick={() => setStep("pick")}>
+                <ChevronLeftIcon />
+                Back
+              </Button>
+              <Button type="button" disabled={busy || keep.size === 0} onClick={() => void hireTeam()}>
+                {keep.size === 1 ? "Hire 1 Bot" : `Hire ${keep.size} Bots`}
               </Button>
             </DialogFooter>
           </div>

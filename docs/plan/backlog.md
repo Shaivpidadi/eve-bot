@@ -278,9 +278,13 @@ what a good persona is.
       because a Bot's face is seeded from its id, which exists only once it is
       hired; a preview would show a different face. The server takes skills,
       emoji and the introduction from its own copy of the template.
-- [ ] **H2 (M)** "Describe your team": one text box, HQ proposes a roster on
+- [x] **H2 (M)** "Describe your team": one text box, HQ proposes a roster on
       a card (name, role, one-line persona each), approve all or some, and
       `POST /bot/v1/bots/batch` creates them in one go.
+      As built: in the New Bot dialog rather than HQ's thread. The quick model
+      proposes up to five (`lib/roster.ts`, `POST /bot/v1/bots/propose`), each
+      matched to a template when one fits, never one the team already has;
+      the person ticks which to hire.
 - [x] **H3 (S)** A new Bot introduces itself: its thread opens with a short
       hello in its own voice and one suggested first job, so no thread starts
       empty.
@@ -299,5 +303,4 @@ Track E and most of D shipped in 0.3.0. Still open, roughly in order:
 
 1. E7 (the full pass on a scratch deployment)
 2. S2 (smooth switching between threads' screens; needs a running computer to test)
-3. H2 (describe your team, HQ proposes a roster)
-4. A track, re-scoped against the mascot; H4, H5
+3. A track, re-scoped against the mascot; H4, H5

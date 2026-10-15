@@ -32,6 +32,7 @@ import { sessionIsGone } from "../lib/gone";
 import { eventsOf, foldUntil } from "../lib/branch";
 import { writeIntro } from "../lib/intro";
 import { templateById } from "../lib/templates";
+import { MAX_PROPOSED, proposeRoster } from "../lib/roster";
 import { crashRun, qaEnabled } from "../lib/qa";
 import { rewind } from "../lib/rewind";
 import { exportEnabled, exportTo } from "../lib/store/transfer";
@@ -160,6 +161,45 @@ async function sendToRoom(
   }
 }
 
+/**
+ * Hires one Bot from what a person filled in: a name, a job and how it works,
+ * and optionally a template, which brings its skills, emoji and introduction.
+ * A Bot without a template gets skills from the request (short words only) and
+ * its introduction written in the background.
+ */
+async function hireFromForm(
+  access: Access,
+  body: Record<string, unknown> | null,
+  waitUntil: (work: Promise<unknown>) => void,
+): Promise<{ bot: { id: string; name: string; room: string } } | { error: string; status: 400 | 409 }> {
+  const name = text(body?.name, 1, 40);
+  const role = text(body?.role, 1, 120);
+  const persona = text(body?.persona, 20, 4_000);
+  if (name === null || role === null || persona === null) {
+    return { error: "A name (1–40), a job (1–120), and how it should work (20–4000 characters) are required.", status: 400 };
+  }
+  const clash = await findBot(access.workspaceId, name);
+  if (clash !== null) return { error: `${clash.name} is already on the team.`, status: 409 };
+  const template = templateById(body?.template);
+  const skills = Array.isArray(body?.skills)
+    ? body.skills.filter((skill): skill is string => typeof skill === "string" && /^[a-z][a-z -]{0,19}$/.test(skill)).slice(0, 8)
+    : [];
+  const bot = await hireBot({
+    workspaceId: access.workspaceId,
+    hiredBy: access.user,
+    name,
+    role,
+    persona,
+    ...(template === null
+      ? skills.length > 0
+        ? { skills }
+        : {}
+      : { emoji: template.emoji, skills: [...new Set([...template.skills, ...skills])], intro: template.intro }),
+  });
+  if (template === null) waitUntil(writeIntro(bot).catch(() => null));
+  return { bot: { id: bot.id, name: bot.name, room: roomForBot(bot.id) } };
+}
+
 /** This deployment's public address, for redirect URIs: the configured one, else what the request came in on. */
 function publicOrigin(request: Request): string {
   const configured = process.env.BOT_PUBLIC_URL?.trim();
@@ -199,6 +239,8 @@ function principal(access: Access, room: string): SessionAuthContext {
     principalType: "user",
   };
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 async function readJson(request: Request): Promise<Record<string, unknown> | null> {
   try {
@@ -665,30 +707,45 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const body = await readJson(request);
-      // A template brings its skills, emoji and introduction; the person's edits to the rest stand.
-      const template = templateById(body?.template);
-      const name = text(body?.name, 1, 40);
-      const role = text(body?.role, 1, 120);
-      const persona = text(body?.persona, 20, 4_000);
-      if (name === null || role === null || persona === null) {
-        return json(
-          { error: "A name (1–40), a job (1–120), and how it should work (20–4000 characters) are required." },
-          400,
-        );
-      }
-      const clash = await findBot(gate.access.workspaceId, name);
-      if (clash !== null) return json({ error: `${clash.name} is already on the team.` }, 409);
+      const hired = await hireFromForm(gate.access, body, waitUntil);
+      if ("error" in hired) return json({ error: hired.error }, hired.status);
+      return json({ bot: hired.bot }, 201);
+    }),
 
-      const bot = await hireBot({
-        workspaceId: gate.access.workspaceId,
-        hiredBy: gate.access.user,
-        name,
-        role,
-        persona,
-        ...(template === null ? {} : { emoji: template.emoji, skills: [...template.skills], intro: template.intro }),
-      });
-      if (template === null) waitUntil(writeIntro(bot).catch(() => null));
-      return json({ bot: { id: bot.id, name: bot.name, room: roomForBot(bot.id) } }, 201);
+    /**
+     * "Describe your team": proposes Bots for what the person says they need,
+     * with the quick model. Creates nothing; the console shows the proposal and
+     * hires the ones the person keeps through the batch route.
+     */
+    POST("/bot/v1/bots/propose", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const need = text(body?.need, 10, 2_000);
+      if (need === null) return json({ error: "Say what you need help with, in a sentence or two (10–2000 characters)." }, 400);
+      const team = (await listBots(gate.access.workspaceId)).map((bot) => ({ name: bot.name, role: bot.role }));
+      try {
+        return json({ bots: await proposeRoster(gate.access.workspaceId, need, team) });
+      } catch (error) {
+        return json({ error: `Could not propose a team: ${error instanceof Error ? error.message : String(error)}` }, 502);
+      }
+    }),
+
+    /** Hires several Bots at once, each as the single route would; one that cannot be hired does not stop the rest. */
+    POST("/bot/v1/bots/batch", async (request, { waitUntil }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const list = Array.isArray(body?.bots) ? body.bots.slice(0, MAX_PROPOSED) : null;
+      if (list === null || list.length === 0) return json({ error: "bots must be a non-empty list" }, 400);
+      const hired: { id: string; name: string; room: string }[] = [];
+      const skipped: { name: string; error: string }[] = [];
+      for (const entry of list) {
+        const outcome = await hireFromForm(gate.access, isRecord(entry) ? entry : {}, waitUntil);
+        if ("error" in outcome) skipped.push({ name: isRecord(entry) && typeof entry.name === "string" ? entry.name : "?", error: outcome.error });
+        else hired.push(outcome.bot);
+      }
+      return json({ hired, skipped }, hired.length > 0 ? 201 : 400);
     }),
 
     /**
