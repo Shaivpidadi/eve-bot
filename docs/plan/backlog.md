@@ -292,10 +292,14 @@ what a good persona is.
       other Bot gets one quick-model call when it is hired (in the background
       from the console, awaited with a 15 s cap from `hire_bot` and
       `create_bot`), charged to the new Bot.
-- [ ] **H4 (S)** Clone and edit from any Bot's menu (today's duplicate, with
+- [x] **H4 (S)** Clone and edit from any Bot's menu (today's duplicate, with
       the form open on the copy).
-- [ ] **H5 (S)** Form polish: inline validation, duplicate-name check before
+- [x] **H5 (S)** Form polish: inline validation, duplicate-name check before
       submit, keyboard flow, the dialog on a sheet like Memory and Connectors.
+      As built: the name is checked against the team as you type, a short
+      "how it should work" says how many characters it still needs, the
+      name field takes focus, and ⌘/Ctrl+Enter hires. It stays a dialog: a
+      sheet suits the long Memory and Connectors pages, not a short form.
 
 ## What's next
 
@@ -303,4 +307,4 @@ Track E and most of D shipped in 0.3.0. Still open, roughly in order:
 
 1. E7 (the full pass on a scratch deployment)
 2. S2 (smooth switching between threads' screens; needs a running computer to test)
-3. A track, re-scoped against the mascot; H4, H5
+3. A track, re-scoped against the mascot

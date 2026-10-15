@@ -258,7 +258,7 @@ export function HireDialog({
               <Field>
                 <FieldLabel htmlFor="hire-name">Name</FieldLabel>
                 <div className="flex gap-1.5">
-                  <Input id="hire-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={40} required placeholder="Ava" aria-invalid={clash} />
+                  <Input id="hire-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={40} required placeholder="Ava" aria-invalid={clash} autoFocus />
                   {template === null ? null : (
                     <Button
                       type="button"
@@ -293,7 +293,14 @@ export function HireDialog({
                   maxLength={4000}
                   required
                   placeholder="Warm and brief. Never promises a discount. Drafts come to me before anything is sent."
+                  onKeyDown={(event) => {
+                    // ⌘/Ctrl+Enter hires from the long field, where Enter is a new line.
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) event.currentTarget.form?.requestSubmit();
+                  }}
                 />
+                {persona.trim().length > 0 && persona.trim().length < 20 ? (
+                  <p className="m-0 text-[11.5px] text-muted-foreground">{20 - persona.trim().length} more characters: say how it should sound and what it must never do.</p>
+                ) : null}
               </Field>
               {error === null ? null : <FieldError>{error}</FieldError>}
             </FieldGroup>

@@ -248,7 +248,8 @@ export function Sidebar({
               if (!response.ok) return await errorMessage(response, "Could not duplicate the Bot.");
               const created = (await response.json()) as { bot: { id: string } };
               await onChanged();
-              onSelect(created.bot.id);
+              // The copy opens with its profile in edit, since a copy is made to be changed.
+              onEditProfile(created.bot.id);
               return null;
             } catch (caught) {
               return caught instanceof SignedOutError ? null : "Could not duplicate the Bot.";
