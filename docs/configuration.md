@@ -55,6 +55,7 @@ of it; these are the ones that matter.
 | `BOT_TICK_ON_START` | `off` stops a standalone server sweeping for stranded jobs a minute after it starts |
 | `BOT_WORKFLOW_WORLD` | a shared Workflow world package for a standalone server, such as `@workflow/world-postgres` (with `WORKFLOW_POSTGRES_URL`), so conversations survive rebuilds; experimental, see `docs/decisions/0002-workflow-world.md` |
 | `BOT_BUILD_ID` | overrides the build id leases are stamped with (see `docs/safety.md`, run fencing) |
+| `BOT_SKIP_SANDBOX_PREWARM` | `1` makes `npm run build` skip preparing the computer's sandbox snapshot, for a build that only checks the code (CI without Vercel credentials); a build you deploy needs it, since a production server will not prepare a missing snapshot |
 | `BOT_QA` | `1` opens the QA suite's fault routes (crash a job's run, replace the computer) on this deployment; leave unset in production |
 | `BOT_STANDUP_CRON` / `BOT_STANDUP_ROOM` | when the daily standup runs (`0 13 * * 1-5`, in UTC) and where it posts: HQ's `desk` by default, or a Bot's room (`bot-<id>`) |
 
