@@ -496,3 +496,60 @@ export async function removeWorkspacePath(io: ComputerIo, input: string): Promis
   if (result.exitCode !== 0) throw new ComputerError(`Could not delete ${path}: ${tail(result)}`, "files");
   return { path };
 }
+
+// Archives of a few paths, for rewinding one job (see `lib/generations.ts`).
+// Only workspace paths, never the computer's internals; paths that do not
+// exist yet are left out of the archive and removed on restore, so a rewind
+// also takes away what was created after the point it goes back to.
+
+const PART_ARCHIVE = "/tmp/bot-computer/part.tgz";
+const PART_PRIVATE = "mkdir -p /tmp/bot-computer && chmod 700 /tmp/bot-computer";
+
+/** A gzipped tar of `paths` (absolute, inside `/workspace`), or null when none of them exist. */
+export async function archivePaths(io: ComputerIo, paths: readonly string[], timeoutMs = 60_000): Promise<Uint8Array | null> {
+  const clean = [...new Set(paths.map(workspacePath))].filter((path) => path !== FILES_ROOT);
+  if (clean.length === 0) return null;
+  const relative = clean.map((path) => shellQuote(path.slice(1))).join(" ");
+  const result = await io.run(
+    [
+      "set -e",
+      PART_PRIVATE,
+      "umask 077",
+      `rm -f ${PART_ARCHIVE}`,
+      `existing=""; for p in ${relative}; do [ -e "/$p" ] && existing="$existing $p"; done`,
+      '[ -n "$existing" ] || { echo none; exit 0; }',
+      `tar -czf ${PART_ARCHIVE} --ignore-failed-read -C / $existing || [ $? -eq 1 ]`,
+      "echo done",
+    ].join("\n"),
+    { timeoutMs },
+  );
+  if (result.exitCode !== 0) throw new ComputerError(`Could not archive: ${tail(result)}`, "archive");
+  if (result.stdout.trim().endsWith("none")) return null;
+  const bytes = await io.readBinaryFile(PART_ARCHIVE);
+  await io.run(`rm -f ${PART_ARCHIVE}`, { timeoutMs: 15_000 }).catch(() => undefined);
+  if (bytes === null) throw new ComputerError("The archive was not written.", "archive");
+  return bytes;
+}
+
+/** Puts `paths` back as `archive` holds them: each path is removed first, then the archive is unpacked; a null archive just removes them. */
+export async function restorePaths(io: ComputerIo, paths: readonly string[], archive: Uint8Array | null, timeoutMs = 120_000): Promise<void> {
+  const clean = [...new Set(paths.map(workspacePath))].filter((path) => path !== FILES_ROOT);
+  if (clean.length === 0) return;
+  const run = await io.run(PART_PRIVATE, { timeoutMs: 15_000 });
+  if (run.exitCode !== 0) throw new ComputerError(`Could not prepare the restore: ${tail(run)}`, "restore");
+  if (archive !== null) await io.writeBinaryFile(PART_ARCHIVE, archive);
+  const quoted = clean.map(shellQuote).join(" ");
+  const result = await io.run(
+    [
+      "set -e",
+      `rm -rf -- ${quoted}`,
+      archive === null ? "true" : `tar -xzpf ${PART_ARCHIVE} -C / && rm -f ${PART_ARCHIVE}`,
+      // The work folders are shared with the Bots' shell user through the bot-team
+      // group (see shell-helper.ts): what comes back must be that group's to write
+      // again, not the computer user's alone.
+      `if getent group bot-team >/dev/null 2>&1; then for p in ${quoted}; do [ -e "$p" ] || continue; chgrp -R bot-team "$p" 2>/dev/null || true; chmod -R g+rwX "$p" 2>/dev/null || true; find "$p" -type d -exec chmod g+s {} + 2>/dev/null || true; done; fi`,
+    ].join("\n"),
+    { timeoutMs },
+  );
+  if (result.exitCode !== 0) throw new ComputerError(`Could not restore: ${tail(result)}`, "restore");
+}

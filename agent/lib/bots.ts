@@ -4,7 +4,46 @@ import { newId } from "./ids";
 import { createDoc, deleteDoc, isConflict, listDocs, readDoc, updateDoc, writeDoc } from "./store";
 import type { Bot } from "./types";
 
-const key = (workspaceId: string, botId: string) => `bots/${workspaceId}/${botId}.json`;
+/**
+ * HQ is a teammate too: work no Bot fits is done by HQ, on the team's computer,
+ * with its own browser tab, folder, playbook and record of jobs. It is stored
+ * apart from the roster, so it is never listed, hired, retired or picked as a
+ * Bot, while everything that runs a job reads it like one.
+ */
+export const HQ_BOT_ID = "hq";
+
+const key = (workspaceId: string, botId: string) =>
+  botId === HQ_BOT_ID ? `hq/${workspaceId}/worker.json` : `bots/${workspaceId}/${botId}.json`;
+
+export const isHq = (botId: string): boolean => botId === HQ_BOT_ID;
+
+function hqWorker(workspaceId: string): Bot {
+  const now = new Date().toISOString();
+  return {
+    id: HQ_BOT_ID,
+    workspaceId,
+    name: "HQ",
+    role: "Chief of staff: runs the team, and does the work it is asked for itself",
+    emoji: "🧭",
+    persona: [
+      "You are HQ, the team's chief of staff, doing this job yourself: no Bot on the team fits it, or the operator asked you for it.",
+      "",
+      "- Understand before acting: state the outcome in one line, what done means, and the unknowns in your first log_progress.",
+      "- Work in the real tools: the browser for web apps, the shell for data, web search for facts. After every change, look again and confirm it landed.",
+      "- Produce a complete first version, review it as a skeptical reviewer would, fix what falls short, then deliver.",
+      "",
+      "What you never do: send, publish, pay, delete, or change permissions without the approval step; invent facts; claim you verified something you did not; write credentials into files, logs, or messages.",
+    ].join("\n"),
+    skills: ["research", "browser", "shell", "analysis", "writing", "email"],
+    playbook: [],
+    status: "active",
+    hiredBy: "system",
+    hiredAt: now,
+    createdBy: null,
+    updatedAt: now,
+    stats: { jobsCompleted: 0, jobsFailed: 0 },
+  };
+}
 const seedKey = (workspaceId: string) => `defaults/${workspaceId}/default-bot.json`;
 
 /** A seed that has not finished after this long is assumed lost and retried. */
@@ -60,7 +99,15 @@ export async function hireBot(input: {
 }
 
 export async function getBot(workspaceId: string, botId: string): Promise<Bot | null> {
-  return (await readDoc<Bot>(key(workspaceId, botId)))?.value ?? null;
+  const found = (await readDoc<Bot>(key(workspaceId, botId)))?.value ?? null;
+  if (found !== null || !isHq(botId)) return found;
+  // HQ's worker record comes into being the first time anything asks for it.
+  try {
+    await createDoc(key(workspaceId, HQ_BOT_ID), hqWorker(workspaceId));
+  } catch (error) {
+    if (!isConflict(error)) throw error;
+  }
+  return (await readDoc<Bot>(key(workspaceId, HQ_BOT_ID)))?.value ?? hqWorker(workspaceId);
 }
 
 const seededWorkspaces = new Set<string>();
@@ -104,23 +151,6 @@ async function seedDefaultBot(workspaceId: string): Promise<void> {
   await writeDoc(seedKey(workspaceId), seeded);
 }
 
-/**
- * The workspace's generalist: the Bot it was seeded with, or one named like it,
- * or failing both the longest-serving active Bot. Work nobody is chosen for
- * goes here.
- */
-export async function defaultBot(workspaceId: string): Promise<Bot | null> {
-  const bots = await listBots(workspaceId);
-  const seed = await readDoc<SeedRecord>(seedKey(workspaceId));
-  const seeded = seed?.value.botId === undefined ? undefined : bots.find((bot) => bot.id === seed.value.botId);
-  return (
-    seeded ??
-    bots.find((bot) => bot.name.toLowerCase() === DEFAULT_BOT.name.toLowerCase()) ??
-    bots.find((bot) => bot.status === "active") ??
-    null
-  );
-}
-
 /** Resolves "Ava", "ava", or `bot_k3f9x2` to one bot, the way a person would refer to it. */
 export async function findBot(workspaceId: string, reference: string): Promise<Bot | null> {
   const direct = await getBot(workspaceId, reference);
@@ -157,5 +187,6 @@ export async function teachBot(
 }
 
 export async function retireBot(workspaceId: string, botId: string): Promise<void> {
+  if (isHq(botId)) throw new Error("HQ runs the team and cannot be retired.");
   await deleteDoc(key(workspaceId, botId));
 }

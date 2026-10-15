@@ -7,6 +7,7 @@
  * Checks that cost model tokens (a real job, a real routine) are off unless
  * QA_JOBS=1, so the default run is free and fast enough to sit in front of a
  * deploy. Evidence for anything that fails is written under .qa/.
+ * QA_ONLY=resume,stranded runs only the checks whose names contain those words.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -17,6 +18,9 @@ import roster from "./checks/roster.mjs";
 import memory from "./checks/memory.mjs";
 import connectors from "./checks/connectors.mjs";
 import jobs from "./checks/jobs.mjs";
+import stranded from "./checks/stranded.mjs";
+import resume from "./checks/resume.mjs";
+import rewind from "./checks/rewind.mjs";
 
 const url = process.env.QA_URL?.trim();
 const token = process.env.QA_TOKEN?.trim();
@@ -31,11 +35,29 @@ if (!url || !token) {
 
 const withJobs = process.env.QA_JOBS === "1";
 const concurrency = Number(process.env.QA_CONCURRENCY) || 3;
-const checks = [...access, ...roster, ...memory, ...connectors, ...(withJobs ? jobs : [])];
+const only = (process.env.QA_ONLY ?? "").split(",").map((part) => part.trim()).filter((part) => part !== "");
+const checks = [...access, ...roster, ...memory, ...connectors, ...(withJobs ? [...jobs, ...stranded, ...resume, ...rewind] : [])].filter(
+  (check) => only.length === 0 || only.some((part) => check.name.includes(part)),
+);
 
 console.log(`Bot QA · ${url} · ${checks.length} checks · ${concurrency} at a time${withJobs ? " · jobs included" : ""}\n`);
 
-const results = await runChecks(checks, { call: client({ url, token }), url, withJobs }, {
+// Fixtures (hired Bots, memories, jobs) belong in a workspace of their own, never the
+// one a person works in. A local dev server takes the workspace from a header; a
+// deployment binds it to the token (BOT_CONSOLE_TOKENS="<qa token>=qa").
+const workspace = process.env.QA_WORKSPACE?.trim() || "qa";
+const call = client({ url, token, workspace });
+const probe = await call("/bot/v1/state");
+const actual = probe.body?.workspaceId;
+if (actual === "default" && process.env.QA_ALLOW_DEFAULT !== "1") {
+  console.error(`This token opens the "default" workspace, where people work. QA would leave its fixtures there.\n`);
+  console.error(`Give QA a workspace of its own: BOT_CONSOLE_TOKENS="<qa token>=qa" on the deployment, and QA_TOKEN=<qa token>.`);
+  console.error("Or, if this deployment is a scratch one, set QA_ALLOW_DEFAULT=1.");
+  process.exit(2);
+}
+console.log(`Workspace: ${actual ?? "unknown"}\n`);
+
+const results = await runChecks(checks, { call, url, withJobs }, {
   concurrency,
   onResult: (result) => {
     const mark = result.skipped ? "○" : result.ok ? "✓" : "✗";

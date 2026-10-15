@@ -12,6 +12,13 @@ outward action (email, connector call, browser action, `create_bot`) checks it
 still is. A run whose lease lapsed and was taken over, or whose job was
 cancelled, is refused, even holding an approval it was given earlier.
 
+Every lease also names the build of the code that holds it. Outside Vercel
+the Workflow state cannot resume a run across a code change, so after a
+rebuild a lease from the old build is dead at once: the job is due again, a
+sweep a minute after start (or the console opening) re-dispatches it, and the
+thread says the server restarted. On Vercel the old deployment keeps its runs
+alive, so there the clock still rules.
+
 ## Cancellation
 
 Stop in the console (`DELETE /bot/v1/jobs/:id`) cancels the job durably and
@@ -95,6 +102,19 @@ charged once it stops, swept before the next run is admitted and whenever the
 usage page loads (and by the tick); until a rate is set it is shown as
 unpriced. `BOT_JOB_COST_LIMIT_USD` and `BOT_HQ_COST_LIMIT_USD` still cap each
 session.
+
+## Rewind
+
+Rewinding a job puts back only what that job owns on the shared computer:
+its Bot's folder and the files its journal lists elsewhere. Other Bots'
+work is never touched. Files the Bot wrote through the shell outside its
+own folder are not in the journal, so a rewind does not restore them.
+
+A rewind cannot undo anything outside the computer. Emails sent after the
+chosen step stay sent; the next run's brief lists them as done and not to
+repeat. Changes made through connectors (a ticket filed, a page edited) are
+not in the action ledger yet, so they are neither undone nor listed: check
+the journal before rewinding past one.
 
 ## Shell
 

@@ -1,3 +1,5 @@
+import { currentKind, describeKind } from "./hands/kinds";
+import { journalOf, renderJournal } from "./journal";
 import { DEFAULT_EFFORT } from "./models";
 import { describeSchedule } from "./schedule";
 import type { Bot, Job } from "./types";
@@ -32,6 +34,7 @@ export function renderBrief(bot: Bot, job: Job, run: { readonly token: string })
       // Read back by the teammate's model choice (see models.ts); keep the format.
       `effort: ${job.effort ?? DEFAULT_EFFORT}`,
       job.requiresSignoff ? "sign-off: a human must approve the deliverable" : "sign-off: not required",
+      describeKind(currentKind()),
       "",
       job.brief.trim(),
     ].join("\n"),
@@ -46,6 +49,17 @@ export function renderBrief(bot: Bot, job: Job, run: { readonly token: string })
             : `${job.result.summary}\n\n${job.result.deliverable.slice(0, 2_000)}`,
         ].join("\n")
       : null,
+    job.rewound
+      ? [
+          "## Rewound",
+          `${job.rewound.by} took this job back to step ${job.rewound.index} on ${job.rewound.at.slice(0, 16).replace("T", " ")} UTC. The files this job owns are as they were at that step. Carry on from there; the steps after it were undone on purpose, so do not repeat them unless the brief still asks for them.`,
+          ...(job.rewound.kept && job.rewound.kept.length > 0
+            ? ["", "Already done and cannot be undone (do not do these again):", ...job.rewound.kept.map((line) => `- ${line}`)]
+            : []),
+        ].join("\n")
+      : null,
+    // A run that follows another on the same job continues it rather than starting over.
+    journalOf(job).length > 0 ? renderJournal(journalOf(job)) : null,
     job.successCriteria.length > 0
       ? ["## Done means", ...job.successCriteria.map((item) => `- ${item}`)].join("\n")
       : null,

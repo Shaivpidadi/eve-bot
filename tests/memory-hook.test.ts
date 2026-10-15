@@ -252,7 +252,7 @@ describe("learning from outcomes, end to end against the store", () => {
       everyMinutes: null,
       requiresSignoff: true,
       room: "desk",
-      requestedBy: "Shaishav",
+      requestedBy: "Ava",
       createdAt: "",
       updatedAt: "",
       attempts: 1,

@@ -51,7 +51,7 @@ describe("memory store", () => {
 
   it("remembers with provenance, skips word-for-word repeats, and ignores a replayed operation", async () => {
     const { remember: rememberFresh, readEntries: readFresh } = await import("../agent/lib/memory/store");
-    const first = await rememberFresh("ws", "profile", [{ text: "Their name is Shaishav.", kind: "fact" }, { text: "Prefers three bullets.", kind: "preference" }], { who: "auto", room: "desk" }, { operationId: "op-1" });
+    const first = await rememberFresh("ws", "profile", [{ text: "Their name is Ava.", kind: "fact" }, { text: "Prefers three bullets.", kind: "preference" }], { who: "auto", room: "desk" }, { operationId: "op-1" });
     expect(first.added).toHaveLength(2);
     expect(first.added[0]?.source).toEqual({ who: "auto", room: "desk" });
 
@@ -176,12 +176,12 @@ describe("memory store", () => {
     expect(resolveField("profile", "shoe size")).toBeUndefined();
     const loose = await applyOperations("ws4b", "profile", [{ op: "set", field: "Time format", value: "24-hour" }], { who: "auto" });
     expect(loose.fields).toEqual([{ field: "timeFormat", value: "24-hour", previous: null }]);
-    const first = await applyOperations("ws4", "profile", [{ op: "set", field: "name", value: " Shaishav " }, { op: "set", field: "nope", value: "x" }, { op: "set", field: "timezone", value: "America/New_York" }], { who: "auto" }, { operationId: "f1" });
+    const first = await applyOperations("ws4", "profile", [{ op: "set", field: "name", value: " Ava " }, { op: "set", field: "nope", value: "x" }, { op: "set", field: "timezone", value: "America/New_York" }], { who: "auto" }, { operationId: "f1" });
     expect(first.fields).toEqual([
-      { field: "name", value: "Shaishav", previous: null },
+      { field: "name", value: "Ava", previous: null },
       { field: "timezone", value: "America/New_York", previous: null },
     ]);
-    const second = await applyOperations("ws4", "profile", [{ op: "set", field: "timezone", value: "America/Chicago" }, { op: "set", field: "name", value: "Shaishav" }], { who: "hq" }, { operationId: "f2" });
+    const second = await applyOperations("ws4", "profile", [{ op: "set", field: "timezone", value: "America/Chicago" }, { op: "set", field: "name", value: "Ava" }], { who: "hq" }, { operationId: "f2" });
     expect(second.fields).toEqual([{ field: "timezone", value: "America/Chicago", previous: "America/New_York" }]);
     const fields = await readFields("ws4", "profile");
     expect(fields.timezone?.value).toBe("America/Chicago");
@@ -198,7 +198,7 @@ describe("memory store", () => {
 
 describe("recall ranking", () => {
   const entries = [
-    entry("Their name is Shaishav.", { kind: "fact" }),
+    entry("Their name is Ava.", { kind: "fact" }),
     entry("Prefers summaries as three bullets.", { kind: "preference" }),
     entry("Always cc finance@example.com on invoice emails.", { kind: "rule" }),
     entry("Weekly reports go out on Fridays.", { kind: "rule" }),
@@ -475,9 +475,9 @@ describe("capture with Jev as the gatekeeper", () => {
 describe("what a turn is told", () => {
   it("renders the fields first, then the notes with their ids, and says so when there is nothing", () => {
     const now = "2026-09-23T10:00:00.000Z";
-    const fields = { name: { value: "Shaishav", at: now, source: { who: "you" as const } }, timeFormat: { value: "24-hour", at: now, source: { who: "auto" as const } } };
+    const fields = { name: { value: "Ava", at: now, source: { who: "you" as const } }, timeFormat: { value: "24-hour", at: now, source: { who: "auto" as const } } };
     const text = renderCore("profile", fields, [entry("Prefers summaries as three bullets.", { kind: "preference" })]);
-    expect(text).toContain("- Name: Shaishav");
+    expect(text).toContain("- Name: Ava");
     expect(text).toContain("- Times: 24-hour");
     expect(text.indexOf("- Name:")).toBeLessThan(text.indexOf("Prefers summaries"));
     expect(text).toMatch(/- mem_\w+: Prefers summaries as three bullets\./);

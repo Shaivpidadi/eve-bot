@@ -8,7 +8,7 @@ import type { ToolContext } from "eve/tools";
 import { COMPUTER_PATHS } from "../../../lib/computer";
 import { AGENT_BROWSER_INSTALL } from "../../../lib/computer-config";
 import { GUARD_TTL_MS, guardGraceMs, NETGUARD_FILE, parseGuardAnswer, type Stopped } from "../../../lib/computer/netguard";
-import { captureScreen, ComputerError, ensureScreen, raiseBrowser, shellQuote, toolIo } from "../../../lib/computer/runtime";
+import { ComputerError, currentKind, lacking, shellQuote, toolHands } from "../../../lib/hands";
 import { COMPUTER_BIN } from "../../../lib/computer/script";
 import {
   allocateScreen,
@@ -26,6 +26,7 @@ import {
 } from "../../../lib/computer/screens";
 import { posterKey, saveScreen } from "../../../lib/screens";
 import { operator } from "../../../lib/session";
+import { journal } from "./journal";
 import { sessionState } from "./session-state";
 
 /**
@@ -56,6 +57,13 @@ const preparedDirectories = sessionState<true>();
 const runSessionName = (ctx: ToolContext) => `run-${ctx.session.id.replace(/[^A-Za-z0-9_-]/g, "")}`.slice(0, 60);
 
 /** Runs opened with their tab ready, so the label lookup happens once per run. */
+/**
+ * agent-browser's eve types describe eve 0.58's tool context, whose sandbox
+ * carried an `id`. It only names its own sessions by it, and every call here
+ * passes the run's session name, so eve 0.79's context serves as is.
+ */
+const pluginContext = (ctx: ToolContext) => ctx as unknown as Parameters<typeof runAgentBrowser>[0];
+
 const openedTabs = sessionState<{ targetId: string; at: number }>();
 const TAB_TRUSTED_MS = 60_000;
 
@@ -73,7 +81,7 @@ async function labelledTab(
 ): Promise<string | null> {
   try {
     const listed = await runAgentBrowser<{ data?: { tabs?: { label?: string | null; targetId?: string }[] } }>(
-      ctx,
+      pluginContext(ctx),
       ["--cdp", String(cdp), "tab", "list", "--json"],
       { session, env: environment(await sessionDirectory(ctx)), abortSignal: ctx.abortSignal },
     );
@@ -103,7 +111,7 @@ async function ensureRunTab(ctx: ToolContext, binding: SessionBinding, n: number
   if (targetId === null) {
     try {
       const opened = await runAgentBrowser<{ data?: { targetId?: string } }>(
-        ctx,
+        pluginContext(ctx),
         ["--cdp", String(cdp), "--pin-tab", "tab", "new", "--label", label, "about:blank"],
         { session, env: environment(await sessionDirectory(ctx)), abortSignal: ctx.abortSignal },
       );
@@ -213,12 +221,12 @@ async function currentScreen(ctx: ToolContext, binding: SessionBinding) {
 async function readyScreen(ctx: ToolContext, n: number, recorded: ServiceState): Promise<void> {
   const ready = readyScreens.get(ctx.session.id);
   if (ready !== undefined && ready.n === n && Date.now() - ready.at < SCREEN_TRUSTED_MS) return;
-  const io = await toolIo(ctx);
+  const hands = await toolHands(ctx);
   try {
     if (recorded !== "on") await setBrowserState(n, "starting");
-    const started = await ensureScreen(io, n);
+    const started = await hands.screen.ensure(n);
     // Someone may have left the file manager or a terminal over the browser.
-    await raiseBrowser(io, n).catch(() => undefined);
+    await hands.browser.raise(n).catch(() => undefined);
     if (started.started || recorded !== "on") await setBrowserState(n, "on");
     await touchScreen(n);
     readyScreens.set(ctx.session.id, { n, at: Date.now() });
@@ -240,7 +248,21 @@ async function readyScreen(ctx: ToolContext, n: number, recorded: ServiceState):
  * An action that cannot be watched is not run (`unwatched`), and a guarded
  * action is not retried here: a retry might land on another tab.
  */
+/** Browser commands whose failure is routine (a wait that timed out, a read of nothing) and not worth a journal line. */
+const QUIET_FAILURES = new Set(["wait", "get", "eval", "snapshot", "screenshot", "focus"]);
+
 export async function browser(ctx: ToolContext, args: readonly string[], options: { readonly guard?: boolean } = {}): Promise<BrowserResult> {
+  const result = await browserCommand(ctx, args, options);
+  if (!result.ok && !QUIET_FAILURES.has(args[0] ?? "")) {
+    const why = (result.error ?? result.output).replace(/\s+/g, " ").trim().slice(0, 160);
+    await journal(ctx, { kind: "error", text: `${args[0] ?? "browser"} failed: ${why}`, data: { tool: `browser ${args[0] ?? ""}`.trim() } });
+  }
+  return result;
+}
+
+async function browserCommand(ctx: ToolContext, args: readonly string[], options: { readonly guard?: boolean } = {}): Promise<BrowserResult> {
+  const missing = lacking(currentKind(), "browser");
+  if (missing !== null) return failure(new Error(missing));
   if (FORBIDDEN.has(args[0] ?? "")) {
     return failure(new Error(`"${args[0]}" is not available: the browser stays open so the team can see and use it.`));
   }
@@ -274,7 +296,7 @@ export async function browser(ctx: ToolContext, args: readonly string[], options
 
   const session = runSessionName(ctx);
   const run = async () =>
-    runAgentBrowser(ctx, ["--cdp", String(screenPorts(n).cdp), "--pin-tab", ...args], {
+    runAgentBrowser(pluginContext(ctx), ["--cdp", String(screenPorts(n).cdp), "--pin-tab", ...args], {
       abortSignal: ctx.abortSignal,
       env: environment(await sessionDirectory(ctx)),
       // One agent-browser session per run, pinned to that run's own tab in the shared browser.
@@ -288,7 +310,7 @@ export async function browser(ctx: ToolContext, args: readonly string[], options
   } catch (error) {
     try {
       if (missingBinary(error)) {
-        await installAgentBrowser(await ctx.getSandbox(), { ...AGENT_BROWSER_INSTALL, abortSignal: ctx.abortSignal });
+        await installAgentBrowser((await ctx.getSandbox()) as never, { ...AGENT_BROWSER_INSTALL, abortSignal: ctx.abortSignal });
         return shape(await run());
       }
       if (tabGone(error)) {
@@ -325,7 +347,7 @@ async function guarded(
     unwatched: reason,
   });
   if (tab === null) return unwatched("this run's tab could not be found");
-  const io = await toolIo(ctx);
+  const io = (await toolHands(ctx)).shell;
   const program = shellQuote(`${COMPUTER_BIN}/${NETGUARD_FILE}`);
   const armed = parseGuardAnswer<{ id: string }>(
     (await io.run(`node ${program} arm ${cdp} ${shellQuote(tab)} ${GUARD_TTL_MS}`, { timeoutMs: 20_000 }).catch((error: unknown) => ({ stdout: JSON.stringify({ ok: false, error: String(error) }) }))).stdout,
@@ -362,7 +384,7 @@ export async function refreshScreen(ctx: ToolContext): Promise<void> {
     const binding = await sessionBinding(workspaceId, ctx.session.id);
     if (binding === null) return;
     // This Bot's own tab, so its thumbnail shows its work even while another Bot's tab is on screen.
-    const shot = await captureScreen(await toolIo(ctx), binding.n, 55, binding.targetId);
+    const shot = await (await toolHands(ctx)).screen.capture(binding.n, 55, binding.targetId);
     if (await saveScreen(workspaceId, posterKey(binding.botId), shot.bytes, shot.mediaType)) {
       await setPosterAt(binding.n, new Date().toISOString(), binding.botId);
     }

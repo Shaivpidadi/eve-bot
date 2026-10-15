@@ -1,7 +1,7 @@
 import { defineHook } from "eve/hooks";
 
 import { computerControl } from "../../../lib/computer/control";
-import { closeTab } from "../../../lib/computer/runtime";
+import { handsFor } from "../../../lib/hands";
 import { clearBotTab, sessionBinding } from "../../../lib/computer/screens";
 import { operator, type AuthedContext } from "../../../lib/session";
 
@@ -21,7 +21,7 @@ async function closeRunTab(ctx: AuthedContext & { readonly session: { readonly i
     await clearBotTab(workspaceId, binding.botId, ctx.session.id);
     if (binding.targetId === undefined) return;
     const io = await computerControl().io();
-    if (io !== null) await closeTab(io, binding.n, binding.targetId).catch(() => undefined);
+    if (io !== null) await handsFor(io).browser.close(binding.n, binding.targetId).catch(() => undefined);
   } catch {
     // The tab outlives the run; the idle reaper stops the browser eventually.
   }

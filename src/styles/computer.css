@@ -1,0 +1,40 @@
+/*
+ * Tailwind theme extensions for the console's computer screens: @keyframes and
+ * --animate-* (or other @theme values) their classes need. No class rules
+ * here: styling lives in the components' Tailwind classes.
+ */
+@theme {
+  /* The computer opening over the dimmed app, its window settling in, and the dock pill after it. */
+  --animate-computer-overlay-in: computer-overlay-in 0.24s cubic-bezier(0.2, 0, 0, 1);
+  --animate-computer-window-in: computer-window-in 0.28s cubic-bezier(0.2, 0, 0, 1);
+  --animate-computer-pill-in: computer-window-in 0.3s cubic-bezier(0.2, 0, 0, 1) 0.05s both;
+  /* The purple dot while you are in control. */
+  --animate-computer-live: computer-live 1.6s ease-out infinite;
+  /* The sheen across the placeholder browser while the screen connects. */
+  --animate-computer-sweep: computer-sweep 1.6s linear infinite;
+
+  @keyframes computer-overlay-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes computer-window-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.985);
+    }
+  }
+  @keyframes computer-live {
+    from {
+      box-shadow: 0 0 0 0 rgba(155, 123, 255, 0.6);
+    }
+    to {
+      box-shadow: 0 0 0 7px rgba(155, 123, 255, 0);
+    }
+  }
+  @keyframes computer-sweep {
+    to {
+      background-position: -200% 0;
+    }
+  }
+}

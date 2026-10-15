@@ -1,7 +1,9 @@
 import { recentActivity } from "./activity";
-import { listBots } from "./bots";
+import { getBot, HQ_BOT_ID, listBots } from "./bots";
 import { budgetStatus, type BudgetStatus } from "./budget";
 import { computerMode, vercelCredentialsError, type ComputerMode } from "./computer-config";
+import { currentKind, type HandsKind } from "./hands/kinds";
+import { exportEnabled } from "./store/transfer";
 import {
   handoverBelongsTo,
   liveControl,
@@ -65,6 +67,8 @@ export interface MemberComputer {
   readonly control: { readonly by: string; readonly until: string } | null;
   /** When the still frame of the screen was last refreshed. */
   readonly posterAt: string | null;
+  /** Where the computer runs, for people (see `hands/kinds.ts`). */
+  readonly kind: string;
   /** This Bot is waiting for a person to do one step in the browser; on HQ, whichever Bot is. */
   readonly handover: {
     readonly reason: string;
@@ -74,6 +78,13 @@ export interface MemberComputer {
     /** The request's id in the Bot's own session; the thread's copy adds a task prefix. */
     readonly requestId: string;
   } | null;
+}
+
+export interface WorkInHand {
+  readonly id: string;
+  readonly title: string;
+  readonly room: string;
+  readonly status: Job["status"];
 }
 
 export interface Member {
@@ -97,6 +108,8 @@ export interface Member {
   readonly computer: MemberComputer;
   readonly routines: readonly Routine[];
   readonly files: readonly FileRef[];
+  /** Work in hand right now, and the thread each job was asked in, so that thread can show who is on it. */
+  readonly jobs: readonly WorkInHand[];
   /** Roster placement from the row menu: pinned rows first, grouped by section, hidden rows folded away. */
   readonly pinned: boolean;
   readonly section: string | null;
@@ -118,6 +131,8 @@ export interface Board {
   readonly activity: readonly ActivityEvent[];
   readonly computer: {
     readonly backend: ComputerMode;
+    /** Which kind of machine it is and what it can do (see `hands/kinds.ts`). */
+    readonly kind: HandsKind;
     /** Why the computer cannot start, or its most recent failure. */
     readonly error: string | null;
   };
@@ -127,6 +142,8 @@ export interface Board {
   readonly budget: BudgetStatus;
   /** Work that should have started and has not, and runs whose worker stopped (see `health.ts`). */
   readonly health: Health;
+  /** Whether the console may offer the workspace as an export file (`BOT_EXPORT`). */
+  readonly exportable: boolean;
 }
 
 export const HQ_MEMBER_ID = "hq";
@@ -152,6 +169,7 @@ function sharedComputer(
     browser: screen?.browser.state ?? "off",
     control: control === null ? null : { by: control.by, until: control.until },
     posterAt: screen?.posterAt ?? null,
+    kind: currentKind().label,
     handover:
       handover === null
         ? null
@@ -169,13 +187,15 @@ export async function buildBoard(
   workspaceId: string,
   options: { after?: string } = {},
 ): Promise<Board> {
-  const [bots, open, recent, screens, ledger, budget] = await Promise.all([
+  const [bots, open, recent, screens, ledger, budget, hqWorker] = await Promise.all([
     listBots(workspaceId),
     listOpenJobs(workspaceId),
     recentActivity(workspaceId, { limit: FEED_WINDOW }),
     readScreens(),
     readLedger(workspaceId),
     budgetStatus(workspaceId),
+    // HQ does work too; its jobs are recorded like a Bot's (see `bots.ts`).
+    getBot(workspaceId, HQ_BOT_ID).then((worker) => worker!),
   ]);
   const rooms = await Promise.all(
     [HQ_ROOM, ...bots.map((bot) => roomForBot(bot.id))].map((room) =>
@@ -186,7 +206,21 @@ export async function buildBoard(
   const now = Date.now();
   const screen = workspaceScreen(screens, workspaceId);
   const members: Member[] = [
-    hqMember(rooms[0] ?? null, open, screen, ledger.hq),
+    hqMember(
+      rooms[0] ?? null,
+      open,
+      screen,
+      ledger.hq,
+      botMember(
+        hqWorker,
+        open.filter((job) => job.botId === HQ_BOT_ID),
+        rooms[0] ?? null,
+        recent.filter((event) => event.botId === HQ_BOT_ID),
+        screen,
+        now,
+        ledger.hq,
+      ),
+    ),
     ...bots
       .map((bot, index) =>
         botMember(
@@ -214,6 +248,7 @@ export async function buildBoard(
     activity: after === undefined ? recent : recent.filter((event) => event.at >= after),
     computer: {
       backend,
+      kind: currentKind(),
       error: (backend === "vercel" ? vercelCredentialsError() : null) ?? failure?.text ?? null,
     },
     usage: {
@@ -222,6 +257,7 @@ export async function buildBoard(
       bots: ledger.bots,
     },
     budget,
+    exportable: exportEnabled(),
     health: jobHealth(open, {
       now,
       pausedBotIds: new Set(bots.filter((bot) => bot.status !== "active").map((bot) => bot.id)),
@@ -234,7 +270,7 @@ const recency = (member: Member) => member.preview?.at ?? member.profile?.hiredA
 const answeredIn = (room: RoomState | null): Member["answered"] =>
   Object.fromEntries((room?.answered ?? []).map((entry) => [entry.requestId, { outcome: entry.outcome, optionId: entry.optionId }]));
 
-function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAllocation | null, usage: Usage): Member {
+function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAllocation | null, usage: Usage, own: Member): Member {
   const pending = room?.pending ?? [];
   // From HQ's desk the team's browser is whoever is on it right now.
   const running = open.find((job) => job.status === "running");
@@ -245,16 +281,18 @@ function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAl
     name: "HQ",
     title: "Runs the team",
     status: "active",
-    presence: pending.length > 0 ? "waiting" : room?.active === true ? "thinking" : "idle",
-    action: pending[0]?.prompt ?? (room?.active === true ? "Thinking" : null),
+    // What HQ itself is doing: its own jobs, or the conversation.
+    presence: pending.length > 0 ? "waiting" : own.presence,
+    action: pending[0]?.prompt ?? own.action,
     preview: room?.preview ?? null,
     clearedAt: room?.clearedAt ?? null,
     usage,
     pending: pending.length,
     answered: answeredIn(room),
     computer: sharedComputer(screen, running, running?.id ?? null, openHandover(screen?.handover ?? null, open)),
-    routines: [],
-    files: [],
+    routines: own.routines,
+    files: own.files,
+    jobs: own.jobs,
     pinned: false,
     section: null,
     hidden: false,
@@ -326,7 +364,7 @@ function botMember(
       })),
     files: events
       .filter((event) => event.kind === "job.artifact" && typeof event.data?.artifactId === "string")
-      .slice(0, 8)
+      .slice(0, 40)
       .map((event) => ({
         id: String(event.data?.artifactId),
         name: typeof event.data?.name === "string" ? event.data.name : "file",
@@ -336,6 +374,9 @@ function botMember(
         at: event.at,
         jobId: event.jobId,
       })),
+    jobs: jobs
+      .filter((job) => job.status === "running" || job.status === "dispatched" || job.status === "blocked")
+      .map((job) => ({ id: job.id, title: job.title, room: job.room, status: job.status })),
     pinned: bot.pinned === true,
     section: bot.section ?? null,
     hidden: bot.hidden === true,

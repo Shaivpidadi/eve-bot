@@ -81,9 +81,17 @@ QA_URL=https://staging.example QA_TOKEN=… npm run qa    # free, no model calls
 QA_JOBS=1 … npm run qa                                  # also runs real jobs
 ```
 
-It hires bots, writes memory and (with `QA_JOBS=1`) runs jobs, so point it at a
-deployment with its own computer and its own data, never at the one you work
-in. Failures are written to `.qa/` with what was expected and what the
+With `BOT_QA=1` set on that deployment, the suite can also crash a job's run
+(`POST /bot/v1/qa/jobs/:id/crash`) and make the computer look replaced
+(`POST /bot/v1/qa/computer/replace`), which is how the durable-run checks
+watch a recovery. The routes do not exist without the variable.
+
+It hires bots, writes memory and (with `QA_JOBS=1`) runs jobs, so it works in a
+workspace of its own: `qa` by default on a local dev server, and on a deployment
+whatever workspace its token opens (`BOT_CONSOLE_TOKENS="<qa token>=qa"`). It
+refuses the `default` workspace unless `QA_ALLOW_DEFAULT=1`. `QA_ONLY=resume,rewind`
+runs only the checks whose names contain those words. The computer is still
+shared, so point it at a deployment whose computer you can spare. Failures are written to `.qa/` with what was expected and what the
 deployment actually answered.
 
 ## Pull requests

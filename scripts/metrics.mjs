@@ -9,6 +9,7 @@
  *
  *   npm run metrics                 # the default workspace
  *   npm run metrics -- --days 7     # only the last week
+ *   npm run metrics -- --resume     # how well resumed runs continued (redo ratio)
  */
 import nextEnv from "@next/env";
 
@@ -17,6 +18,7 @@ nextEnv.loadEnvConfig(process.cwd(), false);
 const { listJobs } = await import("../agent/lib/jobs.ts");
 const { recentActivity } = await import("../agent/lib/activity.ts");
 const { formatSummary, summarise } = await import("../agent/lib/metrics.ts");
+const { redoRatio } = await import("../agent/lib/journal.ts");
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -37,8 +39,30 @@ if (jobs.length === 0) {
   process.exit(0);
 }
 
+if (args.includes("--resume")) {
+  const resumed = jobs
+    .map((job) => ({ job, ratio: redoRatio(job.journal ?? [], job.resumedFrom) }))
+    .filter((row) => row.ratio !== null);
+  if (resumed.length === 0) {
+    console.log("No job has resumed from a journal yet.");
+    process.exit(0);
+  }
+  const mean = resumed.reduce((sum, row) => sum + row.ratio, 0) / resumed.length;
+  console.log(`Resumed runs: ${resumed.length} · mean redo ratio ${mean.toFixed(2)} (0 is a clean continuation)\n`);
+  for (const { job, ratio } of resumed.sort((a, b) => b.ratio - a.ratio)) {
+    console.log(`  ${job.id}  ${ratio.toFixed(2)}  from step ${job.resumedFrom} of ${(job.journal ?? []).length}  ${job.title.slice(0, 60)}`);
+  }
+  process.exit(0);
+}
+
 const summary = summarise(jobs, events);
 console.log(formatSummary(summary, `${workspace}${days > 0 ? ` · last ${days} days` : ""}`));
+
+const journaled = jobs.filter((job) => (job.journal ?? []).length > 0);
+if (journaled.length > 0) {
+  const withDecisions = journaled.filter((job) => job.journal.some((entry) => entry.kind === "decision")).length;
+  console.log(`\nJournals: ${journaled.length} job(s) kept one; ${withDecisions} recorded at least one decision (${Math.round((withDecisions / journaled.length) * 100)}%).`);
+}
 
 const worst = summary.outcomes
   .filter((outcome) => outcome.completion === "recovered" || outcome.status === "failed" || outcome.needsHuman)

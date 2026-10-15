@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { api, errorMessage, SignedOutError } from "./api";
 import type { Routine } from "./types";
@@ -38,13 +45,29 @@ function parseSchedule(text: string | undefined): { time: string; days: Day[]; t
   return { time: `${hh}:${time[2]}`, days, timezone };
 }
 
+/** A form field: its label over the control, in the dialog's quiet type. */
+function FieldRow({ label, htmlFor, children }: { label: string; htmlFor?: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={htmlFor} className="text-xs font-normal text-muted-foreground">
+        {label}
+      </Label>
+      {children}
+    </div>
+  );
+}
+
+const MODES = [
+  { value: "interval", label: "every so many minutes" },
+  { value: "clock", label: "at a time of day" },
+] as const;
+
 /**
  * Change or stop a routine from the console: how often it runs, or at what
  * time on which days, and its name. Stopping cancels the job; what it already
  * delivered stays.
  */
 export function RoutineDialog({ routine, onClose, onChanged }: { routine: Routine | null; onClose: () => void; onChanged: () => Promise<void> }) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const [title, setTitle] = useState("");
   const [mode, setMode] = useState<"interval" | "clock">("interval");
   const [every, setEvery] = useState(60);
@@ -53,29 +76,25 @@ export function RoutineDialog({ routine, onClose, onChanged }: { routine: Routin
   const [timezone, setTimezone] = useState(localTimezone());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const fieldId = useId();
 
+  // Each routine opened fills the form from where it stands now.
   useEffect(() => {
-    const element = dialog.current;
-    if (element === null) return;
-    if (routine !== null && !element.open) {
-      setTitle(routine.title);
-      const clock = parseSchedule(routine.schedule);
-      if (clock !== null) {
-        setMode("clock");
-        setTime(clock.time);
-        setDays(clock.days);
-        setTimezone(clock.timezone);
-      } else {
-        setMode("interval");
-        setEvery(routine.everyMinutes ?? 60);
-        setDays([]);
-        setTimezone(localTimezone());
-      }
-      setError(null);
-      element.showModal();
-    } else if (routine === null && element.open) {
-      element.close();
+    if (routine === null) return;
+    setTitle(routine.title);
+    const clock = parseSchedule(routine.schedule);
+    if (clock !== null) {
+      setMode("clock");
+      setTime(clock.time);
+      setDays(clock.days);
+      setTimezone(clock.timezone);
+    } else {
+      setMode("interval");
+      setEvery(routine.everyMinutes ?? 60);
+      setDays([]);
+      setTimezone(localTimezone());
     }
+    setError(null);
   }, [routine]);
 
   const run = async (request: () => Promise<Response>, fallback: string) => {
@@ -96,82 +115,103 @@ export function RoutineDialog({ routine, onClose, onChanged }: { routine: Routin
     }
   };
 
-  if (routine === null) return <dialog ref={dialog} onClose={onClose} className="routine-dialog" />;
-  const id = encodeURIComponent(routine.jobId);
+  const id = routine === null ? "" : encodeURIComponent(routine.jobId);
 
   return (
-    <dialog ref={dialog} onClose={onClose} className="routine-dialog">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          const body =
-            mode === "clock"
-              ? { title, dailyAt: time, onDays: days, timezone }
-              : { title, dailyAt: null, everyMinutes: Math.max(5, Math.round(every)) };
-          void run(() => api(`/bot/v1/jobs/${id}`, { method: "PATCH", body: JSON.stringify(body) }), "Could not change the routine.");
-        }}
-      >
-        <h2>Routine</h2>
-        <label>
-          Name
-          <input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} required />
-        </label>
-        <label>
-          Runs
-          <select value={mode} onChange={(event) => setMode(event.target.value as "interval" | "clock")}>
-            <option value="interval">every so many minutes</option>
-            <option value="clock">at a time of day</option>
-          </select>
-        </label>
-        {mode === "interval" ? (
-          <label>
-            Every (minutes)
-            <input type="number" min={5} max={525_600} value={every} onChange={(event) => setEvery(Number(event.target.value))} required />
-          </label>
-        ) : (
-          <>
-            <label>
-              At
-              <input type="time" value={time} onChange={(event) => setTime(event.target.value)} required />
-            </label>
-            <div className="routine-days" role="group" aria-label="Days">
-              {DAYS.map(([key, label]) => (
-                <label key={key} className="routine-day">
-                  <input
-                    type="checkbox"
-                    checked={days.includes(key)}
-                    onChange={(event) => setDays((current) => (event.target.checked ? [...current, key] : current.filter((day) => day !== key)))}
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>
-            <p className="faint">No days ticked means every day.</p>
-            <label>
-              Timezone
-              <input value={timezone} onChange={(event) => setTimezone(event.target.value)} placeholder="America/New_York" required />
-            </label>
-          </>
-        )}
-        {error === null ? null : <p className="error-text">{error}</p>}
-        <div className="actions">
-          <button
-            type="button"
-            className="btn danger"
-            disabled={busy}
-            onClick={() => void run(() => api(`/bot/v1/jobs/${id}`, { method: "DELETE" }), "Could not stop the routine.")}
-          >
-            Stop routine
-          </button>
-          <span className="spacer" />
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button type="submit" className="btn primary" disabled={busy}>
-            Save
-          </button>
-        </div>
-      </form>
-    </dialog>
+    <Dialog
+      open={routine !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-[440px]">
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const body =
+              mode === "clock"
+                ? { title, dailyAt: time, onDays: days, timezone }
+                : { title, dailyAt: null, everyMinutes: Math.max(5, Math.round(every)) };
+            void run(() => api(`/bot/v1/jobs/${id}`, { method: "PATCH", body: JSON.stringify(body) }), "Could not change the routine.");
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Routine</DialogTitle>
+          </DialogHeader>
+          <FieldRow label="Name" htmlFor={`${fieldId}-name`}>
+            <Input id={`${fieldId}-name`} value={title} onChange={(event) => setTitle(event.target.value)} maxLength={120} required />
+          </FieldRow>
+          <FieldRow label="Runs">
+            <Select items={MODES} value={mode} onValueChange={(value) => setMode(value === "clock" ? "clock" : "interval")}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MODES.map((entry) => (
+                  <SelectItem key={entry.value} value={entry.value}>
+                    {entry.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FieldRow>
+          {mode === "interval" ? (
+            <FieldRow label="Every (minutes)" htmlFor={`${fieldId}-every`}>
+              <Input
+                id={`${fieldId}-every`}
+                type="number"
+                min={5}
+                max={525_600}
+                value={every}
+                onChange={(event) => setEvery(Number(event.target.value))}
+                required
+              />
+            </FieldRow>
+          ) : (
+            <>
+              <FieldRow label="At" htmlFor={`${fieldId}-at`}>
+                <Input id={`${fieldId}-at`} type="time" value={time} onChange={(event) => setTime(event.target.value)} required />
+              </FieldRow>
+              <div className="flex flex-wrap gap-x-2.5 gap-y-1.5" role="group" aria-label="Days">
+                {DAYS.map(([key, label]) => (
+                  <Label key={key} className="gap-1 text-[12.5px] font-normal">
+                    <Checkbox
+                      checked={days.includes(key)}
+                      onCheckedChange={(checked) =>
+                        setDays((current) => (checked ? [...current, key] : current.filter((day) => day !== key)))
+                      }
+                    />
+                    {label}
+                  </Label>
+                ))}
+              </div>
+              <p className="m-0 text-[11.5px] text-faint">No days ticked means every day.</p>
+              <FieldRow label="Timezone" htmlFor={`${fieldId}-tz`}>
+                <Input id={`${fieldId}-tz`} value={timezone} onChange={(event) => setTimezone(event.target.value)} placeholder="America/New_York" required />
+              </FieldRow>
+            </>
+          )}
+          {error === null ? null : <p className="m-0 text-xs text-destructive">{error}</p>}
+          <div className="flex items-center gap-2 pt-1">
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={busy}
+              onClick={() => void run(() => api(`/bot/v1/jobs/${id}`, { method: "DELETE" }), "Could not stop the routine.")}
+            >
+              Stop routine
+            </Button>
+            <span className="flex-1" />
+            <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy}>
+              Save
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

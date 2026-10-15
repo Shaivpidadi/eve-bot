@@ -2,6 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { browser, refreshScreen } from "../lib/browser";
+import { journalPage } from "../lib/journal";
 import { scriptUrl } from "../lib/consequence";
 import { forgetLook } from "../lib/page";
 
@@ -38,6 +39,7 @@ export default defineTool({
     const result = await browser(ctx, ["read", ...(filter ? ["--filter", filter] : [])]);
     const at = await browser(ctx, ["get", "url"]);
     const source = at.ok ? at.output.trim().slice(0, 500) : (url ?? "current page");
+    if (at.ok) await journalPage(ctx, source);
     return result.ok
       ? { text: result.output, source }
       : { text: null, source, error: result.error, detail: result.output };

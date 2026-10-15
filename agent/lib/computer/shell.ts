@@ -185,6 +185,43 @@ export function isolatedSandbox(session: RuntimeSandboxSession, runId?: string):
         abortSignal,
       );
     },
+    /**
+     * eve 0.79's `bash` starts each command with `spawn`, wrapped in a launcher
+     * that lets a long command carry on in the background (it checks on it, and
+     * stops it, with `run`). Here the launcher runs as the `bot` user through the
+     * helper like any command; its output is handed over when it ends, which is
+     * also when the launcher lets go of a command it was told to background.
+     */
+    spawn(options: SandboxRunOptions) {
+      const { command, workingDirectory, env, abortSignal } = options;
+      const done = helper(
+        session,
+        runCommand(command, {
+          ...(workingDirectory === undefined ? {} : { workingDirectory }),
+          ...(env === undefined ? {} : { env }),
+          ...(runId === undefined ? {} : { runId }),
+        }),
+        abortSignal,
+      );
+      done.catch(() => undefined);
+      const stream = (pick: "stdout" | "stderr") =>
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            try {
+              controller.enqueue(new TextEncoder().encode((await done)[pick]));
+            } catch {
+              // The process failed to start; `wait` reports it.
+            }
+            controller.close();
+          },
+        });
+      return Promise.resolve({
+        stdout: stream("stdout"),
+        stderr: stream("stderr"),
+        wait: async () => ({ exitCode: (await done).exitCode }),
+        kill: async () => undefined,
+      });
+    },
     readBinaryFile,
     async readTextFile(options) {
       const bytes = await readBinaryFile(options);
@@ -207,7 +244,7 @@ export function isolatedSandbox(session: RuntimeSandboxSession, runId?: string):
   };
   return new Proxy(session, {
     get(target, property) {
-      if (property === "id") return target.id;
+      if (property === "id") return (target as { id?: string }).id;
       if (property === "resolvePath") return target.resolvePath.bind(target);
       if (Object.hasOwn(methods, property)) return methods[property as keyof typeof methods];
       const value: unknown = Reflect.get(target, property, target);
@@ -247,6 +284,7 @@ export const isolatedBash = shellIsolationOff()
         } catch (error) {
           if (!(error instanceof ShellUnavailable)) throw error;
           return {
+            status: "completed" as const,
             exitCode: 126,
             stdout: "",
             stderr: `The shell is unavailable: it cannot be kept off the team's browser on this computer (${error.message}). Use the page tools and the other tools instead, and say so in your summary.`,

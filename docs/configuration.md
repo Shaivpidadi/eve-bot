@@ -48,10 +48,39 @@ of it; these are the ones that matter.
 | --- | --- |
 | `BOT_CONSOLE_TOKEN` / `BOT_CONSOLE_TOKENS` | console passwords, each bound to a workspace |
 | `BOT_PUBLIC_URL` | the address the world reaches this deployment at, for OAuth redirect URIs and the sitemap; Vercel supplies its own |
+| `BOT_EXPORT` | `on` lets the console download the signed-in workspace as an export file (`GET /bot/v1/export`; add `?secrets=1` for connectors) |
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
+| `BOT_TICK_ON_START` | `off` stops a standalone server sweeping for stranded jobs a minute after it starts |
+| `BOT_WORKFLOW_WORLD` | a shared Workflow world package for a standalone server, such as `@workflow/world-postgres` (with `WORKFLOW_POSTGRES_URL`), so conversations survive rebuilds; experimental, see `docs/decisions/0002-workflow-world.md` |
+| `BOT_BUILD_ID` | overrides the build id leases are stamped with (see `docs/safety.md`, run fencing) |
+| `BOT_SKIP_SANDBOX_PREWARM` | `1` makes `npm run build` skip preparing the computer's sandbox snapshot, for a build that only checks the code (CI without Vercel credentials); a build you deploy needs it, since a production server will not prepare a missing snapshot |
+| `BOT_QA` | `1` opens the QA suite's fault routes (crash a job's run, replace the computer) on this deployment; leave unset in production |
 | `BOT_STANDUP_CRON` / `BOT_STANDUP_ROOM` | when the daily standup runs (`0 13 * * 1-5`, in UTC) and where it posts: HQ's `desk` by default, or a Bot's room (`bot-<id>`) |
+
+## Observability: Vercel Agent Runs
+
+On a Vercel deployment, every HQ, Bot and job session appears in **Agent
+Runs**, under your project's Observability tab: the conversation, each turn,
+tool calls, model, tokens, cost and timings. It needs a tracing rule on the
+project (**Settings → Tracing**, rate 100%, or `vercel traces config set
+production 100`); `eve deploy` creates new projects with one. It is billed as
+span units, cents a month at this team's size, and Hobby includes a million a
+month. Runs are kept 30 days. Locally, `eve dev` keeps its own traces.
+
+Agent Runs reads each session's record from Vercel Workflow, where eve already
+keeps a Vercel deployment's conversations so they survive restarts and
+deploys. So the conversation is on Vercel whether or not tracing is on, and no
+app setting hides it from Agent Runs. To keep conversations off Vercel, run
+standalone with your own Postgres world (`BOT_WORKFLOW_WORLD`, above).
+
+## Journal and rewind
+
+There are no settings. Each job keeps the first 20 and last 180 lines of its
+journal, and up to 10 rewind points (the first and the latest nine), taken
+when a run starts, at each decision, and before an email. A rewind point
+holds only the job's own files.
 
 ## Email
 

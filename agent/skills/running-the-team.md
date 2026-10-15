@@ -4,11 +4,17 @@ description: Use when writing a job brief, deciding which bot should do somethin
 
 # Running the team
 
-## Choosing the bot
+## Who does it
 
-Match the work to a bot's role, not its name. If two bots could do it, pick the
-one whose playbook already covers this system — it will need fewer round trips.
-If none fit, hire one; a bot with a sharp role beats a generalist with five.
+1. Whoever the operator tagged or named (`@Ava`).
+2. Otherwise the Bot on the team whose role fits; `assign_job` judges this when
+   `bot` is left out. A Bot asked in its own thread keeps the work unless another
+   fits much better.
+3. Otherwise HQ does it itself.
+
+The operator never has to name a Bot. A Bot with a sharp role beats a
+generalist with five, so when the same kind of work keeps landing on HQ, offer to
+hire one.
 
 ## Writing a brief that a stranger could execute
 

@@ -58,7 +58,7 @@ const MAX_CRITERIA = 8;
  * Each question is evaluated on its own, and only the input is charged for, so
  * asking about every criterion at once costs barely more than asking about one.
  */
-export function completionQuestions(criteria: readonly string[]): Record<string, EvaluationQuestion> {
+export function completionQuestions(criteria: readonly string[], decisions: readonly string[] = []): Record<string, EvaluationQuestion> {
   const questions: Record<string, EvaluationQuestion> = {
     overall: {
       type: "boolean",
@@ -69,6 +69,16 @@ export function completionQuestions(criteria: readonly string[]): Record<string,
       },
     },
   };
+  if (decisions.length > 0) {
+    questions.decisions = {
+      type: "boolean",
+      instructions: `The run recorded these decisions along the way: ${decisions.slice(-8).map((decision) => `"${decision}"`).join("; ")}. Does the result follow from them, rather than contradict or ignore them?`,
+      criteria: {
+        true: "The summary and deliverable are consistent with the decisions the run recorded.",
+        false: "The result contradicts or ignores a decision the run recorded.",
+      },
+    };
+  }
   criteria.slice(0, MAX_CRITERIA).forEach((criterion, index) => {
     questions[`criterion${index}`] = {
       type: "boolean",

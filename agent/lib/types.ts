@@ -2,6 +2,7 @@ import type { Usage } from "./usage";
 /** Everything Bot persists. One file so the shape of the product is readable in one place. */
 
 import type { JobEffort } from "./models";
+import type { JournalEntry } from "./journal";
 import type { Schedule } from "./schedule";
 
 export type BotStatus = "active" | "paused";
@@ -57,6 +58,13 @@ export interface JobLease {
   until: string;
   kind: JobLeaseKind;
   session?: string;
+  /**
+   * The build of the code whose process holds this lease (see `lib/build.ts`).
+   * On a local Workflow world a lease from another build is dead at once:
+   * its run cannot resume under new code. Absent on leases written before
+   * builds were recorded, which count as unknown and are judged by `until`.
+   */
+  build?: string;
 }
 
 export interface JobArtifact {
@@ -125,6 +133,21 @@ export interface Job {
   feedback?: string | null;
   error: string | null;
   artifacts: JobArtifact[];
+  /**
+   * What the job's runs did, in order: progress, decisions, pages opened,
+   * files and artifacts written, questions asked. Written under the run fence
+   * (see `lib/journal.ts`); a fresh run reads it in its brief and continues.
+   * Absent on jobs from before the journal.
+   */
+  journal?: JournalEntry[];
+  /** How many journal lines the latest run started from; 0 or absent for a run that started fresh. */
+  resumedFrom?: number;
+  /**
+   * The last time a person took the job back to an earlier step: who, when,
+   * to which step, and the journal lines that were undone (kept for the
+   * record, capped). Absent on jobs never rewound.
+   */
+  rewound?: { readonly at: string; readonly by: string; readonly index: number; readonly undone: JournalEntry[]; readonly kept?: string[] };
   lastRunAt: string | null;
   /**
    * How the job was cancelled, once it was: `id` is the cancelling call's own
@@ -185,13 +208,18 @@ export type ActivityKind =
   | "job.done"
   | "job.failed"
   | "job.cancelled"
+  | "job.crashed"
+  | "job.stranded"
+  | "job.moved"
+  | "job.rewound"
   | "job.learned"
   | "memory.saved"
   | "input.requested"
   | "computer.restored"
   | "computer.failed"
   | "computer.takeover"
-  | "computer.handback";
+  | "computer.handback"
+  | "team.message";
 
 export interface ActivityEvent {
   readonly id: string;

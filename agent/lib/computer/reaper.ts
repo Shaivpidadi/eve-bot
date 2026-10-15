@@ -1,5 +1,5 @@
 import { computerControl } from "./control";
-import { stopScreen } from "./runtime";
+import { handsFor } from "../hands";
 import { liveControl, readScreens, setBrowserState } from "./screens";
 
 /**
@@ -35,7 +35,7 @@ export async function reapIdleScreens(): Promise<number> {
   let stopped = 0;
   for (const screen of idle) {
     try {
-      await stopScreen(io, screen.n);
+      await handsFor(io).screen.stop(screen.n);
       await setBrowserState(screen.n, "off");
       stopped += 1;
     } catch {

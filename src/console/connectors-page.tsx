@@ -1,11 +1,37 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import {
+  ArrowLeftIcon,
+  BrainIcon,
+  ChevronDownIcon,
+  ClockIcon,
+  GlobeIcon,
+  LogOutIcon,
+  type LucideIcon,
+  MailIcon,
+  PencilIcon,
+  PlugIcon,
+  TerminalIcon,
+  TriangleAlertIcon,
+  XIcon,
+} from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useId, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Item, ItemActions, ItemContent, ItemMedia } from "@/components/ui/item";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
+
+import { BrandMark } from "./brands";
 
 import { guessedReads, toolEffect, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind } from "../../agent/lib/catalog";
 
 import { api, errorMessage, isRecord, SignedOutError } from "./api";
-import { Icon, type IconName } from "./icons";
+import { Faint, PageBody, PageError, PageFrame, PageLoading, PageNote, PageSection } from "./usage-page";
 
 interface ConnectorRow {
   readonly id: string;
@@ -27,12 +53,12 @@ interface ConnectorRow {
 }
 
 /** What every Bot has without connecting anything. */
-const BUILT_IN: readonly { icon: IconName; title: string; detail: string }[] = [
-  { icon: "globe", title: "Browser", detail: "Signs in and works inside the web apps you use" },
-  { icon: "terminal", title: "Computer", detail: "A shell and files on its own machine" },
-  { icon: "mail", title: "Email", detail: "Drafts freely, sends only after you approve" },
-  { icon: "brain", title: "Memory", detail: "Remembers how you and your team like things done" },
-  { icon: "clock", title: "Routines", detail: "Starts work on a schedule, without a prompt" },
+const BUILT_IN: readonly { icon: LucideIcon; title: string; detail: string }[] = [
+  { icon: GlobeIcon, title: "Browser", detail: "Signs in and works inside the web apps you use" },
+  { icon: TerminalIcon, title: "Computer", detail: "A shell and files on its own machine" },
+  { icon: MailIcon, title: "Email", detail: "Drafts freely, sends only after you approve" },
+  { icon: BrainIcon, title: "Memory", detail: "Remembers how you and your team like things done" },
+  { icon: ClockIcon, title: "Routines", detail: "Starts work on a schedule, without a prompt" },
 ];
 
 const GATE_LABEL: Readonly<Record<ConnectorGate, string>> = {
@@ -40,6 +66,8 @@ const GATE_LABEL: Readonly<Record<ConnectorGate, string>> = {
   writes: "Before a Bot changes anything",
   all: "Before each tool's first use in a job",
 };
+
+const GATE_ITEMS = (Object.keys(GATE_LABEL) as ConnectorGate[]).map((value) => ({ value, label: GATE_LABEL[value] }));
 
 const KEY_LABEL: Readonly<Record<ConnectorKeyKind, string>> = {
   none: "No key needed",
@@ -65,21 +93,113 @@ const humanTool = (tool: string) => {
   return words.charAt(0).toUpperCase() + words.slice(1);
 };
 
-/** A brand-coloured monogram, since connectors bring no icon of their own. */
-function Mark({ label, size = 44 }: { label: string; size?: number }) {
+/** The connector's app icon: its brand, its site's icon, or its initial (see `brands.tsx`). */
+function Mark({ label, brand, url, size = 44 }: { label: string; brand?: string | null; url?: string | null; size?: number }) {
+  return <BrandMark brand={brand} label={label} url={url} size={size} />;
+}
+
+function Toggle({ checked, disabled, onChange, label }: { checked: boolean; disabled?: boolean; onChange: (next: boolean) => void; label: string }) {
+  return <Switch checked={checked} disabled={disabled} aria-label={label} title={label} onCheckedChange={(next) => onChange(next)} />;
+}
+
+/** "Ask me first": when a person is asked before a Bot uses the connector. */
+function GateSelect({ value, disabled, onChange, className }: { value: ConnectorGate; disabled?: boolean; onChange: (next: ConnectorGate) => void; className?: string }) {
   return (
-    <span className="cpage-mark" style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }} aria-hidden="true">
-      {label.trim().charAt(0).toUpperCase() || "?"}
+    <Select items={GATE_ITEMS} value={value} disabled={disabled} onValueChange={(next) => next !== null && onChange(next as ConnectorGate)}>
+      <SelectTrigger size="sm" className={cn("min-w-0 bg-secondary text-[12.5px] dark:bg-secondary", className)}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {GATE_ITEMS.map((item) => (
+          <SelectItem key={item.value} value={item.value}>
+            {item.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+/** A connector's state, as a pill. */
+function Status({ tone, children }: { tone: "ok" | "bad" | "off"; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        "flex-none rounded-full px-2.5 py-0.5 text-xs font-medium",
+        tone === "ok" ? "bg-success/12 text-success" : tone === "bad" ? "bg-destructive/12 text-destructive" : "bg-secondary text-faint",
+      )}
+    >
+      {children}
     </span>
   );
 }
 
-function Switch({ checked, disabled, onChange, label }: { checked: boolean; disabled?: boolean; onChange: (next: boolean) => void; label: string }) {
+/** A boxed list of settings rows. */
+function List({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={cn("flex flex-col divide-y divide-border overflow-hidden rounded-[14px] border border-input bg-card", className)}>{children}</div>;
+}
+
+const rowCls = "flex min-h-12 w-full items-center gap-3 px-4 py-3 text-left text-[13px]";
+const rowBtnCls = cn(rowCls, "cursor-pointer text-foreground hover:bg-accent disabled:cursor-default disabled:opacity-60");
+
+function Row({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={cn(rowCls, className)}>{children}</div>;
+}
+
+/** A row's words: a title line and a quieter line under it. */
+function RowMain({ title, children }: { title?: ReactNode; children?: ReactNode }) {
   return (
-    <label className={`switch${checked ? " on" : ""}${disabled ? " disabled" : ""}`} title={label}>
-      <input type="checkbox" role="switch" aria-label={label} checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
-      <i />
-    </label>
+    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+      {title === undefined ? null : <b className="font-medium">{title}</b>}
+      {children === undefined ? null : <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{children}</span>}
+    </span>
+  );
+}
+
+function Code({ children }: { children: ReactNode }) {
+  return <code className="font-mono text-[11.5px] text-faint">{children}</code>;
+}
+
+const linkCls = "text-xs text-muted-foreground no-underline hover:text-foreground";
+
+/** A connector as a card: its icon, name, a line about it, a quiet detail, and what to do. */
+function ConnectorCard({
+  mark,
+  title,
+  line,
+  detail,
+  aside,
+  onClick,
+  off,
+}: {
+  mark: ReactNode;
+  title: string;
+  line: ReactNode;
+  detail: ReactNode;
+  aside: ReactNode;
+  onClick?: () => void;
+  off?: boolean;
+}) {
+  const body = (
+    <>
+      <ItemMedia>{mark}</ItemMedia>
+      <ItemContent className="min-w-0 gap-px">
+        <b className="text-[13.5px] font-semibold">{title}</b>
+        <span className="truncate text-xs text-muted-foreground">{line}</span>
+        <small className="text-[11.5px] text-faint">{detail}</small>
+      </ItemContent>
+      <ItemActions className="flex-none">{aside}</ItemActions>
+    </>
+  );
+  const look = cn("min-w-0 flex-nowrap gap-3 rounded-[14px] border-input bg-card px-3.5 py-3 text-left", off && "opacity-60");
+  return onClick === undefined ? (
+    <Item variant="outline" className={look}>
+      {body}
+    </Item>
+  ) : (
+    <Item variant="outline" className={cn(look, "cursor-pointer hover:border-brand")} render={<button type="button" onClick={onClick} />}>
+      {body}
+    </Item>
   );
 }
 
@@ -171,22 +291,24 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
   const available = catalog.filter((entry) => !connectors?.some((connector) => connector.catalog === entry.id));
 
   return (
-    <div className="usage-page cpage" role="region" aria-label="Connectors">
-      <header className="usage-head cpage-head">
-        <button type="button" className="icon-btn" aria-label={selected === null ? "Back to the console" : "Back to connectors"} title="Back" onClick={() => (selected === null ? onClose() : onSelect(null))}>
-          <Icon name="left" size={18} />
-        </button>
-        <h1>{selected === null ? "Connectors" : selected.label}</h1>
-        <span className="spacer" />
-        <button type="button" className="icon-btn" aria-label="Close" title="Close" onClick={onClose}>
-          <Icon name="x" size={16} />
-        </button>
-      </header>
-
-      {error !== null ? <p className="error-text usage-error">{error}</p> : null}
+    <PageFrame
+      title={selected === null ? "Connectors" : selected.label}
+      label="Connectors"
+      onBack={() => (selected === null ? onClose() : onSelect(null))}
+      backLabel={selected === null ? "Back to the console" : "Back to connectors"}
+      actions={
+        <>
+          <span className="flex-1" />
+          <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="Close" title="Close" onClick={onClose}>
+            <XIcon />
+          </Button>
+        </>
+      }
+    >
+      {error !== null ? <PageError>{error}</PageError> : null}
 
       {connectors === null ? (
-        <p className="faint usage-loading">Loading…</p>
+        <PageLoading />
       ) : selected !== null ? (
         <ConnectorDetail
           connector={selected}
@@ -217,104 +339,107 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
           }}
         />
       ) : (
-        <div className="usage-body cpage-body">
-          <p className="usage-note memory-intro">
+        <PageBody>
+          <PageNote>
             Connect a service once and every Bot can use it. A Bot reaches for a connector before clicking through a website; HQ can answer from the ones that
             only read. Keys are stored encrypted and never shown to a Bot.
-          </p>
+          </PageNote>
 
-          <section className="usage-section">
-            <h2>Connected</h2>
+          <PageSection title="Connected">
             {connectors.length === 0 ? (
-              <p className="faint">Nothing connected yet. Add one below.</p>
+              <Faint>Nothing connected yet. Add one below.</Faint>
             ) : (
-              <div className="cpage-grid">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(300px,100%),1fr))] gap-2.5">
                 {connectors.map((connector) => {
                   const status = statusOf(connector);
                   const on = connector.check.tools.length - (connector.disabledTools?.length ?? 0);
                   return (
-                    <button key={connector.id} type="button" className={`cpage-card${connector.enabled ? "" : " off"}`} onClick={() => onSelect(connector.id)}>
-                      <Mark label={connector.label} />
-                      <span className="cpage-card-main">
-                        <b>{connector.label}</b>
-                        <span>{connector.catalog === null ? host(connector.url) : catalog.find((entry) => entry.id === connector.catalog)?.detail ?? "Built in"}</span>
-                        <small>
+                    <ConnectorCard
+                      key={connector.id}
+                      off={!connector.enabled}
+                      onClick={() => onSelect(connector.id)}
+                      mark={<Mark label={connector.label} brand={connector.catalog} url={connector.catalog === null ? connector.url : null} />}
+                      title={connector.label}
+                      line={connector.catalog === null ? host(connector.url) : catalog.find((entry) => entry.id === connector.catalog)?.detail ?? "Built in"}
+                      detail={
+                        <>
                           {needsConnect(connector) ? "Sign in to finish setting it up" : connector.check.ok ? `${on} of ${connector.check.tools.length} tools on` : connector.check.error ?? "Not reachable"}
                           {" · asks "}
                           {GATE_LABEL[connector.gate].toLowerCase()}
                           {guessedReads(connector).length > 0 ? ` · ${guessedReads(connector).length} to confirm for HQ` : ""}
-                        </small>
-                      </span>
-                      <span className={`cpage-status ${status.tone}`}>{status.text}</span>
-                    </button>
+                        </>
+                      }
+                      aside={<Status tone={status.tone}>{status.text}</Status>}
+                    />
                   );
                 })}
               </div>
             )}
-          </section>
+          </PageSection>
 
           {available.length > 0 || adding === null ? (
-            <section className="usage-section">
-              <h2>Available</h2>
-              <div className="cpage-grid">
+            <PageSection title="Available">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(300px,100%),1fr))] gap-2.5">
                 {available.map((entry) => (
-                  <div key={entry.id} className="cpage-card static">
-                    <Mark label={entry.label} />
-                    <span className="cpage-card-main">
-                      <b>{entry.label}</b>
-                      <span>{entry.detail}</span>
-                      <small>{entry.key.kind === "none" ? "No key needed" : entry.key.kind === "oauth" ? "Sign in with your account" : "Needs a key"}</small>
-                    </span>
-                    <button
-                      type="button"
-                      className="btn primary"
-                      disabled={busy === entry.id}
-                      onClick={async () => {
-                        if (entry.key.kind === "none") {
-                          void act(entry.id, () => api("/bot/v1/connectors", { method: "POST", body: JSON.stringify({ catalog: entry.id }) }), `Could not connect ${entry.label}.`);
-                        } else if (entry.key.kind === "oauth") {
-                          setBusy(entry.id);
-                          setError(null);
-                          try {
-                            const response = await api("/bot/v1/connectors", { method: "POST", body: JSON.stringify({ catalog: entry.id }) });
-                            const body: unknown = await response.json().catch(() => null);
-                            const id = response.ok && isRecord(body) && isRecord(body.connector) && typeof body.connector.id === "string" ? body.connector.id : null;
-                            if (id === null) {
-                              setError(await errorMessage(response, `Could not add ${entry.label}.`));
-                              return;
+                  <ConnectorCard
+                    key={entry.id}
+                    mark={<Mark label={entry.label} brand={entry.id} />}
+                    title={entry.label}
+                    line={entry.detail}
+                    detail={entry.key.kind === "none" ? "No key needed" : entry.key.kind === "oauth" ? "Sign in with your account" : "Needs a key"}
+                    aside={
+                      <Button
+                        size="sm"
+                        disabled={busy === entry.id}
+                        onClick={async () => {
+                          if (entry.key.kind === "none") {
+                            void act(entry.id, () => api("/bot/v1/connectors", { method: "POST", body: JSON.stringify({ catalog: entry.id }) }), `Could not connect ${entry.label}.`);
+                          } else if (entry.key.kind === "oauth") {
+                            setBusy(entry.id);
+                            setError(null);
+                            try {
+                              const response = await api("/bot/v1/connectors", { method: "POST", body: JSON.stringify({ catalog: entry.id }) });
+                              const body: unknown = await response.json().catch(() => null);
+                              const id = response.ok && isRecord(body) && isRecord(body.connector) && typeof body.connector.id === "string" ? body.connector.id : null;
+                              if (id === null) {
+                                setError(await errorMessage(response, `Could not add ${entry.label}.`));
+                                return;
+                              }
+                              const failed = await signIn(id);
+                              if (failed !== null) {
+                                setError(failed);
+                                await load();
+                              }
+                            } catch (caught) {
+                              if (!(caught instanceof SignedOutError)) setError(`Could not connect ${entry.label}.`);
+                            } finally {
+                              setBusy(null);
                             }
-                            const failed = await signIn(id);
-                            if (failed !== null) {
-                              setError(failed);
-                              await load();
-                            }
-                          } catch (caught) {
-                            if (!(caught instanceof SignedOutError)) setError(`Could not connect ${entry.label}.`);
-                          } finally {
-                            setBusy(null);
-                          }
-                        } else setAdding({ kind: "catalog", entry });
-                      }}
-                    >
-                      {busy === entry.id ? "Connecting…" : entry.key.kind === "oauth" ? "Connect" : "Add"}
-                    </button>
-                  </div>
+                          } else setAdding({ kind: "catalog", entry });
+                        }}
+                      >
+                        {busy === entry.id ? "Connecting…" : entry.key.kind === "oauth" ? "Connect" : "Add"}
+                      </Button>
+                    }
+                  />
                 ))}
-                <div className="cpage-card static">
-                  <span className="cpage-mark plain">
-                    <Icon name="plug" size={20} />
-                  </span>
-                  <span className="cpage-card-main">
-                    <b>Custom MCP server</b>
-                    <span>Any server that speaks MCP over https</span>
-                    <small>Address, optional key, and what it is for</small>
-                  </span>
-                  <button type="button" className="btn" onClick={() => setAdding({ kind: "custom" })}>
-                    Add
-                  </button>
-                </div>
+                <ConnectorCard
+                  mark={
+                    <span className="flex size-11 items-center justify-center rounded-full bg-secondary text-muted-foreground">
+                      <PlugIcon className="size-5" />
+                    </span>
+                  }
+                  title="Custom MCP server"
+                  line="Any server that speaks MCP over https"
+                  detail="Address, optional key, and what it is for"
+                  aside={
+                    <Button size="sm" variant="secondary" onClick={() => setAdding({ kind: "custom" })}>
+                      Add
+                    </Button>
+                  }
+                />
               </div>
-            </section>
+            </PageSection>
           ) : null}
 
           {adding === null ? null : (
@@ -329,24 +454,20 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
             />
           )}
 
-          <section className="usage-section">
-            <h2>Built in</h2>
-            <div className="cpage-list">
+          <PageSection title="Built in">
+            <List>
               {BUILT_IN.map((item) => (
-                <div key={item.title} className="cpage-row">
-                  <Icon name={item.icon} size={16} />
-                  <span className="cpage-row-main">
-                    <b>{item.title}</b>
-                    <span>{item.detail}</span>
-                  </span>
-                  <span className="cpage-status ok">Always on</span>
-                </div>
+                <Row key={item.title}>
+                  <item.icon className="size-4 flex-none text-muted-foreground" />
+                  <RowMain title={item.title}>{item.detail}</RowMain>
+                  <Status tone="ok">Always on</Status>
+                </Row>
               ))}
-            </div>
-          </section>
-        </div>
+            </List>
+          </PageSection>
+        </PageBody>
       )}
-    </div>
+    </PageFrame>
   );
 }
 
@@ -388,77 +509,73 @@ function ConnectorDetail({
   const source = catalog?.keyUrl ?? connector.url;
 
   return (
-    <div className="usage-body cpage-body">
-      <div className="cpage-hero">
-        <Mark label={connector.label} size={56} />
-        <div className="cpage-hero-main">
-          <h2>{connector.label}</h2>
-          <a href={source} target="_blank" rel="noopener noreferrer">
+    <PageBody>
+      <div className="flex flex-wrap items-center gap-4">
+        <Mark label={connector.label} brand={connector.catalog} url={connector.catalog === null ? connector.url : null} size={56} />
+        <div className="flex min-w-40 flex-1 flex-col gap-0.5">
+          <h2 className="m-0 text-lg font-semibold">{connector.label}</h2>
+          <a className={cn(linkCls, "text-[12.5px]")} href={source} target="_blank" rel="noopener noreferrer">
             {catalog === null ? host(connector.url) : "View source"} ↗
           </a>
         </div>
-        <div className="cpage-hero-actions">
-          <button type="button" className="btn" disabled={busy} onClick={() => void onCheck()}>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" className="rounded-full px-3.5" disabled={busy} onClick={() => void onCheck()}>
             {busy ? "Checking…" : "Check"}
-          </button>
+          </Button>
           {confirmRemove ? (
             <>
-              <button type="button" className="btn danger-fill" disabled={busy} onClick={() => void onRemove()}>
+              <Button variant="destructive" size="sm" className="rounded-full px-3.5" disabled={busy} onClick={() => void onRemove()}>
                 Really uninstall
-              </button>
-              <button type="button" className="btn" onClick={() => setConfirmRemove(false)}>
+              </Button>
+              <Button variant="secondary" size="sm" className="rounded-full px-3.5" onClick={() => setConfirmRemove(false)}>
                 Keep
-              </button>
+              </Button>
             </>
           ) : (
-            <button type="button" className="btn" disabled={busy} onClick={() => setConfirmRemove(true)}>
+            <Button variant="secondary" size="sm" className="rounded-full px-3.5" disabled={busy} onClick={() => setConfirmRemove(true)}>
               Uninstall
-            </button>
+            </Button>
           )}
         </div>
       </div>
-      <p className="cpage-description">{catalog?.detail ?? connector.description}</p>
+      <p className="m-0 -mt-3 text-[13.5px] text-muted-foreground">{catalog?.detail ?? connector.description}</p>
 
-      <section className="usage-section">
-        <h2>Account</h2>
-        <div className="cpage-list">
-          <div className="cpage-row">
-            <span className="cpage-row-main">
-              <b>
-                {connector.auth.kind === "oauth"
+      <PageSection title="Account">
+        <List>
+          <Row>
+            <RowMain
+              title={
+                connector.auth.kind === "oauth"
                   ? connector.auth.connected
                     ? `Signed in${connector.auth.connectedAt ? ` ${when(connector.auth.connectedAt)}` : ""}`
                     : "Not signed in yet"
                   : connector.auth.kind === "none"
                     ? "No key needed"
-                    : `${KEY_LABEL[connector.auth.kind]}${connector.auth.header ? ` · ${connector.auth.header}` : ""}`}
-              </b>
-              <span>
-                {connector.auth.kind === "oauth" && !connector.auth.connected
-                  ? `Signing in happens on ${connector.auth.issuer ? host(connector.auth.issuer) : "the server"}; no key to paste.`
-                  : connector.check.ok
-                    ? `Reached ${when(connector.check.at)}`
-                    : connector.check.error ?? "Could not be reached"}
-              </span>
-            </span>
+                    : `${KEY_LABEL[connector.auth.kind]}${connector.auth.header ? ` · ${connector.auth.header}` : ""}`
+              }
+            >
+              {connector.auth.kind === "oauth" && !connector.auth.connected
+                ? `Signing in happens on ${connector.auth.issuer ? host(connector.auth.issuer) : "the server"}; no key to paste.`
+                : connector.check.ok
+                  ? `Reached ${when(connector.check.at)}`
+                  : connector.check.error ?? "Could not be reached"}
+            </RowMain>
             {connector.auth.kind === "oauth" ? (
-              <button type="button" className="btn primary" disabled={busy} onClick={() => void onSignIn()}>
+              <Button size="sm" disabled={busy} onClick={() => void onSignIn()}>
                 {connector.auth.connected ? "Sign in again" : "Connect"}
-              </button>
+              </Button>
             ) : null}
-            <span className={`cpage-status ${status.tone}`}>{status.text}</span>
-          </div>
+            <Status tone={status.tone}>{status.text}</Status>
+          </Row>
           {connector.auth.kind === "oauth" && connector.auth.connected ? (
-            <button type="button" className="cpage-row cpage-row-btn" disabled={busy} onClick={() => void onDisconnect()}>
-              <Icon name="signout" size={14} />
-              <span className="cpage-row-main">
-                <span>Disconnect this account. The connector stays; sign in again any time.</span>
-              </span>
+            <button type="button" className={rowBtnCls} disabled={busy} onClick={() => void onDisconnect()}>
+              <LogOutIcon className="size-3.5 flex-none text-muted-foreground" />
+              <RowMain>Disconnect this account. The connector stays; sign in again any time.</RowMain>
             </button>
           ) : null}
           {connector.auth.kind === "none" || connector.auth.kind === "oauth" ? null : replacing ? (
             <form
-              className="cpage-row cpage-form"
+              className={cn(rowCls, "gap-2")}
               onSubmit={async (event) => {
                 event.preventDefault();
                 const ok = await onKey({ secret });
@@ -468,131 +585,120 @@ function ConnectorDetail({
                 }
               }}
             >
-              <input type="password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder="Paste the new key" autoComplete="off" autoFocus required />
-              <button type="submit" className="btn primary" disabled={busy || secret.trim() === ""}>
+              <Input className="min-w-0 flex-1" type="password" value={secret} onChange={(event) => setSecret(event.target.value)} placeholder="Paste the new key" autoComplete="off" autoFocus required />
+              <Button type="submit" size="sm" disabled={busy || secret.trim() === ""}>
                 {busy ? "Checking…" : "Replace"}
-              </button>
-              <button type="button" className="btn" onClick={() => setReplacing(false)}>
+              </Button>
+              <Button type="button" size="sm" variant="secondary" onClick={() => setReplacing(false)}>
                 Cancel
-              </button>
+              </Button>
             </form>
           ) : (
-            <button type="button" className="cpage-row cpage-row-btn" onClick={() => setReplacing(true)}>
-              <Icon name="edit" size={14} />
-              <span className="cpage-row-main">
-                <span>Replace the key</span>
-              </span>
+            <button type="button" className={rowBtnCls} onClick={() => setReplacing(true)}>
+              <PencilIcon className="size-3.5 flex-none text-muted-foreground" />
+              <RowMain>Replace the key</RowMain>
               {catalog?.keyUrl ? (
-                <a href={catalog.keyUrl} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()}>
+                <a className={linkCls} href={catalog.keyUrl} target="_blank" rel="noopener noreferrer" onClick={(event) => event.stopPropagation()}>
                   Get one ↗
                 </a>
               ) : null}
             </button>
           )}
-        </div>
-      </section>
+        </List>
+      </PageSection>
 
       {guessed.length > 0 ? (
-        <section className="usage-section">
-          <h2>Reads to confirm</h2>
-          <div className="cpage-list cpage-review">
-            <div className="cpage-row">
-              <Icon name="alert" size={14} />
-              <span className="cpage-row-main">
-                <b>
-                  {guessed.length === 1 ? "1 tool guessed as a read needs" : `${guessed.length} tools guessed as reads need`} your confirmation before HQ can use
-                  {guessed.length === 1 ? " it" : " them"}
-                </b>
-                <span>
-                  HQ never asks before it acts, so it only uses reads a person stands behind. Bots keep using them meanwhile. Confirm only what you know does
-                  nothing but look; anything that changes something stays a change.
-                </span>
-              </span>
+        <PageSection title="Reads to confirm">
+          <List className="border-[color-mix(in_srgb,var(--warning)_40%,var(--input))]">
+            <Row>
+              <TriangleAlertIcon className="size-3.5 flex-none text-warning" />
+              <RowMain
+                title={
+                  <>
+                    {guessed.length === 1 ? "1 tool guessed as a read needs" : `${guessed.length} tools guessed as reads need`} your confirmation before HQ can use
+                    {guessed.length === 1 ? " it" : " them"}
+                  </>
+                }
+              >
+                HQ never asks before it acts, so it only uses reads a person stands behind. Bots keep using them meanwhile. Confirm only what you know does
+                nothing but look; anything that changes something stays a change.
+              </RowMain>
               {picked === null ? (
-                <button type="button" className="btn" disabled={busy} onClick={() => setPicked(new Set(guessed))}>
+                <Button size="sm" variant="secondary" disabled={busy} onClick={() => setPicked(new Set(guessed))}>
                   Review
-                </button>
+                </Button>
               ) : null}
-            </div>
+            </Row>
             {picked !== null ? (
               <>
                 {guessed.map((tool) => (
-                  <label key={tool} className="cpage-row cpage-pick">
-                    <input
-                      type="checkbox"
+                  <label key={tool} className={cn(rowCls, "cursor-pointer")}>
+                    <Checkbox
                       checked={picked.has(tool)}
                       disabled={busy}
-                      onChange={(event) => {
+                      onCheckedChange={(checked) => {
                         const next = new Set(picked);
-                        if (event.target.checked) next.add(tool);
+                        if (checked) next.add(tool);
                         else next.delete(tool);
                         setPicked(next);
                       }}
                     />
-                    <span className="cpage-row-main">
-                      <b>{humanTool(tool)}</b>
-                      <span>
-                        <code>{tool}</code>
-                      </span>
-                    </span>
+                    <RowMain title={humanTool(tool)}>
+                      <Code>{tool}</Code>
+                    </RowMain>
                   </label>
                 ))}
-                <div className="cpage-row cpage-review-actions">
-                  <span className="cpage-row-main">
-                    <span>
-                      {picked.size} of {guessed.length} selected
-                    </span>
-                  </span>
-                  <button type="button" className="btn" disabled={busy} onClick={() => setPicked(picked.size === guessed.length ? new Set() : new Set(guessed))}>
+                <Row className="flex-wrap gap-2">
+                  <RowMain>
+                    {picked.size} of {guessed.length} selected
+                  </RowMain>
+                  <Button size="sm" variant="secondary" disabled={busy} onClick={() => setPicked(picked.size === guessed.length ? new Set() : new Set(guessed))}>
                     {picked.size === guessed.length ? "Select none" : "Select all"}
-                  </button>
-                  <button type="button" className="btn" disabled={busy} onClick={() => setPicked(null)}>
+                  </Button>
+                  <Button size="sm" variant="secondary" disabled={busy} onClick={() => setPicked(null)}>
                     Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="btn primary"
+                  </Button>
+                  <Button
+                    size="sm"
                     disabled={busy || picked.size === 0}
                     onClick={async () => {
                       if (await onConfirmReads(guessed.filter((tool) => picked.has(tool)))) setPicked(null);
                     }}
                   >
                     {busy ? "Confirming…" : `Confirm ${picked.size} as reads`}
-                  </button>
-                </div>
+                  </Button>
+                </Row>
               </>
             ) : null}
-          </div>
-        </section>
+          </List>
+        </PageSection>
       ) : null}
 
-      <section className="usage-section">
-        <h2>Tools</h2>
-        <div className="cpage-list">
-          <button type="button" className="cpage-row cpage-row-btn" aria-expanded={toolsOpen} onClick={() => setToolsOpen((value) => !value)}>
-            <span className="cpage-row-main">
-              <b>
-                {tools.length === 0 ? "No tools listed" : `${on} of ${tools.length} enabled`}
-              </b>
-              <span>Switch off what Bots should never touch. "Changes" marks what the gate asks about.</span>
-            </span>
-            <Icon name="chev" size={16} className={toolsOpen ? "cpage-chev open" : "cpage-chev"} />
+      <PageSection title="Tools">
+        <List>
+          <button type="button" className={rowBtnCls} aria-expanded={toolsOpen} onClick={() => setToolsOpen((value) => !value)}>
+            <RowMain title={tools.length === 0 ? "No tools listed" : `${on} of ${tools.length} enabled`}>
+              Switch off what Bots should never touch. &quot;Changes&quot; marks what the gate asks about.
+            </RowMain>
+            <ChevronDownIcon className={cn("size-4 flex-none text-muted-foreground transition-transform", toolsOpen && "rotate-180")} />
           </button>
           {toolsOpen
             ? tools.map((tool) => {
                 const { effect, reviewed } = toolEffect(connector, tool);
                 const enabled = !disabled.has(tool);
                 return (
-                  <div key={tool} className={`cpage-row cpage-tool${enabled ? "" : " off"}`}>
-                    <span className="cpage-row-main">
-                      <b>{humanTool(tool)}</b>
-                      <span>
-                        <code>{tool}</code>
-                      </span>
+                  <Row key={tool}>
+                    <span className={cn("flex min-w-0 flex-1", !enabled && "opacity-50")}>
+                      <RowMain title={humanTool(tool)}>
+                        <Code>{tool}</Code>
+                      </RowMain>
                     </span>
                     <button
                       type="button"
-                      className={`cpage-tag ${effect}`}
+                      className={cn(
+                        "flex-none cursor-pointer rounded-full border px-2 py-0.5 text-[11px] hover:bg-accent disabled:cursor-default disabled:opacity-60",
+                        effect === "write" ? "border-warning/40 text-warning" : "border-input text-muted-foreground",
+                      )}
                       title={
                         effect === "write"
                           ? "Counted as a change: the gate may ask first. Click if it only reads."
@@ -606,70 +712,46 @@ function ConnectorDetail({
                     >
                       {effect === "write" ? "changes" : reviewed ? "reads" : "reads?"}
                     </button>
-                    <Switch checked={enabled} disabled={busy} label={`${humanTool(tool)} enabled`} onChange={(next) => void onPatch({ tools: { [tool]: next } })} />
-                  </div>
+                    <Toggle checked={enabled} disabled={busy} label={`${humanTool(tool)} enabled`} onChange={(next) => void onPatch({ tools: { [tool]: next } })} />
+                  </Row>
                 );
               })
             : null}
-        </div>
-      </section>
+        </List>
+      </PageSection>
 
-      <section className="usage-section">
-        <h2>Access</h2>
-        <div className="cpage-list">
-          <div className="cpage-row">
-            <span className="cpage-row-main">
-              <b>On for every Bot</b>
-              <span>Off keeps the key and the settings, but no Bot can use it.</span>
-            </span>
-            <Switch checked={connector.enabled} disabled={busy} label="Enabled for Bots" onChange={(next) => void onPatch({ enabled: next })} />
-          </div>
-          <div className="cpage-row">
-            <span className="cpage-row-main">
-              <b>Ask me first</b>
-              <span>When a person is asked before a Bot uses it. HQ only ever reads.</span>
-            </span>
-            <select className="cpage-select" value={connector.gate} disabled={busy} onChange={(event) => void onPatch({ gate: event.target.value })}>
-              {(Object.keys(GATE_LABEL) as ConnectorGate[]).map((value) => (
-                <option key={value} value={value}>
-                  {GATE_LABEL[value]}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </section>
+      <PageSection title="Access">
+        <List>
+          <Row>
+            <RowMain title="On for every Bot">Off keeps the key and the settings, but no Bot can use it.</RowMain>
+            <Toggle checked={connector.enabled} disabled={busy} label="Enabled for Bots" onChange={(next) => void onPatch({ enabled: next })} />
+          </Row>
+          <Row>
+            <RowMain title="Ask me first">When a person is asked before a Bot uses it. HQ only ever reads.</RowMain>
+            <GateSelect className="max-w-[46%]" value={connector.gate} disabled={busy} onChange={(gate) => void onPatch({ gate })} />
+          </Row>
+        </List>
+      </PageSection>
 
-      <section className="usage-section">
-        <h2>Information</h2>
-        <div className="cpage-list cpage-facts">
-          <div className="cpage-row">
-            <span>Address</span>
-            <b>{host(connector.url)}</b>
-          </div>
-          <div className="cpage-row">
-            <span>Source</span>
-            <b>{connector.catalog === null ? "Custom MCP server" : "Built in"}</b>
-          </div>
-          <div className="cpage-row">
-            <span>Called as</span>
-            <b>
-              <code>{connector.name}__…</code>
-            </b>
-          </div>
-          <div className="cpage-row">
-            <span>Added</span>
-            <b>
-              {when(connector.createdAt)} by {connector.createdBy}
-            </b>
-          </div>
-          <div className="cpage-row">
-            <span>Last checked</span>
-            <b>{when(connector.check.at)}</b>
-          </div>
-        </div>
-      </section>
-    </div>
+      <PageSection title="Information">
+        <List>
+          {(
+            [
+              ["Address", host(connector.url)],
+              ["Source", connector.catalog === null ? "Custom MCP server" : "Built in"],
+              ["Called as", <code key="code" className="font-mono text-xs">{connector.name}__…</code>],
+              ["Added", `${when(connector.createdAt)} by ${connector.createdBy}`],
+              ["Last checked", when(connector.check.at)],
+            ] as const
+          ).map(([name, value]) => (
+            <Row key={name} className="justify-between">
+              <span className="text-muted-foreground">{name}</span>
+              <b className="text-right font-medium [overflow-wrap:anywhere]">{value}</b>
+            </Row>
+          ))}
+        </List>
+      </PageSection>
+    </PageBody>
   );
 }
 
@@ -682,9 +764,11 @@ function AddForm({ adding, busy, onCancel, onSubmit }: { adding: NonNullable<Add
   const [description, setDescription] = useState("");
   const [gate, setGate] = useState<ConnectorGate>(adding.kind === "catalog" ? adding.entry.gate : "writes");
 
+  const id = useId();
+  const field = (name: string) => `${id}-${name}`;
   return (
     <form
-      className="cpage-add"
+      className="flex flex-col gap-2.5 rounded-[14px] border border-brand bg-card p-4"
       onSubmit={(event) => {
         event.preventDefault();
         void onSubmit(
@@ -694,79 +778,93 @@ function AddForm({ adding, busy, onCancel, onSubmit }: { adding: NonNullable<Add
         );
       }}
     >
-      <h3>{adding.kind === "catalog" ? `Connect ${adding.entry.label}` : "Custom MCP server"}</h3>
+      <h3 className="m-0 text-sm font-semibold">{adding.kind === "catalog" ? `Connect ${adding.entry.label}` : "Custom MCP server"}</h3>
       {adding.kind === "catalog" ? (
         <>
           {adding.entry.keyHelp === undefined ? null : (
-            <p className="faint">
+            <Faint>
               {adding.entry.keyHelp}{" "}
               {adding.entry.keyUrl === undefined ? null : (
-                <a href={adding.entry.keyUrl} target="_blank" rel="noopener noreferrer">
+                <a className={cn(linkCls, "text-[11.5px] underline")} href={adding.entry.keyUrl} target="_blank" rel="noopener noreferrer">
                   Get one ↗
                 </a>
               )}
-            </p>
+            </Faint>
           )}
-          <label>
-            {adding.entry.label} key
-            <input type="password" value={secret} onChange={(event) => setSecret(event.target.value)} required autoComplete="off" placeholder="Stored encrypted; Bots never see it" autoFocus />
-          </label>
+          <FormField label={`${adding.entry.label} key`} id={field("secret")}>
+            <Input id={field("secret")} type="password" value={secret} onChange={(event) => setSecret(event.target.value)} required autoComplete="off" placeholder="Stored encrypted; Bots never see it" autoFocus />
+          </FormField>
         </>
       ) : (
         <>
-          <label>
-            Name
-            <input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={60} required placeholder="Linear" autoFocus />
-          </label>
-          <label>
-            Server address
-            <input value={url} onChange={(event) => setUrl(event.target.value)} required inputMode="url" placeholder="https://mcp.example.com/mcp" />
-          </label>
-          <label>
-            Key
-            <select value={kind} onChange={(event) => setKind(event.target.value as ConnectorKeyKind)}>
-              <option value="none">No key, or let the server sign me in</option>
-              <option value="bearer">Bearer key (Authorization header)</option>
-              <option value="header">Key in a custom header</option>
-            </select>
-          </label>
-          {kind === "none" ? <p className="faint">A server that runs its own sign-in is detected when it is added; you then connect from its page.</p> : null}
+          <FormField label="Name" id={field("label")}>
+            <Input id={field("label")} value={label} onChange={(event) => setLabel(event.target.value)} maxLength={60} required placeholder="Linear" autoFocus />
+          </FormField>
+          <FormField label="Server address" id={field("url")}>
+            <Input id={field("url")} value={url} onChange={(event) => setUrl(event.target.value)} required inputMode="url" placeholder="https://mcp.example.com/mcp" />
+          </FormField>
+          <FormField label="Key" id={field("kind")}>
+            <Select
+              items={KIND_ITEMS}
+              value={kind}
+              onValueChange={(next) => next !== null && setKind(next as ConnectorKeyKind)}
+            >
+              <SelectTrigger id={field("kind")} className="w-full bg-secondary dark:bg-secondary">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {KIND_ITEMS.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
+          {kind === "none" ? <Faint>A server that runs its own sign-in is detected when it is added; you then connect from its page.</Faint> : null}
           {kind === "header" ? (
-            <label>
-              Header name
-              <input value={header} onChange={(event) => setHeader(event.target.value)} required placeholder="X-Api-Key" />
-            </label>
+            <FormField label="Header name" id={field("header")}>
+              <Input id={field("header")} value={header} onChange={(event) => setHeader(event.target.value)} required placeholder="X-Api-Key" />
+            </FormField>
           ) : null}
           {kind === "none" ? null : (
-            <label>
-              Key value
-              <input type="password" value={secret} onChange={(event) => setSecret(event.target.value)} required autoComplete="off" placeholder="Stored encrypted; Bots never see it" />
-            </label>
+            <FormField label="Key value" id={field("value")}>
+              <Input id={field("value")} type="password" value={secret} onChange={(event) => setSecret(event.target.value)} required autoComplete="off" placeholder="Stored encrypted; Bots never see it" />
+            </FormField>
           )}
-          <label>
-            What it is for (optional)
-            <input value={description} onChange={(event) => setDescription(event.target.value)} maxLength={400} placeholder="Issues and projects for the product team" />
-          </label>
+          <FormField label="What it is for (optional)" id={field("about")}>
+            <Input id={field("about")} value={description} onChange={(event) => setDescription(event.target.value)} maxLength={400} placeholder="Issues and projects for the product team" />
+          </FormField>
         </>
       )}
-      <label>
-        Ask me first
-        <select value={gate} onChange={(event) => setGate(event.target.value as ConnectorGate)}>
-          {(Object.keys(GATE_LABEL) as ConnectorGate[]).map((value) => (
-            <option key={value} value={value}>
-              {GATE_LABEL[value]}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="actions">
-        <button type="button" className="btn" onClick={onCancel}>
+      <FormField label="Ask me first" id={field("gate")}>
+        <GateSelect className="w-full" value={gate} onChange={setGate} />
+      </FormField>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="secondary" onClick={onCancel}>
           Cancel
-        </button>
-        <button type="submit" className="btn primary" disabled={busy}>
+        </Button>
+        <Button type="submit" disabled={busy}>
           {busy ? "Connecting…" : "Connect"}
-        </button>
+        </Button>
       </div>
     </form>
+  );
+}
+
+const KIND_ITEMS: readonly { value: ConnectorKeyKind; label: string }[] = [
+  { value: "none", label: "No key, or let the server sign me in" },
+  { value: "bearer", label: "Bearer key (Authorization header)" },
+  { value: "header", label: "Key in a custom header" },
+];
+
+function FormField({ label, id, children }: { label: string; id: string; children: ReactNode }) {
+  return (
+    <Field className="gap-1.5">
+      <FieldLabel htmlFor={id} className="text-xs font-normal text-muted-foreground">
+        {label}
+      </FieldLabel>
+      {children}
+    </Field>
   );
 }

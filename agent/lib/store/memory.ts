@@ -32,11 +32,15 @@ export function inMemoryKv(): Kv {
       blobs.set(key, new Uint8Array(bytes));
     },
     async getBytes(key) {
+      // Like the fs and Blob drivers, a document reads back as its bytes too.
       const bytes = blobs.get(key);
-      return bytes === undefined ? null : new Uint8Array(bytes);
+      if (bytes !== undefined) return new Uint8Array(bytes);
+      const row = rows.get(key);
+      return row === undefined ? null : new TextEncoder().encode(row.value);
     },
     async list(prefix) {
-      return [...rows.keys()].filter((key) => key.startsWith(prefix)).sort();
+      // Documents and binary objects share one key space, as on disk and in Blob.
+      return [...new Set([...rows.keys(), ...blobs.keys()])].filter((key) => key.startsWith(prefix)).sort();
     },
   };
 }

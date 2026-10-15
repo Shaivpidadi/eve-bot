@@ -135,10 +135,11 @@ Ollama is `http://ollama:11434/v1`.
 | | |
 | --- | --- |
 | **HQ** | The teammate you message. It writes a brief with success criteria, hands the job to the right Bot, and reports back. It does no work itself. |
-| **Bots** | Each has a name, a job, a persona, a playbook it learns, and its own thread. Every workspace starts with Atlas, a generalist. Retire a Bot and it stays gone; if a job ever finds nobody on the team, Atlas rejoins on his own. |
+| **Bots** | Each has a name, a job, a persona, a playbook it learns, and its own thread. Every workspace starts with Atlas, a generalist. Work goes to whoever you tag (`@Ava`), else the Bot whose role fits it, else HQ, which does work itself too. Bots can message each other, and the answer comes back to the thread that asked. |
 | **One computer, kept** | A persistent Linux machine with one Chrome, a terminal, and files, shared by the whole team. Sign-ins carry across Bots. Backed up while Bots work, restored if it is ever replaced. |
 | **Watch and take over** | The screen sits in every thread. When a Bot hits a sign-in, a code, or a CAPTCHA, it asks you; you do the step in its live browser and hand back. Passwords go into the page, never through chat. |
-| **Durable jobs** | A run survives restarts and redeploys, waits for its start time with no compute, renews a lease so a dead run is noticed, and can park a day for your sign-off. A watchdog re-dispatches anything stranded. |
+| **Durable jobs** | A run survives restarts and redeploys, waits for its start time with no compute, renews a lease so a dead run is noticed, and can park a day for your sign-off. A watchdog re-dispatches anything stranded, and the next run continues from the job's journal instead of starting over. |
+| **Rewind** | Every job keeps a journal of what it did. Take a job back to any step from its thread: its files come back as they were, and a fresh run carries on from there. Emails already sent stay sent, and the run is told so. |
 | **Approvals** | Sending email, retiring a Bot, any connector tool that changes something, and any browser click that could send, spend, delete, or save stop for a person first. |
 | **Memory** | The team remembers on its own, workspace-wide, with confidence, history, and fading. Preferences about how you want things written hold in every reply. [More below.](#memory) |
 | **Connectors** | Linear, Notion, Atlassian, and Sentry with one click through their own OAuth. GitHub and any MCP server by address. Every tool has a switch and a read-or-change tag. [More below.](#connectors) |
@@ -276,7 +277,7 @@ door, is in [docs/http.md](docs/http.md).
 | --- | --- |
 | [Configuration](docs/configuration.md) | every variable, the outbound email relay contract, and how the Bots' shell is fenced |
 | [Safety model](docs/safety.md) | run fencing, cancellation, the browser gate, connectors, budgets, and the limits |
-| [Keeping it up to date](docs/updating.md) | the sync workflow, manual syncs for older copies, and what each release asks of you |
+| [Keeping it up to date](docs/updating.md) | the sync workflow, manual syncs for older copies, moving a workspace between Vercel and your machine, and what each release asks of you |
 | [HTTP API](docs/http.md) | the console API, with curl examples |
 | [Development](docs/development.md) | running it locally, the layout, Jev, metrics, and the QA suite that drives a deployment |
 | [Decisions](docs/decisions) | design records, starting with the state store |

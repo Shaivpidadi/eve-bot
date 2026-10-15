@@ -9,7 +9,7 @@ import dynamic from "next/dynamic";
  */
 const Console = dynamic(() => import("@/console/console").then((module) => module.Console), {
   ssr: false,
-  loading: () => <div className="app-loading" aria-busy="true" />,
+  loading: () => <div className="h-dvh bg-background" aria-busy="true" />,
 });
 
 export function ConsoleLoader() {

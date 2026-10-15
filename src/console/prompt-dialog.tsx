@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Field, FieldError, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 
 /** A small question for the person: a name to type, or a yes to a consequence. */
 export interface Prompt {
@@ -18,68 +23,77 @@ export interface Prompt {
 }
 
 export function PromptDialog({ prompt, onClose }: { prompt: Prompt | null; onClose: () => void }) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // What the dialog shows stays while it closes, so it does not empty mid-fade.
+  const [shown, setShown] = useState<Prompt | null>(prompt);
 
   useEffect(() => {
-    const element = dialog.current;
-    if (element === null) return;
-    if (prompt !== null && !element.open) {
+    if (prompt !== null) {
+      setShown(prompt);
       setError(null);
-      element.showModal();
-      element.querySelector<HTMLInputElement>("input")?.select();
-    } else if (prompt === null && element.open) {
-      element.close();
     }
   }, [prompt]);
 
   return (
-    <dialog ref={dialog} onClose={onClose} className="prompt-dialog">
-      {prompt === null ? null : (
-        <form
-          key={prompt.title + (prompt.defaultValue ?? "")}
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const value = String(new FormData(event.currentTarget).get("value") ?? "").trim();
-            if (prompt.label !== undefined && value === "") return;
-            setBusy(true);
-            setError(null);
-            try {
-              const problem = await prompt.onConfirm(value);
-              if (problem === null) onClose();
-              else setError(problem);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <h2>{prompt.title}</h2>
-          {prompt.description === undefined ? null : <p>{prompt.description}</p>}
-          {prompt.label === undefined ? null : (
-            <label>
-              {prompt.label}
-              <input
-                name="value"
-                defaultValue={prompt.defaultValue ?? ""}
-                placeholder={prompt.placeholder}
-                maxLength={prompt.maxLength ?? 120}
-                required
-                autoComplete="off"
-              />
-            </label>
-          )}
-          {error === null ? null : <p className="error-text">{error}</p>}
-          <div className="actions">
-            <button type="button" className="btn" disabled={busy} onClick={onClose}>
-              Cancel
-            </button>
-            <button type="submit" className={prompt.danger ? "btn danger-fill" : "btn primary"} disabled={busy}>
-              {busy ? "…" : prompt.confirm}
-            </button>
-          </div>
-        </form>
-      )}
-    </dialog>
+    <Dialog open={prompt !== null} onOpenChange={(next) => (next ? undefined : onClose())}>
+      <DialogContent className="sm:max-w-[400px]">
+        {shown === null ? null : (
+          <form
+            key={shown.title + (shown.defaultValue ?? "")}
+            className="flex flex-col gap-4"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const value = String(new FormData(event.currentTarget).get("value") ?? "").trim();
+              if (shown.label !== undefined && value === "") return;
+              setBusy(true);
+              setError(null);
+              try {
+                const problem = await shown.onConfirm(value);
+                if (problem === null) onClose();
+                else setError(problem);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>{shown.title}</DialogTitle>
+              {shown.description === undefined ? null : <DialogDescription>{shown.description}</DialogDescription>}
+            </DialogHeader>
+            {shown.label === undefined ? null : (
+              <Field>
+                <FieldLabel htmlFor="prompt-value">{shown.label}</FieldLabel>
+                <Input
+                  id="prompt-value"
+                  name="value"
+                  defaultValue={shown.defaultValue ?? ""}
+                  placeholder={shown.placeholder}
+                  maxLength={shown.maxLength ?? 120}
+                  required
+                  autoComplete="off"
+                  autoFocus
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+              </Field>
+            )}
+            {error === null ? null : <FieldError>{error}</FieldError>}
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant={shown.danger ? "destructive" : "default"}
+                className={shown.danger ? "bg-destructive text-white hover:bg-destructive/90" : undefined}
+                disabled={busy}
+              >
+                {busy ? "…" : shown.confirm}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

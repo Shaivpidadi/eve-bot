@@ -10,7 +10,7 @@ import { operator } from "../../../lib/session";
  *
  * Connectors are account-wide: whatever the workspace connected on the
  * Connectors page is available to each job's Bot, under the connector's name
- * (`<name>__<tool>`, found with `connection_search`). Keys are unsealed only
+ * (`<name>__<tool>`, found with `eve__search`). Keys are unsealed only
  * when eve connects to the server, read from the stored connector each time,
  * and never shown to the model.
  *

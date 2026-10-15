@@ -64,6 +64,27 @@ const host = process.env.HOST?.trim() || "0.0.0.0";
 // NODE_ENV is what tells the agent it is serving rather than being developed:
 // without it a server started here treats itself as a dev box and, with no
 // console token set, leaves /bot/v1 open to anyone who can reach the port.
+// A job whose run was lost to the restart (a rebuild strands it on a local
+// Workflow world) is picked up by a sweep a minute after boot rather than by
+// the daily tick. BOT_TICK_ON_START=off leaves it to the cron.
+if (process.env.BOT_TICK_ON_START !== "off") {
+  const token = process.env.BOT_CONSOLE_TOKEN?.trim() || process.env.BOT_CONSOLE_TOKENS?.split(",")[0]?.split("=")[0]?.trim();
+  setTimeout(async () => {
+    try {
+      const response = await fetch(`http://127.0.0.1:${agentPort}/bot/v1/jobs/sweep`, {
+        method: "POST",
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+        signal: AbortSignal.timeout(60_000),
+      });
+      const body = await response.json().catch(() => null);
+      if (response.ok && body?.swept) console.log(`[bot] start sweep: ${body.due} due, ${body.dispatched} dispatched${body.stranded ? `, ${body.stranded} stranded by the restart` : ""}`);
+      else if (!response.ok) console.warn(`[bot] start sweep: ${response.status}`);
+    } catch (error) {
+      console.warn(`[bot] start sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, 60_000).unref();
+}
+
 const children = [
   spawn(process.execPath, [agentEntry], {
     stdio: "inherit",

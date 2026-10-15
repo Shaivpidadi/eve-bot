@@ -3,6 +3,7 @@ import type { ToolContext } from "eve/tools";
 import type { Stopped } from "../../../lib/computer/netguard";
 
 import { browser, refreshScreen, textOf } from "./browser";
+import { journalPage } from "./journal";
 import { treeIndex, type TreeFacts } from "./consequence";
 import { sessionState } from "./session-state";
 
@@ -328,6 +329,7 @@ export async function look(ctx: ToolContext, options: { readonly full?: boolean 
   };
   lastLook.set(ctx.session.id, result);
   seenRefs.set(ctx.session.id, treeIndex(tree));
+  await journalPage(ctx, url);
   return result;
 }
 

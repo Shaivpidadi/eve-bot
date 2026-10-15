@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
+
 import { SignedOutError } from "../api";
 import type { Member } from "../types";
 import { backoff, botPath, requestConnection, type RelayConnection } from "./connection";
@@ -236,13 +239,13 @@ export function BrowserApp({
   const text = compact ? null : statusText(status);
   // Nothing to show yet: a placeholder browser stands in until the picture arrives.
   const loading = !live && (status.kind === "connecting" || status.kind === "starting") && poster === null;
-  const className = ["browser-app", compact ? "compact" : null, controlling ? "controlling" : null]
-    .filter((name) => name !== null)
-    .join(" ");
-
   return (
     <div
-      className={className}
+      className={cn(
+        "browser-app absolute inset-0 bg-[#161618]",
+        // The thumbnail in a Bot's panel: the wallpaper shows through until a picture arrives, and clicks open the computer.
+        compact && "compact pointer-events-none bg-transparent",
+      )}
       onPaste={(event) => {
         // Pastes your own clipboard into the page while in control: hand it to the computer, then
         // press Ctrl+V there, since the computer's browser runs on Linux.
@@ -256,14 +259,37 @@ export function BrowserApp({
     >
       {/* A live, authenticated, uncached frame: next/image would only get in the way. */}
       {!live && status.kind !== "relay" && poster !== null ? (
-        <img className="poster" src={poster} alt="" onError={() => setBrokenPoster(poster)} />
+        <img
+          className={cn(
+            "absolute inset-0 size-full object-contain",
+            compact ? "object-cover object-top-left" : "brightness-[0.55]",
+          )}
+          src={poster}
+          alt=""
+          onError={() => setBrokenPoster(poster)}
+        />
       ) : null}
-      {loading ? <ScreenSkeleton /> : null}
-      <div ref={container} className="vnc" hidden={status.kind === "relay"} />
+      {loading ? <ScreenSkeleton compact={compact} /> : null}
+      <div
+        ref={container}
+        className={cn(
+          "absolute inset-0",
+          // Watching: keep the viewer's own arrow. noVNC hides it (cursor: none) until the computer sends a
+          // cursor shape, which a view-only connection may never receive; only in control does the pointer
+          // follow the computer's cursor.
+          !controlling && "[&_canvas]:cursor-default!",
+        )}
+        hidden={status.kind === "relay"}
+      />
       {status.kind === "relay" ? <RelayFrame connection={status.connection} /> : null}
       {text === null ? null : (
-        <div className={status.kind === "error" ? "app-status error" : "app-status"}>
-          {status.kind === "error" ? null : <span className="spinner" aria-hidden="true" />}
+        <div
+          className={cn(
+            "absolute top-1/2 left-1/2 flex max-w-[min(90%,460px)] -translate-1/2 items-center gap-[9px] rounded-[10px] border border-[#2a2a2e] bg-[rgba(20,20,22,0.9)] px-3.5 py-[9px] text-[12.5px] text-[#d6d6db]",
+            status.kind === "error" && "text-[#f36b6b]",
+          )}
+        >
+          {status.kind === "error" ? null : <Spinner className="size-3.5 text-[#eee]" aria-hidden="true" />}
           {text}
         </div>
       )}
@@ -271,26 +297,37 @@ export function BrowserApp({
   );
 }
 
-/** The shape of a browser window, shimmering, while the real one is on its way. */
-function ScreenSkeleton() {
+/** The shape of a browser window, shimmering, while the real one is on its way. Sized in container units, so it fits any screen. */
+function ScreenSkeleton({ compact }: { compact: boolean }) {
   return (
-    <div className="screen-skeleton" aria-hidden="true">
-      <div className="sk-bar">
-        <i />
-        <i />
-        <i />
-        <span className="sk-url" />
+    <div
+      className={cn(
+        "@container absolute inset-0 flex flex-col overflow-hidden",
+        compact ? "bg-[rgba(28,28,31,0.92)]" : "bg-[#1c1c1f]",
+        "after:absolute after:inset-0 after:animate-computer-sweep after:bg-[linear-gradient(100deg,transparent_30%,rgba(255,255,255,0.07)_50%,transparent_70%)] after:bg-size-[200%_100%] after:content-['']",
+      )}
+      aria-hidden="true"
+    >
+      <div className="flex items-center gap-[2.2cqw] bg-[#26262a] px-[3cqw] py-[2.2cqw]">
+        <i className="block size-[2.6cqw] rounded-full bg-[#3a3a40]" />
+        <i className="block size-[2.6cqw] rounded-full bg-[#3a3a40]" />
+        <i className="block size-[2.6cqw] rounded-full bg-[#3a3a40]" />
+        <span className="ml-[2cqw] h-[5cqw] flex-1 rounded-[2.5cqw] bg-[#32323a]" />
       </div>
-      <div className="sk-page">
-        <span className="sk-line w-40" />
-        <span className="sk-line w-90" />
-        <span className="sk-line w-75" />
-        <span className="sk-block" />
-        <span className="sk-line w-60" />
-        <span className="sk-line w-85" />
+      <div className="flex flex-1 flex-col gap-[3.4cqw] px-[8cqw] py-[5cqw]">
+        <SkeletonLine width="w-2/5" />
+        <SkeletonLine width="w-9/10" />
+        <SkeletonLine width="w-3/4" />
+        <span className="block h-[22cqw] rounded-[2cqw] bg-[#26262b]" />
+        <SkeletonLine width="w-3/5" />
+        <SkeletonLine width="w-[85%]" />
       </div>
     </div>
   );
+}
+
+function SkeletonLine({ width }: { width: string }) {
+  return <span className={cn("block h-[3cqw] rounded-[1.5cqw] bg-[#2b2b30]", width)} />;
 }
 
 /** Where live connections are unavailable, a frame refreshed every second or so. */
@@ -300,5 +337,5 @@ function RelayFrame({ connection }: { connection: RelayConnection }) {
     const timer = window.setInterval(() => setTick((value) => value + 1), 1_200);
     return () => window.clearInterval(timer);
   }, []);
-  return <img className="relay" src={`${connection.frameUrl}?t=${tick}`} alt="" />;
+  return <img className="absolute inset-0 size-full object-contain" src={`${connection.frameUrl}?t=${tick}`} alt="" />;
 }

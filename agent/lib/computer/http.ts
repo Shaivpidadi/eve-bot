@@ -8,24 +8,7 @@ import { requestHost } from "../protection";
 import { posterKey, readScreen } from "../screens";
 import { computerControl } from "./control";
 import { computerKey } from "./keys";
-import {
-  activateTab,
-  captureScreen,
-  ComputerError,
-  ensureScreen,
-  isInstalling,
-  listDirectory,
-  MAX_FILE_BYTES,
-  openUrl,
-  readWorkspaceFile,
-  removeWorkspacePath,
-  saveTabs,
-  sendInput,
-  syncIdentity,
-  writeWorkspaceFile,
-  type ComputerIo,
-  type InputEvent,
-} from "./runtime";
+import { ComputerError, handsFor, isInstalling, MAX_FILE_BYTES, type ComputerIo, type Hands, type InputEvent } from "../hands";
 import {
   allocateScreen,
   finishHandover,
@@ -73,7 +56,7 @@ const starting = (detail: string) => json({ mode: "starting", retryAfterMs: 4_00
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** Runs `work` against the computer, waking it if needed, and maps failures to responses. */
-async function withComputer<T>(work: (io: ComputerIo) => Promise<T>, waitMs = START_WAIT_MS): Promise<Outcome<T>> {
+async function withComputer<T>(work: (hands: Hands) => Promise<T>, waitMs = START_WAIT_MS): Promise<Outcome<T>> {
   const control = computerControl();
   const availability = await control.availability();
   if (availability.state === "unavailable") {
@@ -93,7 +76,7 @@ async function withComputer<T>(work: (io: ComputerIo) => Promise<T>, waitMs = ST
   try {
     const io = await control.io();
     if (io === null) return missing;
-    const pending = work(io);
+    const pending = work(handsFor(io));
     const winner = await Promise.race([
       pending.then((value) => ({ value })),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), waitMs)),
@@ -153,7 +136,7 @@ async function tabForMember(workspaceId: string, botId: string): Promise<string 
 async function activateFor(workspaceId: string, botId: string, n: number): Promise<void> {
   const targetId = await tabForMember(workspaceId, botId);
   if (targetId === null) return;
-  await withComputer((io) => activateTab(io, n, targetId)).catch(() => undefined);
+  await withComputer((hands) => hands.browser.activate(n, targetId)).catch(() => undefined);
 }
 
 const noBot = () => json({ error: "no such bot" }, 404);
@@ -205,7 +188,7 @@ export async function openBrowser(request: Request, access: Access, botId: strin
   if (wantsControl && control?.by !== access.user) {
     return control === null ? json({ error: "Take control first." }, 409) : heldBy(control);
   }
-  const started = await withComputer((io) => ensureScreen(io, screen.n, { wait: false }));
+  const started = await withComputer((hands) => hands.screen.ensure(screen.n, { wait: false }));
   if (!started.ok) return started.response;
   if (started.value.started || screen.browser.state !== "on") await setBrowserState(screen.n, "on");
   // Watching this member: bring its tab to the front so the live picture is its work.
@@ -252,7 +235,7 @@ export async function takeControl(request: Request, access: Access, botId: strin
       text: `${access.user} took control of the team's browser.`,
     });
   }
-  const started = await withComputer((io) => ensureScreen(io, screen.n, { wait: false }));
+  const started = await withComputer((hands) => hands.screen.ensure(screen.n, { wait: false }));
   if (!started.ok) return started.response;
   // Control should land on this member's own tab, not whatever was last on screen.
   await activateFor(access.workspaceId, bot.id, screen.n);
@@ -260,7 +243,7 @@ export async function takeControl(request: Request, access: Access, botId: strin
   if (started.value.started && url !== null) {
     // The browser restarted since the Bot asked. It reopens its last tabs; only
     // if it came back empty does the page the Bot was on get opened.
-    await withComputer((io) => openUrl(io, screen.n, url, { ifBlank: true }));
+    await withComputer((hands) => hands.browser.open(screen.n, url, { ifBlank: true }));
   }
   const held = (await teamScreen(access.workspaceId)) ?? screen;
   return connection(bot.id, held, "control", { host: requestHost(request) });
@@ -326,11 +309,11 @@ export async function releaseControl(
 
   let synced = 0;
   if (options.handBack) {
-    const outcome = await withComputer((io) => syncIdentity(io, screen.n), 45_000);
+    const outcome = await withComputer((hands) => hands.identity.sync(screen.n), 45_000);
     if (outcome.ok) synced = outcome.value.synced;
   }
   // Wherever the person left the browser is where it reopens after a restart.
-  await withComputer((io) => saveTabs(io, screen.n), 20_000);
+  await withComputer((hands) => hands.browser.saveTabs(screen.n), 20_000);
   await setControl(screen.n, null);
   if (options.handBack && handover !== null && handover.jobId !== null) {
     // The Bot's request is answered from the thread once control is back. If the
@@ -384,7 +367,7 @@ export async function frame(access: Access, botId: string | undefined): Promise<
   const screen = await teamScreen(access.workspaceId);
   if (screen === null) return json({ error: "no screen" }, 404);
   const targetId = (await tabForMember(access.workspaceId, bot.id)) ?? undefined;
-  const outcome = await withComputer((io) => captureScreen(io, screen.n, 50, targetId));
+  const outcome = await withComputer((hands) => hands.screen.capture(screen.n, 50, targetId));
   if (!outcome.ok) return outcome.response;
   return new Response(Buffer.from(outcome.value.bytes), {
     headers: { "content-type": outcome.value.mediaType, "cache-control": "no-store", ...SECURITY_HEADERS },
@@ -402,7 +385,7 @@ export async function input(request: Request, access: Access, botId: string | un
   }
   const event = inputEvent(await readBody(request));
   if (event === null) return json({ error: "unsupported input" }, 400);
-  const outcome = await withComputer((io) => sendInput(io, screen.n, event));
+  const outcome = await withComputer((hands) => hands.screen.input(screen.n, event));
   return outcome.ok ? json({ ok: true }) : outcome.response;
 }
 
@@ -434,7 +417,7 @@ function inputEvent(body: Record<string, unknown> | null): InputEvent | null {
 const pathParam = (request: Request) => new URL(request.url).searchParams.get("path") ?? "/workspace";
 
 export async function listFiles(request: Request): Promise<Response> {
-  const outcome = await withComputer((io) => listDirectory(io, pathParam(request)), 45_000);
+  const outcome = await withComputer((hands) => hands.files.list(pathParam(request)), 45_000);
   return outcome.ok ? json(outcome.value) : outcome.response;
 }
 
@@ -456,7 +439,7 @@ const IMAGE_TYPES: Record<string, string> = {
  */
 export async function fileContent(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  const outcome = await withComputer((io) => readWorkspaceFile(io, pathParam(request)), 45_000);
+  const outcome = await withComputer((hands) => hands.files.read(pathParam(request)), 45_000);
   if (!outcome.ok) return outcome.response;
   const { path, bytes } = outcome.value;
   const extension = posix.extname(path).toLowerCase();
@@ -479,7 +462,7 @@ export async function uploadFile(request: Request, access: Access): Promise<Resp
   if (declared > MAX_FILE_BYTES) return json({ error: `Uploads are limited to ${MAX_FILE_BYTES / 1_048_576} MB.` }, 413);
   const bytes = new Uint8Array(await request.arrayBuffer());
   if (bytes.byteLength > MAX_FILE_BYTES) return json({ error: `Uploads are limited to ${MAX_FILE_BYTES / 1_048_576} MB.` }, 413);
-  const outcome = await withComputer((io) => writeWorkspaceFile(io, pathParam(request), bytes), 60_000);
+  const outcome = await withComputer((hands) => hands.files.write(pathParam(request), bytes), 60_000);
   if (!outcome.ok) return outcome.response;
   console.info(`[computer] ${access.user} uploaded ${outcome.value.path} (${bytes.byteLength} bytes)`);
   return json({ saved: true, path: outcome.value.path, bytes: bytes.byteLength }, 201);
@@ -492,7 +475,7 @@ export async function deleteFile(request: Request, access: Access): Promise<Resp
   if (typeof body?.confirm !== "string" || body.confirm !== posix.basename(path)) {
     return json({ error: "Type the name of the file or folder to confirm." }, 400);
   }
-  const outcome = await withComputer((io) => removeWorkspacePath(io, path), 60_000);
+  const outcome = await withComputer((hands) => hands.files.remove(path), 60_000);
   if (!outcome.ok) return outcome.response;
   console.info(`[computer] ${access.user} deleted ${outcome.value.path}`);
   return json({ deleted: true, path: outcome.value.path });

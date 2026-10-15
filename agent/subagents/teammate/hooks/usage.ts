@@ -20,16 +20,13 @@ import { isHalted, markHalted } from "../lib/stops";
  * Each step's cost also draws on the workspace budget, against the
  * reservation of the run this session is (see `budget.ts`). When the budget
  * says the run has spent past its reservation with nothing left in the
- * workspace, the session is marked halted and its next `step.started` throws:
- * eve fails the turn before that model call is made, the run's parent sees the
- * child fail, finds the run halted, and blocks the job with the budget reason.
- * Hooks observe after the fact, so the step that crossed the line is spent:
- * the overrun is bounded by one step, plus one per other instance running the
- * same session, which learns of the halt at its own next completed step.
- * tests/turn-stop.test.ts runs eve's own turn loop to check that the throw
- * stops the model call. A context compaction, which eve runs just before
- * `step.started` when the history is long, is stopped by the same flag in the
- * teammate's model resolver (see `lib/stops.ts`).
+ * workspace, the session is marked halted. The teammate's model resolver
+ * refuses the next step on that flag before any model call or compaction (see
+ * `lib/stops.ts`; since eve 0.68 a throwing hook no longer stops a turn), and
+ * `run_job` notices the halt at its next look and cancels the Bot's turn. Hooks
+ * observe after the fact, so the step that crossed the line is spent: the
+ * overrun is bounded by one step, plus one per other instance running the
+ * same session. tests/turn-stop.test.ts runs eve's own turn loop to check it.
  */
 const models = sessionState<string>();
 const jobs = sessionState<{ jobId: string; botId: string }>();
@@ -70,8 +67,6 @@ async function jobOf(workspaceId: string, sessionId: string): Promise<{ jobId: s
 export default defineHook({
   events: {
     "step.started"(event, ctx) {
-      // Outside any try: a throw here is what stops the model call.
-      if (isHalted(ctx.session.id)) throw new Error(BUDGET_HALT_REASON);
       const modelId = (event.data as { modelId?: unknown }).modelId;
       if (typeof modelId === "string") models.set(ctx.session.id, modelId);
     },

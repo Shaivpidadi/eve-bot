@@ -280,7 +280,7 @@ describe("send_email through the ledger", () => {
 
   it("sends once with the action id as idempotency key, and a replay returns the stored receipt", async () => {
     const { actions, send, calls, sendEmail } = await setup();
-    await sendEmail.approval.response({ responder: { principalId: "op_1" }, request: { callId: "call_1" }, session: { id: "sess_A" } });
+    await sendEmail.approval.response({ response: { decision: "approve", principal: { principalId: "op_1" } }, request: { callId: "call_1" }, session: { id: "sess_A" } } as never);
 
     const first = await send();
     expect(first).toMatchObject({ sent: true, status: "sent", receipt: { providerId: "msg_1", status: "queued", httpStatus: 202 } });

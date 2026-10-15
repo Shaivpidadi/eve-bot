@@ -1,4 +1,4 @@
-import { DELETE, GET, PATCH, POST, defineChannel } from "eve/channels";
+import { DELETE, GET, PATCH, POST, SessionStrandedError, defineChannel } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
 
@@ -6,14 +6,16 @@ import { authenticate, sessionCookie, setStoredName, tokensConfigured, type Acce
 import { record } from "../lib/activity";
 import { readArtifact } from "../lib/artifacts";
 import { buildBoard } from "../lib/board";
-import { findBot, getBot, hireBot, listBots, patchBot, retireBot } from "../lib/bots";
+import { findBot, getBot, hireBot, isHq, listBots, patchBot, retireBot } from "../lib/bots";
 import { computerMode, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
 import { cancelJobRun, describeInterruption, interruptVia, within } from "../lib/cancel";
+import { forgetGeneration } from "../lib/computer-backup";
+import { computerControl } from "../lib/computer/control";
 import { stopRunCommands } from "../lib/computer/shell";
 import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
-import { isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
+import { getJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
 import { FIELDS as MEMORY_FIELDS, forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, readFields, remember, restore as restoreMemory, revive as reviveMemory, rewrite as rewriteMemory, setField, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
@@ -22,6 +24,16 @@ import { addConnector, completeOAuth, confirmGuessedReads, disconnectOAuth, getC
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
 import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
+import { buildId, overrideBuildId } from "../lib/build";
+import { dispatchDue } from "../lib/dispatch";
+import { deliverNotes } from "../lib/teammail";
+import { isInternal, noteOrigin } from "../lib/self";
+import { crashRun, qaEnabled } from "../lib/qa";
+import { rewind } from "../lib/rewind";
+import { exportEnabled, exportTo } from "../lib/store/transfer";
+import { PassThrough, Readable } from "node:stream";
+import { version as appVersion } from "../../package.json";
+import { handsFor } from "../lib/hands";
 import { store } from "../lib/store";
 import { usageReport } from "../lib/usage-report";
 import { versionReport } from "../lib/version";
@@ -94,12 +106,12 @@ const seeOther = (location: string, headers: Record<string, string> = {}) =>
 async function restartWedgedRoom(
   workspaceId: string,
   room: string,
-  attachSession: (sessionId: string) => { cancel(options: { tasks: boolean }): Promise<unknown> },
+  attachSession: (sessionId: string) => { cancel(options?: { turnId?: string }): Promise<unknown> },
 ): Promise<number> {
   const old = (await getRoomState(workspaceId, room))?.sessionId ?? null;
   const generation = await restartRoom(workspaceId, room);
   if (old !== null) {
-    await within(attachSession(old).cancel({ tasks: false }), 5_000).catch(() => undefined);
+    await within(attachSession(old).cancel(), 5_000).catch(() => undefined);
   }
   const botId = botIdForRoom(room);
   const bot = botId === null ? null : await getBot(workspaceId, botId);
@@ -121,6 +133,27 @@ function publicOrigin(request: Request): string {
   const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.replace(":", "");
   const host = requestHost(request) ?? url.host;
   return `${proto}://${host}`;
+}
+
+const SWEEP_EVERY_MS = 60_000;
+let lastSweepAt = 0;
+
+/** The app itself, acting in a room: what a schedule sends as. */
+/** Hands a teammate's note to its thread, as the runtime (see `teammail.ts`). */
+const sendInto =
+  (from: (address: string) => { send: (message: string, options: { auth: SessionAuthContext }) => Promise<unknown> }) =>
+  async (workspaceId: string, room: string, message: string): Promise<void> => {
+    await from(await addressOf(workspaceId, room)).send(message, { auth: runtimePrincipal(workspaceId, room) });
+    await noteSent(workspaceId, room).catch(() => undefined);
+  };
+
+function runtimePrincipal(workspaceId: string, room: string): SessionAuthContext {
+  return {
+    attributes: roomAttributes(workspaceId, room),
+    authenticator: "app",
+    principalId: "eve:app",
+    principalType: "runtime",
+  };
 }
 
 function principal(access: Access, room: string): SessionAuthContext {
@@ -157,6 +190,30 @@ async function resolveRoom(access: Access, raw: string | undefined): Promise<str
     return json({ error: "no such bot" }, 404);
   }
   return raw;
+}
+
+/**
+ * How many events a session that is no longer the room's recorded, read once:
+ * an earlier session's history does not change.
+ */
+const recordedLengths = new Map<string, number>();
+async function recordedLength(session: { readonly id?: string; getEventStream(options: { startIndex?: number; follow?: boolean }): Promise<ReadableStream<unknown>> }): Promise<number> {
+  const id = session.id ?? "";
+  const known = recordedLengths.get(id);
+  if (known !== undefined) return known;
+  let length = 0;
+  try {
+    const reader = (await session.getEventStream({ startIndex: 0, follow: false })).getReader();
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) break;
+      length += 1;
+    }
+  } catch {
+    // Unreadable: count it as empty rather than block the thread.
+  }
+  if (id !== "") recordedLengths.set(id, length);
+  return length;
 }
 
 /** The room's current session address: its generation changes each time it is started over. */
@@ -213,19 +270,33 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /** Everything the console needs: the roster with presence, and the feed. */
-    GET("/bot/v1/state", async (request) => {
+    GET("/bot/v1/state", async (request, { from, waitUntil }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
+      void noteOrigin(request);
       const after = new URL(request.url).searchParams.get("after");
+      // The console polls this every few seconds, so teammates' notes to each other go out here.
+      waitUntil(deliverNotes(sendInto(from), { workspaceId: gate.access.workspaceId }).catch(() => 0));
       const board = await buildBoard(gate.access.workspaceId, {
         ...(after !== null && !Number.isNaN(Date.parse(after)) ? { after } : {}),
       });
       return json({ ...board, user: gate.access.user, profile: gate.access.profile });
     }),
 
-    POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params }) => {
+    /**
+     * The server asking itself to deliver its outbox (see lib/self.ts): a job's
+     * wake-up or a teammate's note, from a workflow that cannot reach a room.
+     */
+    POST("/bot/v1/internal/flush", async (request, { from, waitUntil }) => {
+      if (!(await isInternal(request))) return json({ error: "not found" }, 404);
+      waitUntil(deliverNotes(sendInto(from)).catch(() => 0));
+      return json({ flushing: true }, 202);
+    }),
+
+    POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params, waitUntil }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
+      void noteOrigin(request);
       const room = await resolveRoom(gate.access, params.room);
       if (room instanceof Response) return room;
 
@@ -246,6 +317,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         auth: principal(gate.access, room),
       });
       await noteSent(workspaceId, room).catch(() => undefined);
+      waitUntil(deliverNotes(sendInto(from), { workspaceId }).catch(() => 0));
       return json({ room, sessionId: session.id, ...(recovered ? { recovered: true } : {}) });
     }),
 
@@ -359,10 +431,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         cancelledJobs.push(job.id);
       }
       const old = [...new Set([live?.id ?? null, recorded].filter((id): id is string => id !== null))];
-      // The session alone, not its tasks: the one-off jobs' sessions were cancelled
-      // above, routines started here must keep running, and asking eve to cancel
-      // finished children only makes it log that they cannot be cancelled.
-      for (const id of old) await quietly(within(attachSession(id).cancel({ tasks: false })));
+      // The one-off jobs were cancelled above. eve 0.79's cancel stops the turn and
+      // every task still working; a routine waiting for its next cycle is an idle
+      // task and keeps its schedule (see run_job).
+      for (const id of old) await quietly(within(attachSession(id).cancel()));
       // eve's own reset of the old address is left to finish, or not, on its own.
       void quietly(from(address).reset({ reason: `Started over from the console by ${user}` }));
       const reset = { status: `generation ${generation}` };
@@ -407,10 +479,15 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       // ended, so the thread still reads back. The fallback id comes from this
       // workspace's own room record, never from the request.
       const live = await resolveSession(await addressOf(gate.access.workspaceId, room));
-      const sessionId =
-        live?.id ?? (await getRoomState(gate.access.workspaceId, room))?.sessionId ?? null;
+      const state = await getRoomState(gate.access.workspaceId, room);
+      const sessionId = live?.id ?? state?.sessionId ?? null;
       if (sessionId === null) return none();
       const session = live ?? attachSession(sessionId);
+      // The thread's earlier sessions are read back first, as recorded, so a new
+      // session never empties it; the reader's cursor runs across all of them,
+      // and the first session names the thread (see roomstate.ts).
+      const earlier = (state?.sessions ?? []).filter((id) => id !== sessionId);
+      const threadId = earlier[0] ?? sessionId;
 
       const requested = Number(new URL(request.url).searchParams.get("startIndex") ?? 0);
       const startIndex = Number.isInteger(requested) && requested >= 0 ? requested : 0;
@@ -446,14 +523,35 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
           void (async () => {
             try {
-              const events = await session.getEventStream({ startIndex });
-              if (!open) return void events.cancel().catch(() => undefined);
-              reader = events.getReader();
-              for (;;) {
-                const { value, done } = await reader.read();
-                if (done || !open) break;
-                controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+              const pipe = async (events: ReadableStream<unknown>) => {
+                if (!open) return void events.cancel().catch(() => undefined);
+                reader = events.getReader();
+                for (;;) {
+                  const { value, done } = await reader.read();
+                  if (done || !open) break;
+                  controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+                }
+              };
+              let skip = startIndex;
+              for (const id of earlier) {
+                if (!open) return;
+                const length = await recordedLength(attachSession(id));
+                if (skip >= length) {
+                  skip -= length;
+                  continue;
+                }
+                await pipe(await attachSession(id).getEventStream({ startIndex: skip, follow: false }));
+                skip = 0;
               }
+              let events: ReadableStream<unknown>;
+              try {
+                events = await session.getEventStream({ startIndex: skip });
+              } catch (error) {
+                // A session an older eve made is stranded: its history still reads, without following.
+                if (!SessionStrandedError.is(error)) throw error;
+                events = await session.getEventStream({ startIndex: skip, follow: false });
+              }
+              await pipe(events);
             } catch {
               // The session is gone or the reader left; either way the stream ends.
             } finally {
@@ -480,7 +578,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         headers: {
           "content-type": "application/x-ndjson; charset=utf-8",
           "cache-control": "no-store",
-          "x-bot-session": sessionId,
+          "x-bot-session": threadId,
           ...SECURITY_HEADERS,
         },
       });
@@ -548,8 +646,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (status === undefined && name === undefined && role === undefined && persona === undefined && !placement) {
         return json({ error: "nothing to change" }, 400);
       }
-      const before = botId === undefined ? null : await getBot(workspaceId, botId);
+      const before = botId === undefined || isHq(botId) ? null : await getBot(workspaceId, botId);
       if (before === null) return json({ error: "no such bot" }, 404);
+      if (name !== undefined && name.trim().toLowerCase() === "hq") return json({ error: "HQ is taken: it is the team's chief of staff." }, 409);
       if (name !== undefined) {
         // Bots are addressed by name, so two with the same name would be ambiguous.
         const clash = await findBot(workspaceId, name);
@@ -586,7 +685,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const workspaceId = gate.access.workspaceId;
-      const source = params.botId === undefined ? null : await getBot(workspaceId, params.botId);
+      const source = params.botId === undefined || isHq(params.botId) ? null : await getBot(workspaceId, params.botId);
       if (source === null) return json({ error: "no such bot" }, 404);
       const taken = new Set((await listBots(workspaceId)).map((bot) => bot.name.toLowerCase()));
       let name = `${source.name} copy`.slice(0, 40);
@@ -613,6 +712,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const workspaceId = gate.access.workspaceId;
+      if (params.botId !== undefined && isHq(params.botId)) return json({ error: "HQ runs the team and cannot be removed." }, 400);
       const bot = params.botId === undefined ? null : await getBot(workspaceId, params.botId);
       if (bot === null) return json({ error: "no such bot" }, 404);
       const open = (await listOpenJobs(workspaceId)).filter((job) => job.botId === bot.id);
@@ -779,6 +879,83 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /** A routine, changed from the console: a new interval or clock schedule, or a new title. */
+    /** One job as stored, with its journal: what the console's job card and the QA suite read. */
+    GET("/bot/v1/jobs/:jobId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const job = await getJob(gate.access.workspaceId, params.jobId ?? "");
+      if (job === null) return json({ error: "not found" }, 404);
+      const { lease, ...rest } = job;
+      // The lease's token proves a run's identity to job_brief; it never leaves the server.
+      return json({
+        job: {
+          ...rest,
+          journal: job.journal ?? [],
+          lease: lease === null ? null : { kind: lease.kind, until: lease.until, build: lease.build ?? null },
+        },
+      });
+    }),
+
+    /**
+     * The signed-in workspace as an export file (see `lib/store/transfer.ts`),
+     * for an owner with no checkout of their own: `npm run import` reads it.
+     * Off unless `BOT_EXPORT=on`. Connector keys, OAuth tokens and the key
+     * they are sealed with are left out unless `?secrets=1` is asked for.
+     */
+    GET("/bot/v1/export", async (request) => {
+      if (!exportEnabled()) return json({ error: "Exporting is off on this deployment. Set BOT_EXPORT=on to allow it." }, 404);
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const secrets = new URL(request.url).searchParams.get("secrets") === "1";
+      const out = new PassThrough();
+      const chunks: Buffer[] = [];
+      out.on("data", (chunk: Buffer) => chunks.push(chunk));
+      const manifest = await exportTo(store(), out, { workspace: gate.access.workspaceId, secrets, version: appVersion });
+      console.info(`[export] ${gate.access.user} exported workspace ${gate.access.workspaceId}${secrets ? " with secrets" : ""}: ${manifest.counts.docs} documents, ${manifest.counts.bytes} binary objects`);
+      const name = `eve-bot-${gate.access.workspaceId}-${manifest.exportedAt.slice(0, 10)}.bot.gz`;
+      return new Response(Readable.toWeb(Readable.from(Buffer.concat(chunks))) as ReadableStream, {
+        headers: {
+          "content-type": "application/gzip",
+          "content-disposition": `attachment; filename="${name}"`,
+          "cache-control": "no-store",
+          ...SECURITY_HEADERS,
+        },
+      });
+    }),
+
+    /**
+     * "Rewind to here": takes a job back to journal step `index`. The run that
+     * held it is stopped, the job's files are restored as they were at the
+     * nearest saved point, and a fresh run is dispatched, briefed with the
+     * journal up to there and with what cannot be undone.
+     */
+    POST("/bot/v1/jobs/:jobId/rewind", async (request, { attachSession, from, params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const index = typeof body?.index === "number" ? body.index : Number.NaN;
+      const { workspaceId } = gate.access;
+      const done = await rewind({ workspaceId, jobId: params.jobId ?? "", index, by: gate.access.user }, async () => {
+        const io = await computerControl().io();
+        return io === null ? null : handsFor(io);
+      });
+      if (!done.ok) return json({ error: done.reason }, 422);
+      const { outcome } = done;
+      const interrupt = interruptVia(attachSession, `Rewound to step ${index} by ${gate.access.user}`);
+      for (const sessionId of outcome.sessions) await interrupt(sessionId).catch(() => undefined);
+      if (outcome.sessions.length > 0) await stopRunCommands(outcome.sessions).catch(() => null);
+      const dispatched = await dispatchDue(async (job, message) => {
+        await from(await addressOf(job.workspaceId, job.room)).send(message, { auth: runtimePrincipal(job.workspaceId, job.room) });
+      });
+      return json({
+        rewound: true,
+        job: { id: outcome.job.id, title: outcome.job.title, status: outcome.job.status, steps: (outcome.job.journal ?? []).length },
+        files: outcome.files,
+        kept: outcome.kept,
+        dispatched: dispatched.dispatched,
+      });
+    }),
+
     PATCH("/bot/v1/jobs/:jobId", async (request, { params }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
@@ -835,6 +1012,86 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         interruption: cancelled.interruption,
         note: describeInterruption(cancelled),
       });
+    }),
+
+    /**
+     * The watchdog, on demand: one dispatch pass over due jobs, for a server
+     * that just started (`scripts/start.mjs` calls it) and for the console
+     * when it opens, so a job stranded by a restart is picked up in a minute
+     * rather than at the next cron. At most one pass a minute per process.
+     */
+    POST("/bot/v1/jobs/sweep", async (request, { from }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (Date.now() - lastSweepAt < SWEEP_EVERY_MS) return json({ swept: false, reason: "swept recently" });
+      lastSweepAt = Date.now();
+      const outcome = await dispatchDue(async (job, message) => {
+        await from(await addressOf(job.workspaceId, job.room)).send(message, { auth: runtimePrincipal(job.workspaceId, job.room) });
+      });
+      if (outcome.due > 0) console.log(`[bot] sweep: ${outcome.due} due, ${outcome.dispatched} dispatched, ${outcome.stranded} stranded, ${outcome.ms}ms`);
+      return json({ swept: true, build: buildId(), ...outcome });
+    }),
+
+    /**
+     * Faults for the QA suite (`lib/qa.ts`), only on a deployment that set
+     * `BOT_QA=1`; elsewhere these paths do not exist. Each makes the store look
+     * as it does after something the console cannot otherwise cause, so a
+     * check can watch the recovery.
+     */
+    POST("/bot/v1/qa/jobs/:jobId/crash", async (request, { attachSession, params }) => {
+      if (!qaEnabled()) return json({ error: "not found" }, 404);
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const crashed = await crashRun(gate.access.workspaceId, params.jobId ?? "");
+      if (!crashed.ok) return json({ error: crashed.reason }, 422);
+      // A dead process takes its sessions and its shell commands with it.
+      const interrupt = interruptVia(attachSession, "QA: the process running this job died");
+      const problems: string[] = [];
+      for (const sessionId of crashed.sessions) {
+        await interrupt(sessionId).catch((error: unknown) => {
+          problems.push(`${sessionId}: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
+      const commandsStopped = crashed.sessions.length === 0 ? null : await stopRunCommands(crashed.sessions).catch(() => null);
+      return json({
+        crashed: true,
+        job: { id: crashed.job.id, title: crashed.job.title, status: crashed.job.status },
+        token: crashed.token,
+        sessions: crashed.sessions,
+        interruption: crashed.sessions.length === 0 ? "no-session" : problems.length === 0 ? "interrupted" : "failed",
+        ...(problems.length === 0 ? {} : { interruptError: problems.join("; ") }),
+        commandsStopped,
+      });
+    }),
+
+    POST("/bot/v1/qa/build/bump", async (request) => {
+      if (!qaEnabled()) return json({ error: "not found" }, 404);
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const previous = buildId();
+      overrideBuildId(`qa-${Date.now().toString(36)}`);
+      lastSweepAt = 0;
+      return json({ bumped: true, from: previous, to: buildId() });
+    }),
+
+    POST("/bot/v1/qa/computer/replace", async (request) => {
+      if (!qaEnabled()) return json({ error: "not found" }, 404);
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      let io: Awaited<ReturnType<ReturnType<typeof computerControl>["io"]>>;
+      try {
+        io = await computerControl().io();
+      } catch (error) {
+        return json({ replaced: false, error: error instanceof Error ? error.message : String(error) }, 503);
+      }
+      if (io === null) return json({ replaced: false, error: "The computer does not exist yet; it starts with the first job." }, 409);
+      await forgetGeneration(io);
+      await record({
+        workspaceId: gate.access.workspaceId,
+        kind: "computer.failed",
+        text: "QA: the computer's generation marker was removed; the next job treats it as a replacement machine and restores the backup.",
+      });
+      return json({ replaced: true });
     }),
 
     /** The team's connectors: services every Bot can use. Keys never come back out. */

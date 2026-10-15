@@ -39,6 +39,7 @@ export function isSystemMessage(text: string): boolean {
     DUE_JOB_MESSAGE.test(text) ||
     text.startsWith(ROUTINE_REPORT_PREFIX) ||
     text.startsWith("Write the daily standup") ||
+    /^Teammate message from .+? \[mail_[a-z0-9]+\]:\n/.test(text) ||
     // eve's background-task notifications: completed, failed, update, authorization.
     /^Background task \S+ /.test(text)
   );

@@ -179,13 +179,16 @@ describe("the Bot's view of the computer", () => {
     expect(commands[1]).toBe(`rm -f ${stage}`);
   });
 
-  it("refuses whatever else eve might reach for, rather than doing it as the computer's user", () => {
-    const { session } = fakeComputer();
+  it("refuses whatever else eve might reach for, rather than doing it as the computer's user", async () => {
+    const { session, commands } = fakeComputer(() => ({ exitCode: 0, stdout: "bot\n", stderr: "" }));
     const bot = shell.isolatedSandbox(session as never);
-    expect(() => bot.spawn({ command: "sh" })).toThrow(shell.ShellUnavailable);
+    // eve 0.79's bash spawns its launcher: that runs as the bot user too, never through the computer's own spawn.
+    const process = await bot.spawn({ command: "id -un" });
+    expect(await process.wait()).toEqual({ exitCode: 0 });
+    expect(helperArgs(commands[0]!)[0]).toBe("run");
     expect(() => bot.removePath({ path: "/workspace/.computer" })).toThrow(shell.ShellUnavailable);
     expect(session.spawn).not.toHaveBeenCalled();
-    expect(bot.id).toBe("session-1");
+    expect((bot as { id?: string }).id).toBe("session-1");
   });
 });
 
@@ -197,7 +200,8 @@ describe("the bash tool", () => {
     const result = await shell.isolatedBash.execute!({ command: "id -un" }, context(session));
     expect(result).toMatchObject({ exitCode: 0, stdout: "bot\n" });
     expect(helperArgs(commands[0]!)[0]).toBe("run");
-    expect(decode(helperArgs(commands[0]!)[1]!)).toBe("id -un");
+    // eve's bash wraps the command in its launcher, so it can carry on in the background.
+    expect(decode(helperArgs(commands[0]!)[1]!)).toContain("id -un");
     expect(shell.isolatedBash.description).toMatch(/unprivileged bot user/);
   });
 

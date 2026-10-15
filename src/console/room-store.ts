@@ -2,20 +2,29 @@ import type { InputRequest, InputResolution, MessageStreamEvent } from "eve/clie
 
 import { api, errorMessage, isRecord, redirectToLogin, SignedOutError } from "./api";
 import { withoutEmoji } from "./format";
-import type { IconName } from "./icons";
 import type { ActivityEvent, Member } from "./types";
 
 /** How long a sent message may go unacknowledged by its thread before the console says so. */
 /** How long a sent message may go without a turn before the thread is restarted; a little past the server's own grace. */
 const NO_REPLY_MS = 50_000;
 
+/** HQ's desk, as `agent/lib/rooms.ts` names it. */
+const HQ_ROOM_NAME = "desk";
+
+/** The glyph a notice wears; the transcript draws each with its lucide icon. */
+export type NoticeIcon = "alert" | "brain" | "check" | "clock" | "dot" | "folder" | "mail" | "monitor" | "person" | "plug" | "x";
+
 export interface Notice {
-  readonly icon: IconName;
+  readonly icon: NoticeIcon;
   readonly label: string;
   readonly detail?: string;
   readonly tone?: "error";
   /** Something the person can do about it, offered as a button. */
   readonly action?: "start-over" | "open-connectors";
+  /** A teammate's face to show in place of the icon, by id or name. */
+  readonly face?: string;
+  /** The job it is about, when it is about one. */
+  readonly jobId?: string;
 }
 
 /**
@@ -37,6 +46,8 @@ function failureNotice(message: string): Omit<Notice, "icon"> {
 
 export type RoomItem =
   | { readonly kind: "you" | "bot"; readonly key: string; readonly at: string; readonly text: string }
+  /** A teammate's message to this thread's member (see `agent/lib/teammail.ts`). */
+  | { readonly kind: "peer"; readonly key: string; readonly at: string; readonly from: string; readonly text: string }
   | ({ readonly kind: "notice"; readonly key: string; readonly at: string } & Notice)
   | { readonly kind: "ask"; readonly key: string; readonly at: string; readonly requestId: string };
 
@@ -88,11 +99,22 @@ export function humanTool(name: string): string {
   return TOOL_WORDS[bare] ?? bare.replaceAll("_", " ").replace(/^\w/, (first) => first.toUpperCase());
 }
 
+/** A teammate's note as it arrived: who sent it and what they said, without the guidance for the reader. */
+export function teammateNote(text: string): { from: string; text: string } | null {
+  const match = /^Teammate message from (.+?) \[mail_[a-z0-9]+\]:\n([\s\S]*)$/.exec(text);
+  if (match === null) return null;
+  const body = (match[2] ?? "").replace(/\n\n— If [\s\S]*$/, "").trim();
+  return { from: match[1] ?? "A teammate", text: body };
+}
+
 /** Messages the runtime wrote into the room: the dispatcher, the standup, task notices. */
 export function systemNotice(text: string): Notice | null {
   const due = /^Job (job_[a-z0-9]+) is due: "(.*)"\./.exec(text);
-  if (due) return { icon: "clock", label: "Routine started", detail: due[2] ?? "" };
-  if (/^Background task \S+ .*is completed\./.test(text)) return { icon: "check", label: "Work came back" };
+  if (due) return { icon: "clock", label: "Due now", detail: due[2] ?? "" };
+  if (/^Background task \S+ .*is completed\./.test(text)) {
+    const job = /"jobId":"(job_[a-z0-9]+)"/.exec(text)?.[1];
+    return { icon: "check", label: "Work came back", ...(job === undefined ? {} : { jobId: job }) };
+  }
   if (/^Background task \S+ .*failed\./.test(text)) return { icon: "alert", label: "Work failed", tone: "error" };
   if (/^Background task \S+ .*needs authorization\./.test(text)) return { icon: "alert", label: "Needs a sign-in" };
   if (/^Background task /.test(text)) return { icon: "dot", label: "Progress update" };
@@ -116,11 +138,21 @@ export function actionNotice(toolName: string, output: unknown): Notice | null {
       if (output.assigned !== true) return null;
       return typeof job.everyMinutes === "number"
         ? { icon: "clock", label: "Created Routine", detail: text(job.title) ?? "" }
-        : { icon: "folder", label: `Assigned to ${text(bot.name) ?? "a Bot"}`, detail: text(job.title) ?? "" };
+        : {
+            icon: "folder",
+            label: bot.pickedBy === "named" || bot.pickedBy === "fit" ? `Handed to ${text(bot.name) ?? "a teammate"}` : "Took it on",
+            detail: text(job.title) ?? "",
+            ...(text(bot.id) === undefined ? {} : { face: text(bot.id) }),
+            ...(text(job.id) === undefined ? {} : { jobId: text(job.id) }),
+          };
     case "update_bot":
       return output.updated === true ? { icon: "person", label: "Updated", detail: text(bot.name) ?? "" } : null;
     case "cancel_job":
       return output.cancelled === true ? { icon: "x", label: "Cancelled", detail: text(job.title) ?? "" } : null;
+    case "message_teammate":
+      return output.sent === true
+        ? { icon: "mail", label: `Messaged ${text(output.to) ?? "a teammate"}`, ...(text(output.to) === undefined ? {} : { face: text(output.to) }) }
+        : null;
     case "retire_bot":
       return output.retired === true ? { icon: "person", label: "Retired a Bot" } : null;
     default:
@@ -426,6 +458,11 @@ export class RoomStore {
     switch (event.type) {
       case "message.received": {
         const message = event.data.message;
+        const note = teammateNote(message);
+        if (note !== null) {
+          this.items.push({ kind: "peer", key, at, from: note.from, text: note.text });
+          break;
+        }
         const notice = systemNotice(message);
         if (notice !== null) {
           this.items.push({ kind: "notice", key, at, ...notice });
@@ -502,6 +539,28 @@ export class RoomStore {
           this.answering.delete(resolution.requestId);
         }
         break;
+      case "task.settled": {
+        // eve 0.79 hands a finished task's result to the model inside the turn, with
+        // no message of its own; a job's run coming back is marked here instead.
+        const data = event.data as { name?: string; status?: string; output?: unknown; error?: { message?: string } };
+        if (data.name !== "run_job") break;
+        const output = isRecord(data.output) ? data.output : {};
+        const job = text(output.jobId);
+        if (data.status === "failed") {
+          this.items.push({ kind: "notice", key, at, icon: "alert", tone: "error", label: "Work failed", ...(job === undefined ? {} : { jobId: job }) });
+        } else if (data.status === "completed" && output.ran === true) {
+          const stopped = output.status === "cancelled";
+          this.items.push({
+            kind: "notice",
+            key,
+            at,
+            icon: stopped ? "x" : "check",
+            label: stopped ? "Work cancelled" : "Work came back",
+            ...(job === undefined ? {} : { jobId: job }),
+          });
+        }
+        break;
+      }
       case "turn.started":
         this.live = true;
         this.liveLabel = null;
@@ -662,6 +721,15 @@ export function roomStore(room: string): RoomStore {
   return store;
 }
 
+/** Bots whose hire line says the QA suite made them as a fixture. */
+export function qaFixtureBots(activity: readonly ActivityEvent[]): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const event of activity) {
+    if (event.kind === "bot.hired" && event.botId != null && / as QA fixture\.?$/.test(event.text)) ids.add(event.botId);
+  }
+  return ids;
+}
+
 /**
  * The transcript: the room's own events, interleaved with the feed. In a Bot's
  * thread, consecutive steps it logged for one job fold into a single block.
@@ -670,17 +738,36 @@ export function buildTimeline(
   member: Member,
   items: readonly RoomItem[],
   activity: readonly ActivityEvent[],
+  members: readonly Member[] = [],
 ): TimelineItem[] {
-  type Entry = { readonly at: string; readonly item: RoomItem } | { readonly at: string; readonly event: ActivityEvent };
+  type Entry = { readonly at: string; readonly item: TimelineItem } | { readonly at: string; readonly event: ActivityEvent };
   const entries: Entry[] = items.map((item) => ({ at: item.at, item }));
+  // Each thread shows its own work. A job remembers the thread it was asked in
+  // (`data.room`, on events recorded since that was added); older events carry
+  // none and keep their old place.
+  const roomOf = new Map<string, string>();
+  for (const event of activity) {
+    const room = event.data?.room;
+    if (event.jobId != null && typeof room === "string") roomOf.set(event.jobId, room);
+  }
+  const nameOfRoom = (room: string) =>
+    room === HQ_ROOM_NAME ? "HQ" : (members.find((entry) => entry.room === room)?.name ?? "A teammate");
   // HQ relays a finished job itself when its session wakes for it. When that
   // wake never comes, the feed still knows the job closed; a notice here keeps
   // the result in front of the person either way, skipped when the relay came.
+  const relayedJobs = new Set(items.flatMap((item) => (item.kind === "notice" && item.label === "Work came back" && item.jobId !== undefined ? [item.jobId] : [])));
   const relayed = items.filter((item) => item.kind === "notice" && item.label === "Work came back").map((item) => Date.parse(item.at));
   const relayedNear = (at: string) => relayed.some((when) => Math.abs(when - Date.parse(at)) < 3 * 60_000);
+  const wasRelayed = (event: ActivityEvent) => (event.jobId != null && relayedJobs.has(event.jobId)) || relayedNear(event.at);
+  // Bots the QA suite hired to test the roster (role "QA fixture") come and go
+  // within a minute; their arrival and removal are not news for a person.
+  const fixtures = qaFixtureBots(activity);
   for (const event of activity) {
+    if (event.botId != null && fixtures.has(event.botId)) continue;
     // A thread that was started over shows nothing from before that moment.
     if (member.clearedAt !== null && event.at < member.clearedAt) continue;
+    const jobRoom = event.jobId == null ? undefined : roomOf.get(event.jobId);
+    const close = event.kind === "job.done" || event.kind === "job.failed";
     const relevant =
       member.kind === "bot"
         ? event.botId === member.id && (event.kind.startsWith("job.") || event.kind === "memory.saved")
@@ -688,12 +775,14 @@ export function buildTimeline(
           event.kind === "bot.retired" ||
           (event.kind === "memory.saved" && event.botId === null) ||
           event.kind.startsWith("computer.") ||
-          ((event.kind === "job.done" || event.kind === "job.failed") && !relayedNear(event.at));
+          // Only work asked here, and only when HQ's own relay never came.
+          (close && (jobRoom === undefined ? true : jobRoom === member.room) && !wasRelayed(event));
     if (relevant) entries.push({ at: event.at, event });
   }
   entries.sort((left, right) => left.at.localeCompare(right.at));
 
   const out: TimelineItem[] = [];
+  const introduced = new Set<string>();
   for (const entry of entries) {
     if ("item" in entry) {
       out.push(entry.item);
@@ -719,7 +808,28 @@ export function buildTimeline(
         label: close && cut > 0 ? withoutEmoji(event.text.slice(0, cut)) : withoutEmoji(event.text),
         ...(close && cut > 0 ? { detail: event.text.slice(cut + 2) } : {}),
         ...(event.kind === "computer.failed" || event.kind === "job.failed" ? { tone: "error" as const } : {}),
+        ...(close && event.botId != null ? { face: event.botId } : {}),
       });
+      continue;
+    }
+    // Work this Bot was given from another thread reads as a conversation: who
+    // asked, then the answer. The live step is on the working row meanwhile.
+    const jobRoom = event.jobId == null ? undefined : roomOf.get(event.jobId);
+    if (jobRoom !== undefined && jobRoom !== member.room && event.jobId != null) {
+      // Who asked, once per job, from whichever of its events comes first.
+      if (!introduced.has(event.jobId)) {
+        introduced.add(event.jobId);
+        const title = typeof event.data?.title === "string" ? event.data.title : /"([^"]+)"/.exec(event.text)?.[1];
+        if (title !== undefined) out.push({ kind: "peer", key: `asked:${event.jobId}`, at: event.at, from: nameOfRoom(jobRoom), text: title });
+      }
+      if (event.kind === "job.done") {
+        // The result itself when the job kept one, else its one-line summary.
+        const deliverable = typeof event.data?.deliverable === "string" && event.data.deliverable.trim() !== "" ? event.data.deliverable : null;
+        const summary = typeof event.data?.summary === "string" ? event.data.summary : event.text.slice(event.text.indexOf(": ") + 2);
+        out.push({ kind: "bot", key: event.id, at: event.at, text: deliverable ?? summary });
+      } else if (event.kind === "job.failed") {
+        out.push({ kind: "notice", key: event.id, at: event.at, icon: "alert", tone: "error", label: withoutEmoji(event.text) });
+      }
       continue;
     }
     const last = out[out.length - 1];

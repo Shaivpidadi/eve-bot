@@ -16,6 +16,7 @@ import {
 } from "../../../lib/actions";
 import { record } from "../../../lib/activity";
 import { guardSideEffect } from "../../../lib/run-guard";
+import { markPoint } from "../lib/journal";
 import { operator } from "../../../lib/session";
 
 /** How long one relay request may take before its outcome counts as unknown. */
@@ -66,8 +67,8 @@ export default defineTool({
     request: always(),
     // Always allowed, as with `always()` alone; this only remembers who said
     // yes so the ledger can name the approver.
-    response: async ({ responder, request, session }) => {
-      await noteApproval(session.id, request.callId, responder.principalId);
+    response: async ({ response, request, session }) => {
+      await noteApproval(session.id, request.callId, response.principal.principalId);
       return { status: "allowed" };
     },
   },
@@ -103,6 +104,8 @@ export default defineTool({
       return { sent: false as const, status: "refused" as const, reason: guard.reason, message: guard.message };
     }
     const job = guard.job;
+    // An email cannot be unsent; the files as they were before it are a point to rewind to.
+    await markPoint(ctx, input.jobId, "before email");
 
     const { action } = await proposeAction({
       workspaceId: who.workspaceId,

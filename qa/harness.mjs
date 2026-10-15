@@ -31,13 +31,16 @@ export function expect(actual, matcher, what, evidence = {}) {
 }
 
 /** One HTTP call against the deployment under test, with the token unless told otherwise. */
-export function client({ url, token, timeoutMs = 20_000 }) {
+export function client({ url, token, workspace, timeoutMs = 20_000 }) {
   const base = url.replace(/\/+$/, "");
   return async function call(path, options = {}) {
     const response = await fetch(`${base}${path}`, {
       method: options.method ?? "GET",
       headers: {
         ...(options.anonymous === true ? {} : { authorization: `Bearer ${token}` }),
+        // A server with no console tokens (a local dev server) takes the workspace from this header;
+        // with tokens, the token decides and this is ignored.
+        ...(workspace ? { "x-bot-workspace": workspace } : {}),
         ...(options.body === undefined ? {} : { "content-type": "application/json" }),
         ...options.headers,
       },

@@ -14,6 +14,8 @@ export interface BoardState {
   readonly activity: readonly ActivityEvent[];
   /** Overdue work and dead runs; absent from a server that does not report them yet. */
   readonly health?: BoardResponse["health"];
+  /** The deployment lets the console download the workspace as an export file. */
+  readonly exportable?: boolean;
 }
 
 const ACTIVITY_LIMIT = 1_200;
@@ -29,6 +31,7 @@ export function useBoard(): { board: BoardState | null; online: boolean; refresh
   const [online, setOnline] = useState(true);
   const events = useRef(new Map<string, ActivityEvent>());
   const cursor = useRef<string | null>(null);
+  const swept = useRef(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -46,8 +49,14 @@ export function useBoard(): { board: BoardState | null; online: boolean; refresh
         events.current.delete(stale.id);
       }
 
-      setBoard({ workspaceId: next.workspaceId, user: next.user, profile: next.profile ?? null, members: next.members, activity, health: next.health });
+      setBoard({ workspaceId: next.workspaceId, user: next.user, profile: next.profile ?? null, members: next.members, activity, health: next.health, exportable: next.exportable });
       setOnline(true);
+      if (!swept.current) {
+        // Opening the console after a restart is the moment to pick up jobs the
+        // restart stranded; the server does at most one pass a minute.
+        swept.current = true;
+        void api("/bot/v1/jobs/sweep", { method: "POST" }).catch(() => undefined);
+      }
     } catch (error) {
       if (!(error instanceof SignedOutError)) setOnline(false);
     }

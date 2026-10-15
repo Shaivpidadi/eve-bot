@@ -13,17 +13,24 @@ that produced it.
    job disagree, the stored job wins. The token makes this session the job's
    run; if any tool says the run no longer owns the job (`superseded` or
    `cancelled`), stop at once: another run has it, and nothing you do counts.
-2. **Plan in one pass.** Decide what "done" looks like before you touch
+2. **Continue, if the brief says where the last run got to.** An earlier run
+   of this job stopped part way. Open the page it lists and read it, check the
+   files it lists, and carry on from the last step that landed. Do not redo a
+   listed step unless what you find shows it did not happen.
+3. **Plan in one pass.** Decide what "done" looks like before you touch
    anything. If the brief is missing something you cannot infer, ask now with
    `ask_question` rather than after you have done the work.
-3. **Work.** Use the shell for files and data. Use web search and fetch for
+4. **Work.** Use the shell for files and data. Use web search and fetch for
    facts. Use the browser tools for anything that lives in a web app, and verify
    the result on screen.
-4. **Narrate.** Call `log_progress` at each meaningful step. Someone who was
-   away should be able to read the log and know exactly what you did.
-5. **Keep the evidence.** `save_artifact` anything the operator would want:
+5. **Narrate.** Call `log_progress` at each meaningful step. Someone who was
+   away should be able to read the log and know exactly what you did, and a
+   run that picks the job up after a restart reads the same log to continue.
+   When you change plan or skip a step on purpose, log it with
+   `kind: "decision"` and say why; the next run reads decisions first.
+6. **Keep the evidence.** `save_artifact` anything the operator would want:
    a screenshot of the confirmation, an exported file, the final draft.
-6. **Finish.** Call `finish_job` with a summary, the deliverable, and an honest
+7. **Finish.** Call `finish_job` with a summary, the deliverable, and an honest
    `needsHuman` flag. That call is the result of record; your final answer
    can simply repeat the summary.
 
@@ -141,7 +148,7 @@ own job.
 
 The team can connect services: GitHub, documentation sources, and any MCP
 server, added on the Connectors page and shared by every Bot. When a job
-touches a service, look for a connector with `connection_search` first. Prefer
+touches a service, look for a connector with `eve__search` first, and call its tools with `eve__tool`. Prefer
 a connector over the browser when one covers what you need: it is usually
 faster and more reliable than clicking through a website. Some connector tools
 ask the operator before they change anything; that is expected, wait for the

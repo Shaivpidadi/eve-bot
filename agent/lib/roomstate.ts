@@ -23,6 +23,11 @@ export interface RoomState {
   readonly workspaceId: string;
   readonly room: string;
   preview: { text: string; from: "you" | "bot"; at: string } | null;
+  /**
+   * The person's latest message here, whole enough to tell who it names. Work
+   * goes to whoever was asked unless this names someone else (see `routing.ts`).
+   */
+  asked?: { text: string; at: string } | null;
   pending: PendingInput[];
   /**
    * Requests a person answered from the console. A request raised inside
@@ -37,6 +42,14 @@ export interface RoomState {
    * address no longer resolves to it, and this is how its thread still reads back.
    */
   sessionId?: string | null;
+  /**
+   * The thread's earlier sessions, oldest first: ones the watchdog moved it off,
+   * and ones eve replaced (a session made by an older eve version is ended on
+   * the next message and a fresh one takes over). The thread reads them back
+   * before the current one, so a change of session never empties it. Starting
+   * over clears them.
+   */
+  sessions?: string[];
   /** How many times the room was started over; part of its session address (see `rooms.ts`). */
   generation?: number;
   /** When the room was last started over: the thread shows nothing recorded before this. */
@@ -59,13 +72,17 @@ export interface RoomState {
 export const WEDGED_AFTER_MS = 45_000;
 
 /**
- * eve 0.58 has a failure where a session accepts a message and never starts a
- * turn: after the dev runtime reloads, or after certain task interactions. It
+ * eve 0.58 had a failure where a session accepts a message and never starts a
+ * turn: after the dev runtime reloads, or after certain task interactions
+ * (eve 0.76 ends such a stranded session on the next send instead). It
  * emits nothing, so the only sign is a delivery with no turn behind it. That
  * is what this reads: the last message went in, no turn has started since,
  * and long enough has passed that one would have.
  */
-export function isWedged(state: Pick<RoomState, "sentAt" | "turnAt"> | null, now: number = Date.now(), graceMs: number = WEDGED_AFTER_MS): boolean {
+export function isWedged(state: (Pick<RoomState, "sentAt" | "turnAt"> & { readonly active?: boolean }) | null, now: number = Date.now(), graceMs: number = WEDGED_AFTER_MS): boolean {
+  // A turn still open takes a new message into itself without starting one: since
+  // eve 0.79 a turn stays open while a job's run works, so that is not wedged.
+  if (state?.active === true) return false;
   const sentAt = state?.sentAt ?? null;
   if (sentAt === null) return false;
   const sent = Date.parse(sentAt);
@@ -118,6 +135,7 @@ export async function resetRoom(workspaceId: string, room: string): Promise<numb
       answered: [],
       active: false,
       sessionId: null,
+      sessions: [],
       generation,
       clearedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -139,6 +157,15 @@ export function notePreview(
     state.preview !== null && state.preview.at > at
       ? state
       : { ...state, preview: { text: trimmed, from, at } },
+  );
+}
+
+const ASKED_CHARS = 4000;
+
+export function noteAsked(workspaceId: string, room: string, text: string, at: string): Promise<void> {
+  const kept = text.slice(0, ASKED_CHARS);
+  return updateRoom(workspaceId, room, (state) =>
+    state.asked != null && state.asked.at > at ? state : { ...state, asked: { text: kept, at } },
   );
 }
 
@@ -171,6 +198,7 @@ export async function restartRoom(workspaceId: string, room: string): Promise<nu
       pending: [],
       active: false,
       sessionId: null,
+      sessions: withEarlier(state.sessions, state.sessionId ?? null),
       generation,
       sentAt: null,
       turnAt: null,
@@ -181,9 +209,19 @@ export async function restartRoom(workspaceId: string, room: string): Promise<nu
   return generation;
 }
 
+const MAX_EARLIER_SESSIONS = 20;
+
+/** The earlier sessions with `previous` added at the end, once. */
+function withEarlier(sessions: readonly string[] | undefined, previous: string | null): string[] {
+  const list = (sessions ?? []).filter((id) => id !== previous);
+  return previous === null ? list : [...list, previous].slice(-MAX_EARLIER_SESSIONS);
+}
+
 export function noteSession(workspaceId: string, room: string, sessionId: string): Promise<void> {
   return updateRoom(workspaceId, room, (state) =>
-    state.sessionId === sessionId ? state : { ...state, sessionId },
+    state.sessionId === sessionId
+      ? state
+      : { ...state, sessions: withEarlier(state.sessions, state.sessionId ?? null).filter((id) => id !== sessionId), sessionId },
   );
 }
 

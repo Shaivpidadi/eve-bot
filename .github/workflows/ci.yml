@@ -2,8 +2,10 @@
 #
 # The build is the same `npm run build` a standalone server runs: `eve build`
 # for the agent, then `next build` for the console. It needs no secrets: model
-# keys, storage, and sandbox credentials are read when the app runs, not when
-# it builds. main is left to Vercel, which builds every push itself.
+# keys and storage are read when the app runs. Since eve 0.79, `eve build` also
+# prepares the computer's sandbox snapshot, which needs Vercel credentials, so
+# CI skips that step: it checks the code builds, it does not ship it. main is
+# left to Vercel, which builds every push itself.
 name: CI
 
 on:
@@ -44,3 +46,5 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          BOT_SKIP_SANDBOX_PREWARM: "1"

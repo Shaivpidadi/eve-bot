@@ -1,13 +1,16 @@
 import { record } from "./activity";
+import { buildId } from "./build";
 import { newId } from "./ids";
+import { appended, journalOf, type NewEntry } from "./journal";
 import { getBot, patchBot } from "./bots";
 import { DEFAULT_EFFORT, type JobEffort } from "./models";
 import { describeSchedule, nextRun, type Schedule } from "./schedule";
 import { createDoc, deleteDoc, listDocs, readDoc, store, updateDoc } from "./store";
-import type { Job, JobArtifact, JobResult, JobStatus } from "./types";
+import type { Job, JobArtifact, JobLease, JobResult, JobStatus } from "./types";
+import { worldIsLocal } from "./world";
 import { describeUsage } from "./usage";
 
-const key = (workspaceId: string, jobId: string) => `jobs/${workspaceId}/${jobId}.json`;
+export const key = (workspaceId: string, jobId: string) => `jobs/${workspaceId}/${jobId}.json`;
 
 /**
  * Every unfinished job has a marker under this prefix, so the minute tick reads
@@ -19,6 +22,32 @@ const INDEX_BUILT = "index/open.built";
 const openMarker = (workspaceId: string, jobId: string) => `${OPEN_INDEX}${workspaceId}/${jobId}`;
 /** A marker with no job behind it may belong to an assignment still being written. */
 const ORPHAN_MARKER_MS = 10 * 60_000;
+
+/**
+ * Whether a lease is held by a run that could still be alive.
+ *
+ * By the clock, until `until` passes. On a local Workflow world a lease from
+ * another build is dead at once: its run cannot resume under new code, so
+ * waiting out its expiry only delays the job (see `lib/build.ts`). A lease
+ * without a build (written before builds were recorded) is judged by the
+ * clock alone.
+ */
+export function leaseIsLive(
+  lease: JobLease | null,
+  now: number = Date.now(),
+  world: { readonly build?: string; readonly local?: boolean } = {},
+): boolean {
+  if (lease === null) return false;
+  if (leaseStranded(lease, world)) return false;
+  return Date.parse(lease.until) > now;
+}
+
+/** A lease held by another build on a world where that run cannot have survived. */
+export function leaseStranded(lease: JobLease, world: { readonly build?: string; readonly local?: boolean } = {}): boolean {
+  const local = world.local ?? worldIsLocal();
+  if (!local || lease.build === undefined) return false;
+  return lease.build !== (world.build ?? buildId());
+}
 
 /** Statuses the minute tick hands to HQ. */
 const DISPATCHABLE: readonly JobStatus[] = ["scheduled", "queued", "dispatched", "running"];
@@ -102,6 +131,8 @@ export async function assignJob(input: {
     botId: job.botId,
     jobId: job.id,
     text: `${bot?.name ?? job.botId} was assigned "${job.title}".`,
+    // The thread it was asked in, so each thread shows only its own work (see the console's timeline).
+    data: { room: job.room, title: job.title },
   });
   return job;
 }
@@ -227,7 +258,7 @@ export async function dueJobs(limit = 25): Promise<Job[]> {
     .filter((job): job is Job => job !== null)
     .filter((job) => DISPATCHABLE.includes(job.status))
     .filter((job) => Date.parse(job.runAt) <= now)
-    .filter((job) => job.lease === null || Date.parse(job.lease.until) <= now)
+    .filter((job) => !leaseIsLive(job.lease, now))
     .sort((left, right) =>
       left.priority === right.priority
         ? left.runAt.localeCompare(right.runAt)
@@ -291,7 +322,7 @@ export async function claimJob(
     }
 
     const lease = current.lease;
-    if (lease !== null && Date.parse(lease.until) > now) {
+    if (lease !== null && leaseIsLive(lease, now)) {
       // A run takes over the dispatcher's lease — that hand-off is the whole
       // point of dispatching. Anything else waits for the lease to lapse.
       const handOff =
@@ -320,6 +351,7 @@ export async function claimJob(
         token: options.token,
         until: new Date(now + options.forMs).toISOString(),
         kind: options.kind,
+        build: buildId(),
       },
       lastRunAt: new Date(now).toISOString(),
       updatedAt: new Date(now).toISOString(),
@@ -363,7 +395,7 @@ export async function holdUntilDue(workspaceId: string, jobId: string, token: st
     }
     const lease = current.lease;
     const mine = lease?.kind === "wait" && lease.token === token;
-    if (lease !== null && Date.parse(lease.until) > now && !mine) {
+    if (lease !== null && leaseIsLive(lease, now) && !mine) {
       outcome.hold =
         lease.kind === "dispatch"
           ? { kind: "due" }
@@ -381,10 +413,33 @@ export async function holdUntilDue(workspaceId: string, jobId: string, token: st
     outcome.hold = { kind: "wait", runAt: current.runAt, title: current.title };
     return stamp({
       ...current,
-      lease: { token, kind: "wait", until: new Date(startsAt + WAIT_GRACE_MS).toISOString() },
+      lease: { token, kind: "wait", until: new Date(startsAt + WAIT_GRACE_MS).toISOString(), build: buildId() },
     });
   });
   return outcome.hold;
+}
+
+/**
+ * A waiting run's hand-off when the start time comes: its wait lease becomes a
+ * dispatch lease, exactly what the watchdog leaves when it wakes a room, so the
+ * `run_job` call the wake-up prompts takes the job over. Null when the run no
+ * longer holds the wait (the job was cancelled, rescheduled, or taken over).
+ */
+export async function handOffWait(
+  workspaceId: string,
+  jobId: string,
+  waitToken: string,
+  options: { readonly token: string; readonly forMs: number },
+): Promise<Job | null> {
+  return updateDoc<Job>(key(workspaceId, jobId), (current) => {
+    if (current === null || current.lease?.kind !== "wait" || current.lease.token !== waitToken) return null;
+    if (!DISPATCHABLE.includes(current.status)) return null;
+    return stamp({
+      ...current,
+      status: "dispatched",
+      lease: { token: options.token, kind: "dispatch", until: new Date(Date.now() + options.forMs).toISOString(), build: buildId() },
+    });
+  });
 }
 
 /**
@@ -401,7 +456,7 @@ export async function renewLease(
     if (current === null || current.lease === null || current.lease.token !== token) return null;
     return stamp({
       ...current,
-      lease: { ...current.lease, until: new Date(Date.now() + forMs).toISOString() },
+      lease: { ...current.lease, until: new Date(Date.now() + forMs).toISOString(), build: buildId() },
     });
   });
   return job !== null;
@@ -428,6 +483,7 @@ export async function holdForSignoff(
         token: input.token,
         until: new Date(Date.now() + input.forMs).toISOString(),
         kind: "signoff",
+        build: buildId(),
       },
     });
   });
@@ -711,6 +767,74 @@ export async function attachArtifact(
 }
 
 /**
+ * Adds a line to the job's journal, as the run bound to `sessionId`. A run
+ * that no longer owns the job writes nothing; a line already there (a
+ * replayed step, or a write that landed and came back as a conflict) is not
+ * written twice. Returns the check so a tool can tell the model when it has
+ * been superseded.
+ */
+export async function appendJournal(workspaceId: string, jobId: string, sessionId: string, entry: NewEntry): Promise<RunCheck> {
+  return patchJobAsRun(workspaceId, jobId, sessionId, (job, run) => {
+    const journal = appended(journalOf(job), run, entry);
+    return journal === null ? null : { ...job, journal };
+  });
+}
+
+export type Rewind =
+  | {
+      ok: true;
+      /** The job as rewound: journal cut to `index`, no lease, queued to run now. */
+      job: Job;
+      /** The job as it was, for what it owned and when each step happened. */
+      before: Job;
+      /** Sessions the run that held it may still have, to stop. */
+      sessions: string[];
+    }
+  | { ok: false; reason: string };
+
+const MAX_UNDONE = 100;
+
+/**
+ * Takes a job back to journal step `index`: the run holding it is dropped
+ * (it finds itself superseded at its next look), the journal is cut to the
+ * first `index` lines with the rest kept under `rewound`, and the job is
+ * queued to run now, so the watchdog (or a sweep) hands it to a fresh run
+ * whose brief replays the journal up to there. A cancelled job stays
+ * cancelled. The computer's files are the caller's to restore.
+ */
+export async function rewindJob(workspaceId: string, jobId: string, index: number, by: string, kept: readonly string[] = []): Promise<Rewind> {
+  const outcome = { reason: `No job ${jobId} in this workspace.`, before: null as Job | null, sessions: [] as string[] };
+  const job = await updateDoc<Job>(key(workspaceId, jobId), (current) => {
+    if (current === null) return null;
+    if (current.status === "cancelled") {
+      outcome.reason = "That job was cancelled; start it again instead of rewinding it.";
+      return null;
+    }
+    const journal = current.journal ?? [];
+    if (!Number.isInteger(index) || index < 0 || index > journal.length) {
+      outcome.reason = `There is no step ${index} to go back to; the journal has ${journal.length}.`;
+      return null;
+    }
+    outcome.before = current;
+    outcome.sessions = [...new Set([current.lease?.session, current.sessionId].filter((id): id is string => typeof id === "string" && id !== ""))];
+    const now = new Date().toISOString();
+    return stamp({
+      ...current,
+      status: "queued",
+      runAt: now,
+      lease: null,
+      error: null,
+      result: null,
+      journal: journal.slice(0, index),
+      rewound: { at: now, by, index, undone: journal.slice(index).slice(-MAX_UNDONE), ...(kept.length > 0 ? { kept: [...kept] } : {}) },
+    });
+  });
+  if (job === null || outcome.before === null) return { ok: false, reason: outcome.reason };
+  await markOpen(workspaceId, jobId);
+  return { ok: true, job, before: outcome.before, sessions: outcome.sessions };
+}
+
+/**
  * Whether a run still owns the job it is closing. Without a token the caller is
  * not a run (an operator action), so it always may. A run whose lease was taken
  * over by another run must not overwrite that run's outcome.
@@ -771,6 +895,7 @@ export async function completeJob(
       botId: job.botId,
       jobId,
       text: `Finished "${job.title}"${result.completion === "recovered" ? " (recovered, unverified)" : ""}${spent(job)}: ${result.summary}`,
+      data: { room: job.room, title: job.title, summary: result.summary, ...(result.deliverable ? { deliverable: result.deliverable.slice(0, 4000) } : {}) },
     });
   }
   return job;
@@ -819,6 +944,7 @@ export async function failJob(
       botId: job.botId,
       jobId,
       text: `Could not finish "${job.title}"${spent(job)}: ${error}`,
+      data: { room: job.room, title: job.title, error },
     });
   }
   return job;

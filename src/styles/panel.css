@@ -1,0 +1,47 @@
+/*
+ * Tailwind theme extensions for the console's panel screens: @keyframes and
+ * --animate-* (or other @theme values) their classes need. No class rules
+ * here: styling lives in the components' Tailwind classes.
+ */
+@theme {
+  /* A tab's contents, or a card opening below the Soul and Playbook cards, rise into place. */
+  --animate-panel-in: panel-in 0.2s cubic-bezier(0.2, 0, 0, 1);
+  /* The status dot of a member at work. */
+  --animate-panel-pulse: panel-pulse 1.6s ease-out infinite;
+  /* The asleep computer's face breathing, and its z's drifting up. */
+  --animate-panel-doze: panel-doze 3.2s ease-in-out infinite;
+  --animate-panel-drift: panel-drift 3.2s ease-in-out infinite;
+
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+  }
+  @keyframes panel-pulse {
+    from {
+      box-shadow: 0 0 0 0 rgb(62 207 115 / 0.5);
+    }
+    to {
+      box-shadow: 0 0 0 6px rgb(62 207 115 / 0);
+    }
+  }
+  @keyframes panel-doze {
+    50% {
+      scale: 1.04 0.97;
+    }
+  }
+  @keyframes panel-drift {
+    0% {
+      opacity: 0;
+      translate: 0 2px;
+    }
+    40% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      translate: 2px -4px;
+    }
+  }
+}

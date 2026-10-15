@@ -1,4 +1,4 @@
-import { experimental_evaluate as evaluate, type Experimental_EvaluationQuestion as EvaluationQuestion } from "ai";
+import { experimental_decide as decide, type Experimental_DecisionQuestion as EvaluationQuestion } from "ai";
 
 import { chargeUsage, reportedCost } from "./spend";
 import type { Usage } from "./usage";
@@ -79,7 +79,7 @@ export function verdictOf(
 }
 
 export interface Judgement<QUESTIONS extends Record<string, EvaluationQuestion>> {
-  readonly answers: Awaited<ReturnType<typeof evaluate<QUESTIONS>>>["answers"];
+  readonly answers: Awaited<ReturnType<typeof decide<QUESTIONS>>>["answers"];
   /** How concentrated each answer is, by question id, when the provider reports it. */
   readonly confidence: Readonly<Record<string, number>>;
   readonly inputTokens: number | undefined;
@@ -136,7 +136,7 @@ export async function judge<const QUESTIONS extends Record<string, EvaluationQue
 ): Promise<Judgement<QUESTIONS> | null> {
   if (!jevEnabled()) return null;
   try {
-    const result = await evaluate({
+    const result = await decide({
       model: process.env.BOT_JEV_MODEL?.trim() || DEFAULT_MODEL,
       state: state as never,
       questions,

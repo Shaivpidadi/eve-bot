@@ -1,13 +1,17 @@
 "use client";
 
+import { XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState, type CSSProperties } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
 
 import { Avatar } from "./avatar";
 import { ChatPane } from "./chat";
 import { ComputerView } from "./computer/computer-view";
 import { PRESENCE_LABEL } from "./format";
 import { HireDialog } from "./hire-dialog";
-import { Icon } from "./icons";
 import { MemoryPage } from "./memory-page";
 import { DetailsPanel, type PanelView } from "./panel";
 import { PANEL_SLIDE_MS, PanelResizer, usePanelWidth } from "./panel-frame";
@@ -62,13 +66,19 @@ type Page = "usage" | "memory" | "connectors";
  * as pages of their own, so the conversation stays in view and a click on
  * the dimmed console, or Escape, is the way back.
  */
-function Sheet({ label, onClose, children }: { label: string; onClose: () => void; children: ReactNode }) {
+function PageSheet({ label, open, onClose, children }: { label: string; open: boolean; onClose: () => void; children: ReactNode }) {
   return (
-    <div className="sheet-backdrop" onMouseDown={(event) => (event.target === event.currentTarget ? onClose() : undefined)}>
-      <aside className="sheet" role="dialog" aria-modal="true" aria-label={label}>
+    <Sheet open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
+      <SheetContent
+        side="right"
+        showCloseButton={false}
+        aria-label={label}
+        className="w-[min(900px,100%)] gap-0 bg-background p-0 text-foreground shadow-[-12px_0_40px_rgba(0,0,0,0.35)] data-[side=right]:w-[min(900px,100%)] data-[side=right]:sm:max-w-none"
+      >
+        <SheetTitle className="sr-only">{label}</SheetTitle>
         {children}
-      </aside>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -87,7 +97,11 @@ export function Console() {
   const [panelOpen, setPanelOpen] = useState(
     () => (read("bot.panel") ?? (window.innerWidth > 1080 ? "open" : "closed")) === "open",
   );
-  const [panelView, setPanelView] = useState<PanelView>("overview");
+  const [panelView, setPanelViewState] = useState<PanelView>(() => (read("bot.tab") as PanelView | null) ?? "activity");
+  const setPanelView = useCallback((next: PanelView) => {
+    setPanelViewState(next);
+    write("bot.tab", next);
+  }, []);
   const [view, setView] = useState<"roster" | "chat">(() => (window.innerWidth > 760 ? "chat" : "roster"));
   const [computer, setComputer] = useState<{ botId: string; requestId: string | null } | null>(null);
   const [hiring, setHiring] = useState(false);
@@ -131,7 +145,6 @@ export function Console() {
   const select = useCallback((id: string) => {
     setSelectedId(id);
     write("bot.selected", id);
-    setPanelView("overview");
     setComputer(null);
     setHover(null);
     setView("chat");
@@ -185,17 +198,24 @@ export function Console() {
     return () => window.clearTimeout(timer);
   }, [panelOpen]);
 
-  if (board === null || member === undefined) return <div className="app-loading" aria-busy="true" />;
+  if (board === null || member === undefined) return <div className="h-dvh bg-background" aria-busy="true" />;
 
   return (
     <>
       <div
-        className="app"
+        className={cn(
+          "app grid h-dvh grid-cols-[264px_minmax(0,1fr)_auto] overflow-hidden bg-background text-[13px] leading-[1.45] text-foreground antialiased",
+          "max-[1080px]:grid-cols-[240px_minmax(0,1fr)] max-[760px]:grid-cols-[minmax(0,1fr)]",
+          "data-[resizing]:cursor-col-resize data-[resizing]:select-none",
+          // On a phone the roster and the thread are two screens.
+          view === "chat" ? "max-[760px]:[&>.sidebar-slot]:hidden" : "max-[760px]:[&>.chat-slot]:hidden",
+        )}
         data-panel={panelOpen ? "open" : "closed"}
         data-view={view}
         data-resizing={resizing ? "" : undefined}
         style={{ "--panel-w": `${panelWidth}px` } as CSSProperties}
       >
+        <div className="sidebar-slot contents">
         <Sidebar
           members={members}
           selectedId={member.id}
@@ -215,10 +235,12 @@ export function Console() {
           onEditProfile={(id) => {
             select(id);
             showPanel(true);
-            setPanelView("settings");
+            setPanelView("profile");
             setEditRequest((count) => count + 1);
           }}
         />
+        </div>
+        <div className="chat-slot contents">
         <ChatPane
           key={member.room}
           member={member}
@@ -227,20 +249,34 @@ export function Console() {
           user={board.user}
           onBack={() => setView("roster")}
           onToggleComputer={() => {
-            // Status → preview: the icon opens the pinned panel, or closes it.
-            showPanel(!(panelOpen && panelView === "overview"));
-            setPanelView("overview");
+            // The icon opens the panel on the computer, or closes it if that is what it shows.
+            showPanel(!(panelOpen && panelView === "computer"));
+            setPanelView("computer");
           }}
           onOpenComputer={(requestId) => setComputer({ botId: computerFor(member, members).id, requestId })}
           onHover={setHover}
         />
-        <div className="panel-slot" inert={!panelOpen}>
+        </div>
+        {/* The panel slides by animating its slot's width (grid columns sized in fr do not animate);
+            PANEL_SLIDE_MS in panel-frame.tsx matches. The panel keeps its own width and is clipped by the
+            slot, so it slides rather than squeezes. Narrower than 1080px it floats over the thread. */}
+        <div
+          className={cn(
+            "panel-slot relative min-h-0 min-w-0 overflow-hidden transition-[width] duration-240 ease-[cubic-bezier(0.2,0,0,1)] in-data-[resizing]:transition-none motion-reduce:transition-none",
+            panelOpen ? "w-(--panel-w)" : "w-0",
+            "max-[1080px]:fixed max-[1080px]:inset-y-0 max-[1080px]:right-0 max-[1080px]:z-30 max-[1080px]:w-[min(100%,340px)] max-[1080px]:overflow-visible max-[1080px]:transition-[transform,visibility]",
+            !panelOpen && "max-[1080px]:invisible max-[1080px]:translate-x-full max-[1080px]:delay-[0s,240ms]",
+          )}
+          inert={!panelOpen}
+        >
           {panelOpen || panelMounted ? (
             <>
               <PanelResizer width={panelWidth} onWidth={setPanelWidth} onResizing={setResizing} />
+              <div className="absolute inset-y-0 right-0 flex w-(--panel-w) flex-col *:min-h-0 *:flex-1 max-[1080px]:w-full max-[1080px]:shadow-float">
               <DetailsPanel
                 member={member}
                 members={members}
+                activity={board.activity}
                 view={panelView}
                 onView={setPanelView}
                 onClose={() => showPanel(false)}
@@ -253,38 +289,41 @@ export function Console() {
                 onHover={setHover}
                 editRequest={editRequest}
               />
+              </div>
             </>
           ) : null}
         </div>
       </div>
 
       {banners.length > 0 && computer === null ? (
-        <div className="needs-you" role="status">
+        <div className="fixed top-2.5 left-1/2 z-45 flex w-[min(94vw,520px)] -translate-x-1/2 flex-col gap-1.5" role="status">
           {banners.slice(0, 3).map((bot) => (
-            <div key={bot.id} className="needs-you-row">
+            <div
+              key={bot.id}
+              className="flex items-center gap-2.5 rounded-xl border border-input bg-card py-2 pr-2 pl-3 text-[12.5px] text-card-foreground shadow-float"
+            >
               <Avatar member={bot} size={20} />
-              <span className="needs-you-text">
-                <b>{`${bot.name} needs you`}</b>
-                {bot.computer.handover === null ? null : <span className="faint">{bot.computer.handover.reason}</span>}
+              <span className="flex min-w-0 flex-1 flex-col">
+                <b className="font-semibold">{`${bot.name} needs you`}</b>
+                {bot.computer.handover === null ? null : (
+                  <span className="truncate text-[11.5px] text-faint">{bot.computer.handover.reason}</span>
+                )}
               </span>
-              <button
-                type="button"
-                className="btn primary"
-                onClick={() => setComputer({ botId: bot.id, requestId: null })}
-              >
+              <Button size="sm" onClick={() => setComputer({ botId: bot.id, requestId: null })}>
                 Open computer
-              </button>
-              <button
-                type="button"
-                className="icon-btn"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="-ml-0.5 text-muted-foreground"
                 aria-label="Dismiss"
                 title="Dismiss. The Bot keeps waiting; open its computer from the roster."
                 onClick={() => {
                   if (bot.computer.handover !== null) dismiss(bot.computer.handover.requestId);
                 }}
               >
-                <Icon name="x" size={14} />
-              </button>
+                <XIcon />
+              </Button>
             </div>
           ))}
         </div>
@@ -299,13 +338,15 @@ export function Console() {
         />
       ) : null}
 
-      {page === null ? null : (
-        <Sheet onClose={closePage} label={page.page === "usage" ? "Usage" : page.page === "memory" ? "Memory" : "Connectors"}>
-          {page.page === "usage" ? <UsagePage onClose={closePage} /> : null}
-          {page.page === "memory" ? <MemoryPage onClose={closePage} /> : null}
-          {page.page === "connectors" ? <ConnectorsPage selectedId={page.item} onSelect={(id) => openPage("connectors", id)} onClose={closePage} /> : null}
-        </Sheet>
-      )}
+      <PageSheet
+        open={page !== null}
+        onClose={closePage}
+        label={page?.page === "usage" ? "Usage" : page?.page === "memory" ? "Memory" : "Connectors"}
+      >
+        {page?.page === "usage" ? <UsagePage onClose={closePage} exportable={board.exportable === true} /> : null}
+        {page?.page === "memory" ? <MemoryPage onClose={closePage} /> : null}
+        {page?.page === "connectors" ? <ConnectorsPage selectedId={page.item} onSelect={(id) => openPage("connectors", id)} onClose={closePage} /> : null}
+      </PageSheet>
 
 
       <HireDialog
@@ -318,7 +359,11 @@ export function Console() {
       />
 
       {hover === null ? null : <HoverCard hover={hover} />}
-      {online ? null : <div className="offline">Reconnecting…</div>}
+      {online ? null : (
+        <div className="fixed bottom-[76px] left-1/2 z-40 -translate-x-1/2 rounded-full border border-input bg-card px-3 py-1.5 text-xs text-muted-foreground shadow-float">
+          Reconnecting…
+        </div>
+      )}
     </>
   );
 }
@@ -328,13 +373,13 @@ function HoverCard({ hover }: { hover: Hover }) {
   const { member, rect } = hover;
   return (
     <div
-      className="hovercard"
+      className="pointer-events-none fixed z-60 max-w-[260px] rounded-lg border border-input bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-float"
       style={{ left: Math.min(rect.right + 8, window.innerWidth - 268), top: Math.max(8, rect.top - 4) }}
     >
-      <b>
+      <b className="block font-medium">
         {member.name} · {member.status === "paused" ? "Paused" : PRESENCE_LABEL[member.presence]}
       </b>
-      <span>{member.action ?? member.title}</span>
+      <span className="text-muted-foreground">{member.action ?? member.title}</span>
     </div>
   );
 }

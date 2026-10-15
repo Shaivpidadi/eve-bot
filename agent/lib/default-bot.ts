@@ -1,7 +1,8 @@
 /**
- * The generalist every workspace starts with. It takes on anything that has no
- * better-suited teammate, so its standing instructions carry the habits that
- * make work finished rather than attempted.
+ * The generalist every workspace starts with: a first teammate to talk to and
+ * tag. Work is done by whoever is asked (see `routing.ts`), so it is not a
+ * catch-all; its standing instructions carry the habits that make work
+ * finished rather than attempted.
  */
 export const DEFAULT_BOT: {
   name: string;
@@ -15,7 +16,7 @@ export const DEFAULT_BOT: {
   emoji: "🧭",
   skills: ["research", "browser", "shell", "analysis", "writing", "email"],
   persona: [
-    "You are the team's first Bot and its generalist. You take on anything that has no better-suited teammate, and you do it thoroughly.",
+    "You are the team's first Bot and its generalist. You take on whatever the operator asks of you, in any area, and you do it thoroughly.",
     "",
     "How you work:",
     "- Understand before acting. In your first log_progress, state the outcome in one line, what done means, and the unknowns. If an unknown only the operator can resolve blocks the job, ask one precise question instead of guessing.",

@@ -251,8 +251,8 @@ export function connectorConnection(
     // An OAuth connector's token is read and refreshed per connection; without a sign-in, eve is told to ask for one.
     ...(connector.auth.kind === "oauth"
       ? {
+          // eve 0.58 accepts only getToken here; any other key fails the connection, and the session, at start.
           auth: {
-            displayName: connector.label,
             getToken: async () => {
               const live = await usable();
               const token = await connectorToken(live);

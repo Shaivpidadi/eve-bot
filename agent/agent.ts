@@ -17,6 +17,12 @@ export default defineAgent({
   compaction: {
     thresholdPercent: 0.8,
   },
+  // A shared Workflow world (a Postgres one, say) lets a run outlive the process
+  // that started it on a self-hosted server. Off unless named; see
+  // docs/research/shared-world.md and BOT_WORKFLOW_WORLD in docs/configuration.md.
+  ...(process.env.BOT_WORKFLOW_WORLD?.trim()
+    ? { experimental: { workflow: { world: process.env.BOT_WORKFLOW_WORLD.trim() } } }
+    : {}),
   limits: {
     // A thread is long-lived by design; cap spend, not lifetime. Jobs started
     // from a thread draw their budget from what the thread has left, so this

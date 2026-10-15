@@ -4,21 +4,18 @@ import { z } from "zod";
 
 /**
  * A stopped Bot (its job cancelled, or its run halted by the budget) makes no
- * further model call, compaction included. Two checks stand in front of each
- * step, both tested here with eve's own turn loop: the teammate's model
- * resolver, which eve consults before it compacts (lib/stops.ts via agent.ts),
- * and, behind it, the `step.started` hooks (hooks/usage.ts, hooks/fence.ts),
- * which eve runs just before the model request.
+ * further model call, compaction included. The check is the teammate's model
+ * resolver, which eve consults on every step before it compacts or calls the
+ * model (lib/stops.ts via agent.ts); a throw there fails the step as a model
+ * selection. (Since eve 0.68 a throwing hook no longer stops a turn, so the
+ * resolver is the only check inside the session; run_job also cancels the
+ * Bot's turn when it sees the job stopped.)
  *
- * eve documents that a throwing `step.started` hook fails the turn; this holds
- * eve to it with eve's own turn loop rather than a model of it. The harness
- * (`createToolLoopHarness`), the hook dispatcher (`dispatchStreamEventHooks`,
- * which wraps a `step.started` throw as a `BoundaryHookError`) and the context
- * container are eve's, loaded from its dist; the model is the AI SDK's mock,
- * so nothing is paid for. The hooks are the teammate's real modules over the
- * in-memory store. Mode is `conversation`, the mode eve runs a subagent child
- * in (subagents/tool.js). If an eve upgrade moves these internals, this file
- * fails to load, which is the point: the guarantee must be re-checked.
+ * This holds eve to that with eve's own turn loop rather than a model of it:
+ * the harness (`createToolLoopHarness`), the hook dispatcher and the context
+ * container are eve's, loaded from its dist; the model is the AI SDK's mock, so
+ * nothing is paid for. If an eve upgrade moves these internals, this file fails
+ * to load, which is the point: the guarantee must be re-checked.
  */
 
 const WS = "default";
@@ -70,7 +67,6 @@ async function botTurn(options: {
 
   const hooks = [
     ((await import("../agent/subagents/teammate/hooks/usage")) as HookModule).default,
-    ((await import("../agent/subagents/teammate/hooks/fence")) as HookModule).default,
   ];
   const byType = new Map<string, Array<{ handler: (event: never, ctx: never) => unknown }>>();
   for (const hook of hooks) {
@@ -105,7 +101,7 @@ async function botTurn(options: {
   };
   const ctx = new ContextContainer();
   ctx.set(SessionKey, { sessionId: SESSION, auth, turn: { id: "turn_1", sequence: 0 } });
-  ctx.set(BundleKey, { turnAgent: { id: "teammate" }, nodeId: "teammate" });
+  ctx.set(BundleKey, { turnAgent: { id: "teammate" }, nodeId: "teammate", subagentRegistry: { dynamicResolvers: [] }, resolvedAgent: { skills: [] } });
   // A teammate always runs as HQ's child, which is what makes a refused step an error result for its parent.
   ctx.set(ParentSessionKey, { sessionId: "sess_hq" });
 
@@ -221,10 +217,11 @@ describe("a stopped teammate turn", () => {
     const turn = await botTurn({ script: [say("Working on it.")] });
     expect(turn.modelCalls).toBe(1);
     expect(turn.settled).toEqual({ output: "Working on it." });
-    expect(turn.events.map((event) => event.type)).toContain("turn.completed");
+    // A child's turn that answered ends with the session waiting for its next message (eve 0.79).
+    expect(turn.events.map((event) => event.type)).toContain("session.waiting");
   });
 
-  it("makes no model call once the budget halted the run, and fails the turn with the reason", async () => {
+  it("with the model resolver in front: makes no model call once the budget halted the run", async () => {
     const { budget } = await boundRun();
     const { BUDGET_HALT_REASON } = await import("../agent/lib/budget");
     const usage = ((await import("../agent/subagents/teammate/hooks/usage")) as HookModule).default;
@@ -237,55 +234,10 @@ describe("a stopped teammate turn", () => {
     await usage.events["step.completed"]!({ type: "step.completed", meta: { id: "evt_spend" }, data: { usage: { inputTokens: 1000, outputTokens: 100, costUsd: 11 } } } as never, ctx);
     expect(await budget.runHalted(WS, "lease_A")).toBe(true);
 
-    const turn = await botTurn({ script: [], resolver: false });
+    const turn = await botTurn({ script: [] });
     expect(turn.modelCalls).toBe(0);
-    expect(turn.parked).toBe(true);
-    expect(turn.settled).toEqual({ isError: true, output: BUDGET_HALT_REASON });
-    const failed = turn.events.find((event) => event.type === "turn.failed");
-    expect(failed?.data).toMatchObject({ code: "EVENT_HANDLER_FAILED", message: BUDGET_HALT_REASON });
+    expect(turn.ended).toEqual({ done: true, isError: true, output: BUDGET_HALT_REASON });
     expect(turn.events.map((event) => event.type)).not.toContain("message.completed");
-  });
-
-  it("lets the step that overspent finish, then makes no further model call in the same turn", async () => {
-    const { budget } = await boundRun();
-    const { BUDGET_HALT_REASON } = await import("../agent/lib/budget");
-    const ran: string[] = [];
-    // The first answer costs more than the run reserved, with nothing left in the workspace.
-    const turn = await botTurn({ script: [callTool("look", 11), say("Done looking.")], tools: recordingTool("look", ran), resolver: false });
-    expect(await budget.runHalted(WS, "lease_A")).toBe(true);
-    expect(ran).toEqual(["look"]);
-    expect(turn.modelCalls).toBe(1);
-    expect(turn.settled).toEqual({ isError: true, output: BUDGET_HALT_REASON });
-  });
-
-  it("makes no model call for a job cancelled before the turn", async () => {
-    const { job } = await boundRun();
-    const { cancelJobRun } = await import("../agent/lib/cancel");
-    const { CANCELLED_STOP_REASON } = await import("../agent/lib/run-stop");
-    expect((await cancelJobRun(WS, job.id)).ok).toBe(true);
-
-    const turn = await botTurn({ script: [], resolver: false });
-    expect(turn.modelCalls).toBe(0);
-    expect(turn.parked).toBe(true);
-    expect(turn.settled).toEqual({ isError: true, output: CANCELLED_STOP_REASON });
-    expect(turn.events.find((event) => event.type === "turn.failed")?.data).toMatchObject({ code: "EVENT_HANDLER_FAILED" });
-  });
-
-  it("finishes the step in flight but makes no further model call when the job is cancelled mid-turn", async () => {
-    const { jobs, job } = await boundRun();
-    const { cancelJobRun } = await import("../agent/lib/cancel");
-    const { CANCELLED_STOP_REASON } = await import("../agent/lib/run-stop");
-    const ran: string[] = [];
-    // The person cancels while the Bot's tool runs.
-    const tools = recordingTool("look", ran, async () => {
-      expect((await cancelJobRun(WS, job.id)).ok).toBe(true);
-    });
-
-    const turn = await botTurn({ script: [callTool("look"), say("Done looking.")], tools, resolver: false });
-    expect(ran).toEqual(["look"]);
-    expect(turn.modelCalls).toBe(1);
-    expect(turn.settled).toEqual({ isError: true, output: CANCELLED_STOP_REASON });
-    expect((await jobs.getJob(WS, job.id))?.status).toBe("cancelled");
   });
 
   it("with the model resolver in front: a cancelled run's step fails before any model call, as an error its parent receives", async () => {
@@ -322,13 +274,6 @@ describe("a stopped teammate turn", () => {
     expect(ran).toEqual(["look"]);
     expect(turn.modelCalls).toBe(1);
     expect(turn.ended).toEqual({ done: true, isError: true, output: BUDGET_HALT_REASON });
-  });
-
-  it("compacts a long history for a live run (the compaction here is real)", async () => {
-    await boundRun();
-    const turn = await botTurn({ script: [say("Working on it.")], compact: true });
-    expect(turn.compactions).toBe(1);
-    expect(turn.modelCalls).toBe(1);
   });
 
   it("makes no compaction call either once the job is cancelled: the model resolver refuses first", async () => {

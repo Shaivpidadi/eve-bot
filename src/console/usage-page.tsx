@@ -4,7 +4,15 @@ import { useCallback, useEffect, useState } from "react";
 
 import { tokens, usd, type UsageLike } from "../../agent/lib/usage-format";
 import { api, isRecord, SignedOutError } from "./api";
-import { Icon } from "./icons";
+import { ArrowLeftIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { Bar, BarChart, XAxis } from "recharts";
+
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
 interface Line {
   readonly usage: UsageLike;
@@ -48,13 +56,102 @@ const modelName = (usage: UsageLike) => {
 };
 const share = (part: number, whole: number) => (whole <= 0 ? "—" : part > 0 && part / whole < 0.005 ? "<1%" : `${Math.round((part / whole) * 100)}%`);
 
+/*
+ * The console's full-page screens (Usage, Memory, Connectors) share one frame:
+ * a sticky header with a way back, a centred column, titled sections, and a
+ * note box. Exported for the other two pages.
+ */
+
+/** A page that replaces the console: header, then a scrolling column. */
+export function PageFrame({
+  title,
+  label,
+  onBack,
+  backLabel = "Back to the console",
+  actions,
+  children,
+}: {
+  title: ReactNode;
+  label: string;
+  onBack: () => void;
+  backLabel?: string;
+  /** Whatever sits after the title in the header. */
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto bg-background text-foreground" role="region" aria-label={label}>
+      <header className="sticky top-0 z-10 flex h-[52px] items-center gap-2.5 border-b bg-background px-4">
+        <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={backLabel} title="Back" onClick={onBack}>
+          <ArrowLeftIcon />
+        </Button>
+        <h1 className="m-0 truncate text-[15px] font-semibold">{title}</h1>
+        {actions}
+      </header>
+      {children}
+    </div>
+  );
+}
+
+export function PageBody({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={cn("mx-auto flex w-full max-w-[1040px] flex-col gap-[26px] px-4 pt-[22px] pb-10 sm:px-5", className)}>{children}</div>;
+}
+
+/** A titled part of a page. */
+export function PageSection({ title, className, children }: { title: ReactNode; className?: string; children: ReactNode }) {
+  return (
+    <section className={cn("flex min-w-0 flex-col gap-2", className)}>
+      <h2 className="m-0 text-xs font-medium text-faint">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+/** A boxed explanation under a page's header. */
+export function PageNote({ className, children }: { className?: string; children: ReactNode }) {
+  return (
+    <p className={cn("m-0 rounded-[10px] border border-input bg-card px-3 py-2.5 text-[12.5px] text-muted-foreground [&_code]:font-mono [&_code]:text-xs", className)}>
+      {children}
+    </p>
+  );
+}
+
+/** Small, quiet text: hints, counts, empty states. */
+export function Faint({ className, children }: { className?: string; children: ReactNode }) {
+  return <p className={cn("m-0 text-[11.5px] text-faint", className)}>{children}</p>;
+}
+
+export function PageError({ children }: { children: ReactNode }) {
+  return <p className="m-0 px-4 py-6 text-xs text-destructive">{children}</p>;
+}
+
+export function PageLoading() {
+  return <p className="m-0 px-4 py-6 text-[11.5px] text-faint">Loading…</p>;
+}
+
+function Stat({ label, value, detail, className }: { label: ReactNode; value: ReactNode; detail: ReactNode; className?: string }) {
+  return (
+    <Card className={cn("gap-1 rounded-xl px-4 py-3.5 ring-input", className)}>
+      <span className="text-[11.5px] text-faint">{label}</span>
+      <b className="text-xl font-semibold tracking-tight tabular-nums sm:text-2xl">{value}</b>
+      <small className="truncate text-[11.5px] text-muted-foreground">{detail}</small>
+    </Card>
+  );
+}
+
+const quiet = "text-[11.5px] text-faint";
+const tableCls = "text-[13px] tabular-nums [&_th]:h-auto [&_th]:px-0 [&_th]:pr-2.5 [&_th]:pb-1.5 [&_th]:text-[11.5px] [&_th]:font-medium [&_th]:text-faint [&_td]:px-0 [&_td]:py-2 [&_td]:pr-2.5 [&_td]:align-top [&_th:last-child]:pr-0 [&_th:last-child]:text-right [&_td:last-child]:pr-0 [&_td:last-child]:text-right";
+const nameCell = "min-w-[120px] whitespace-normal [overflow-wrap:anywhere]";
+
+const chartConfig = { value: { label: "Spend", color: "var(--brand)" } } satisfies ChartConfig;
+
 /**
  * The whole workspace's spend on one page: what it cost in total, by day, by
  * model, by who ran it, and job by job. Figures are the provider's own, so
  * when a provider reports no price the page says so instead of showing $0 as
  * a fact.
  */
-export function UsagePage({ onClose }: { onClose: () => void }) {
+export function UsagePage({ onClose, exportable = false }: { onClose: () => void; exportable?: boolean }) {
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,255 +189,241 @@ export function UsagePage({ onClose }: { onClose: () => void }) {
   const peak = report === null ? 0 : Math.max(0, ...report.days.map((day) => measure(day.usage)));
   const last7 = report?.days.slice(-7).reduce((sum, day) => sum + measure(day.usage), 0) ?? 0;
   const today = report?.days[report.days.length - 1];
+  const daily = (report?.days ?? []).map((day) => ({ day: day.day, value: measure(day.usage), steps: day.usage.steps }));
+  const ticks = daily.length === 0 ? [] : [daily[0]!.day, daily[Math.floor(daily.length / 2)]!.day, daily[daily.length - 1]!.day];
 
   return (
-    <div className="usage-page" role="region" aria-label="Usage">
-      <header className="usage-head">
-        <button type="button" className="icon-btn" aria-label="Back to the console" title="Back" onClick={onClose}>
-          <Icon name="left" size={18} />
-        </button>
-        <h1>Usage</h1>
-        <span className="faint">
+    <PageFrame
+      title="Usage"
+      label="Usage"
+      onBack={onClose}
+      actions={
+        <span className={cn(quiet, "ml-auto")}>
           {report === null ? "" : report.updatedAt === "" ? "Nothing spent yet" : `Updated ${when(report.updatedAt)}`}
         </span>
-      </header>
-
-      {error !== null ? <p className="error-text usage-error">{error}</p> : null}
+      }
+    >
+      {error !== null ? <PageError>{error}</PageError> : null}
 
       {report === null ? (
-        <p className="faint usage-loading">Loading…</p>
+        <PageLoading />
       ) : (
-        <div className="usage-body">
-          <section className="usage-cards">
-            <div className="usage-card">
-              <span>All time</span>
-              <b>{usd(report.total.costUsd)}</b>
-              <small>{report.total.steps === 0 ? "no model steps yet" : `${report.total.steps} model ${report.total.steps === 1 ? "step" : "steps"}`}</small>
-            </div>
-            <div className="usage-card">
-              <span>Last 7 days</span>
-              <b>{unpriced ? `${tokens(last7)} tokens` : usd(last7)}</b>
-              <small>{today === undefined ? "" : `today ${unpriced ? `${tokens(measure(today.usage))} tokens` : usd(today.usage.costUsd)}`}</small>
-            </div>
-            <div className="usage-card">
-              <span>Tokens</span>
-              <b>{tokens(report.total.inputTokens + report.total.outputTokens)}</b>
-              <small>
-                {tokens(report.total.inputTokens)} in · {tokens(report.total.outputTokens)} out
-              </small>
-            </div>
-            <div className="usage-card">
-              <span>Prompt cache</span>
-              <b>{tokens(report.total.cacheReadTokens)}</b>
-              <small>
-                read · {tokens(report.total.cacheWriteTokens ?? 0)} written
-              </small>
-            </div>
+        <PageBody>
+          <section className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+            <Stat
+              label="All time"
+              value={usd(report.total.costUsd)}
+              detail={report.total.steps === 0 ? "no model steps yet" : `${report.total.steps} model ${report.total.steps === 1 ? "step" : "steps"}`}
+            />
+            <Stat
+              label="Last 7 days"
+              value={unpriced ? `${tokens(last7)} tokens` : usd(last7)}
+              detail={today === undefined ? "" : `today ${unpriced ? `${tokens(measure(today.usage))} tokens` : usd(today.usage.costUsd)}`}
+            />
+            <Stat
+              label="Tokens"
+              value={tokens(report.total.inputTokens + report.total.outputTokens)}
+              detail={`${tokens(report.total.inputTokens)} in · ${tokens(report.total.outputTokens)} out`}
+            />
+            <Stat label="Prompt cache" value={tokens(report.total.cacheReadTokens)} detail={`read · ${tokens(report.total.cacheWriteTokens ?? 0)} written`} />
             {report.budget === undefined ? null : (
-              <div className="usage-card">
-                <span>Budget · {report.budget.period}</span>
-                <b>
-                  {usd(report.budget.spentUsd)}
-                  {report.budget.limitUsd === null ? "" : ` of ${usd(report.budget.limitUsd)}`}
-                </b>
-                <small>
-                  {[
-                    report.budget.limitUsd === null ? "no limit set" : `${usd(report.budget.remainingUsd ?? 0)} left`,
-                    report.budget.reservedUsd > 0
-                      ? `${usd(report.budget.reservedUsd)} held by ${report.budget.heldRuns} running ${report.budget.heldRuns === 1 ? "job" : "jobs"}`
-                      : null,
-                    report.budget.unknownCostCount > 0 ? `${report.budget.unknownCostCount} unpriced ${report.budget.unknownCostCount === 1 ? "call" : "calls"}` : null,
-                  ]
-                    .filter((part) => part !== null)
-                    .join(" · ")}
-                </small>
-              </div>
+              <Stat
+                label={`Budget · ${report.budget.period}`}
+                value={`${usd(report.budget.spentUsd)}${report.budget.limitUsd === null ? "" : ` of ${usd(report.budget.limitUsd)}`}`}
+                detail={[
+                  report.budget.limitUsd === null ? "no limit set" : `${usd(report.budget.remainingUsd ?? 0)} left`,
+                  report.budget.reservedUsd > 0
+                    ? `${usd(report.budget.reservedUsd)} held by ${report.budget.heldRuns} running ${report.budget.heldRuns === 1 ? "job" : "jobs"}`
+                    : null,
+                  report.budget.unknownCostCount > 0 ? `${report.budget.unknownCostCount} unpriced ${report.budget.unknownCostCount === 1 ? "call" : "calls"}` : null,
+                ]
+                  .filter((part) => part !== null)
+                  .join(" · ")}
+              />
             )}
             {report.account === null ? null : (
-              <div className="usage-card usage-account">
-                <span>Gateway account · every project on this key</span>
-                <b>{usd(report.account.totalUsedUsd)}</b>
-                <small>
-                  {usd(report.account.balanceUsd)} credit left · this workspace is {share(report.total.costUsd, report.account.totalUsedUsd)} of it
-                </small>
-              </div>
+              <Stat
+                className="col-span-full ring-brand"
+                label="Gateway account · every project on this key"
+                value={usd(report.account.totalUsedUsd)}
+                detail={`${usd(report.account.balanceUsd)} credit left · this workspace is ${share(report.total.costUsd, report.account.totalUsedUsd)} of it`}
+              />
             )}
           </section>
 
           {unpriced ? (
-            <p className="usage-note">
+            <PageNote className="-mt-2.5">
               The provider reported no prices, so the figures below are tokens. On a custom endpoint set <code>BOT_MODEL_PRICES</code> (model=input/output, USD per
               million tokens) to see dollars.
-            </p>
+            </PageNote>
           ) : null}
 
-          <section className="usage-section">
-            <h2>Last 30 days</h2>
-            <div className="usage-chart" role="img" aria-label={`Daily ${unpriced ? "tokens" : "spend"} over the last 30 days`}>
-              {peak === 0 ? <span className="usage-empty faint">{report.total.steps === 0 ? "Nothing yet" : "Nothing counted by day yet; it starts with the next step"}</span> : null}
-              {report.days.map((day) => {
-                const value = measure(day.usage);
-                const height = peak > 0 ? Math.max(value > 0 ? 3 : 0, Math.round((value / peak) * 100)) : 0;
-                const label = `${shortDay(day.day)}: ${unpriced ? `${tokens(value)} tokens` : usd(value)} · ${day.usage.steps} steps`;
-                return (
-                  <div key={day.day} className="usage-bar" title={label}>
-                    <i style={{ height: `${height}%` }} />
-                  </div>
-                );
-              })}
-            </div>
-            <div className="usage-axis">
-              <span>{shortDay(report.days[0]?.day ?? "")}</span>
-              <span>{shortDay(report.days[Math.floor(report.days.length / 2)]?.day ?? "")}</span>
-              <span>today</span>
-            </div>
-          </section>
+          <PageSection title="Last 30 days">
+            <Card className="relative gap-0 rounded-xl px-2.5 pt-2 pb-1 ring-input" role="img" aria-label={`Daily ${unpriced ? "tokens" : "spend"} over the last 30 days`}>
+              {peak === 0 ? (
+                <span className={cn(quiet, "absolute inset-0 flex items-center justify-center")}>
+                  {report.total.steps === 0 ? "Nothing yet" : "Nothing counted by day yet; it starts with the next step"}
+                </span>
+              ) : null}
+              <ChartContainer config={chartConfig} className="aspect-auto h-[100px] w-full sm:h-[140px]">
+                <BarChart accessibilityLayer data={daily} margin={{ top: 4, right: 14, bottom: 0, left: 14 }} barCategoryGap={2}>
+                  <XAxis
+                    dataKey="day"
+                    ticks={ticks}
+                    interval={0}
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={6}
+                    fontSize={11}
+                    tickFormatter={(day: string) => (day === ticks[2] ? "today" : shortDay(day))}
+                  />
+                  <ChartTooltip
+                    cursor={false}
+                    content={
+                      <ChartTooltipContent
+                        hideIndicator
+                        labelFormatter={(_, payload) => {
+                          const row = payload[0]?.payload as { day: string; steps: number } | undefined;
+                          return row === undefined ? "" : `${shortDay(row.day)} · ${row.steps} steps`;
+                        }}
+                        formatter={(value) => (unpriced ? `${tokens(Number(value))} tokens` : usd(Number(value)))}
+                      />
+                    }
+                  />
+                  <Bar dataKey="value" fill="var(--color-value)" fillOpacity={0.85} radius={[3, 3, 0, 0]} minPointSize={0} />
+                </BarChart>
+              </ChartContainer>
+            </Card>
+          </PageSection>
 
-          <div className="usage-columns">
-            <section className="usage-section">
-              <h2>By model</h2>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+            <PageSection title="By model">
               {report.models.length === 0 ? (
-                <p className="faint">{report.total.steps === 0 ? "No model has run a step yet." : "Steps from before this page existed are in the totals only."}</p>
+                <Faint>{report.total.steps === 0 ? "No model has run a step yet." : "Steps from before this page existed are in the totals only."}</Faint>
               ) : (
-                <table className="usage-table">
-                  <thead>
-                    <tr>
-                      <th>Model</th>
-                      <th>Steps</th>
-                      <th>Tokens</th>
-                      <th>Cost</th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                <Table className={tableCls}>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Model</TableHead>
+                      <TableHead>Steps</TableHead>
+                      <TableHead>Tokens</TableHead>
+                      <TableHead>Cost</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {report.models.map((row) => (
-                      <tr key={row.model}>
-                        <td className="usage-name">{row.model}</td>
-                        <td>{row.usage.steps}</td>
-                        <td>
+                      <TableRow key={row.model} className="hover:bg-transparent">
+                        <TableCell className={nameCell}>{row.model}</TableCell>
+                        <TableCell>{row.usage.steps}</TableCell>
+                        <TableCell>
                           {tokens(row.usage.inputTokens + row.usage.outputTokens)}
-                          <small> · {share(row.usage.inputTokens + row.usage.outputTokens, report.total.inputTokens + report.total.outputTokens)}</small>
-                        </td>
-                        <td>{usd(row.usage.costUsd)}</td>
-                      </tr>
+                          <small className={quiet}> · {share(row.usage.inputTokens + row.usage.outputTokens, report.total.inputTokens + report.total.outputTokens)}</small>
+                        </TableCell>
+                        <TableCell>{usd(row.usage.costUsd)}</TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               )}
-            </section>
+            </PageSection>
 
-            <section className="usage-section">
-              <h2>By who</h2>
-              <table className="usage-table">
-                <thead>
-                  <tr>
-                    <th>Who</th>
-                    <th>Steps</th>
-                    <th>Tokens</th>
-                    <th>Cost</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td className="usage-name">
-                      HQ <small>coordinating</small>
-                    </td>
-                    <td>{report.hq.steps}</td>
-                    <td>{tokens(report.hq.inputTokens + report.hq.outputTokens)}</td>
-                    <td>
-                      {usd(report.hq.costUsd)}
-                      <small> · {share(report.hq.costUsd, report.total.costUsd)}</small>
-                    </td>
-                  </tr>
-                  {report.jev.steps === 0 ? null : (
-                    <tr>
-                      <td className="usage-name">
-                        Jev <small>second opinions</small>
-                      </td>
-                      <td>{report.jev.steps}</td>
-                      <td>{tokens(report.jev.inputTokens + report.jev.outputTokens)}</td>
-                      <td>
-                        {usd(report.jev.costUsd)}
-                        <small> · {share(report.jev.costUsd, report.total.costUsd)}</small>
-                      </td>
-                    </tr>
-                  )}
-                  {report.memory.steps === 0 ? null : (
-                    <tr>
-                      <td className="usage-name">
-                        Memory <small>reading exchanges to remember</small>
-                      </td>
-                      <td>{report.memory.steps}</td>
-                      <td>{tokens(report.memory.inputTokens + report.memory.outputTokens)}</td>
-                      <td>
-                        {usd(report.memory.costUsd)}
-                        <small> · {share(report.memory.costUsd, report.total.costUsd)}</small>
-                      </td>
-                    </tr>
-                  )}
+            <PageSection title="By who">
+              <Table className={tableCls}>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Who</TableHead>
+                    <TableHead>Steps</TableHead>
+                    <TableHead>Tokens</TableHead>
+                    <TableHead>Cost</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <WhoRow name="HQ" note="coordinating" usage={report.hq} total={report.total} />
+                  {report.jev.steps === 0 ? null : <WhoRow name="Jev" note="second opinions" usage={report.jev} total={report.total} />}
+                  {report.memory.steps === 0 ? null : <WhoRow name="Memory" note="reading exchanges to remember" usage={report.memory} total={report.total} />}
                   {report.bots.map((row) => (
-                    <tr key={row.botId}>
-                      <td className="usage-name">
-                        {row.emoji === null ? "" : `${row.emoji} `}
-                        {row.name}
-                        {row.retired ? <small> retired</small> : null}
-                      </td>
-                      <td>{row.usage.steps}</td>
-                      <td>{tokens(row.usage.inputTokens + row.usage.outputTokens)}</td>
-                      <td>
-                        {usd(row.usage.costUsd)}
-                        <small> · {share(row.usage.costUsd, report.total.costUsd)}</small>
-                      </td>
-                    </tr>
+                    <WhoRow
+                      key={row.botId}
+                      name={`${row.emoji === null ? "" : `${row.emoji} `}${row.name}`}
+                      note={row.retired ? "retired" : null}
+                      usage={row.usage}
+                      total={report.total}
+                    />
                   ))}
-                </tbody>
-              </table>
-            </section>
+                </TableBody>
+              </Table>
+            </PageSection>
           </div>
 
-          <section className="usage-section">
-            <h2>By job</h2>
+          <PageSection title="By job">
             {report.jobs.length === 0 ? (
-              <p className="faint">No job has recorded its usage yet. Jobs started before this was kept show nothing.</p>
+              <Faint>No job has recorded its usage yet. Jobs started before this was kept show nothing.</Faint>
             ) : (
-              <table className="usage-table usage-jobs">
-                <thead>
-                  <tr>
-                    <th>Job</th>
-                    <th>Bot</th>
-                    <th>When</th>
-                    <th>Model</th>
-                    <th>Steps</th>
-                    <th>Tokens</th>
-                    <th>Cost</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table className={cn(tableCls, "[&_td]:whitespace-nowrap")}>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Job</TableHead>
+                    <TableHead>Bot</TableHead>
+                    <TableHead>When</TableHead>
+                    <TableHead>Model</TableHead>
+                    <TableHead>Steps</TableHead>
+                    <TableHead>Tokens</TableHead>
+                    <TableHead>Cost</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {report.jobs.map((job) => (
-                    <tr key={job.id}>
-                      <td className="usage-name">
+                    <TableRow key={job.id} className="hover:bg-transparent">
+                      <TableCell className={cn(nameCell, "whitespace-normal!")}>
                         {job.title}
-                        <small> {job.status}</small>
-                      </td>
-                      <td>{job.botName}</td>
-                      <td>{when(job.at)}</td>
-                      <td>{modelName(job.usage)}</td>
-                      <td>{job.usage.steps}</td>
-                      <td>{tokens(job.usage.inputTokens + job.usage.outputTokens)}</td>
-                      <td>{usd(job.usage.costUsd)}</td>
-                    </tr>
+                        <small className={quiet}> {job.status}</small>
+                      </TableCell>
+                      <TableCell>{job.botName}</TableCell>
+                      <TableCell>{when(job.at)}</TableCell>
+                      <TableCell>{modelName(job.usage)}</TableCell>
+                      <TableCell>{job.usage.steps}</TableCell>
+                      <TableCell>{tokens(job.usage.inputTokens + job.usage.outputTokens)}</TableCell>
+                      <TableCell>{usd(job.usage.costUsd)}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             )}
-          </section>
+          </PageSection>
 
-          <p className="faint usage-foot">
+          <Faint className="max-w-[640px]">
             Counted from every model step eve reports, as the provider counted it, plus Jev's judgements. HQ's own turns count under HQ; a Bot's steps count
             under the Bot and on the job. Not counted: anything before this ledger existed, eve's own housekeeping calls such as compaction, and other
             projects on the same key, which is why the Gateway account figure runs higher. Daily figures keep 90 days; totals keep forever.
-          </p>
-        </div>
+          </Faint>
+          {exportable ? (
+            <Faint className="max-w-[640px] [&_a]:text-muted-foreground [&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:text-foreground [&_code]:font-mono">
+              <a href="/bot/v1/export" download>
+                Export this workspace
+              </a>{" "}
+              as a file <code>npm run import</code> reads on another deployment or your own machine. Connectors are left out; reconnect them after
+              the import, or ask for <a href="/bot/v1/export?secrets=1">an export with them</a> and keep that file like a password.
+            </Faint>
+          ) : null}
+        </PageBody>
       )}
-    </div>
+    </PageFrame>
+  );
+}
+
+function WhoRow({ name, note, usage, total }: { name: string; note: string | null; usage: UsageLike; total: UsageLike }) {
+  return (
+    <TableRow className="hover:bg-transparent">
+      <TableCell className={nameCell}>
+        {name}
+        {note === null ? null : <small className={quiet}> {note}</small>}
+      </TableCell>
+      <TableCell>{usage.steps}</TableCell>
+      <TableCell>{tokens(usage.inputTokens + usage.outputTokens)}</TableCell>
+      <TableCell>
+        {usd(usage.costUsd)}
+        <small className={quiet}> · {share(usage.costUsd, total.costUsd)}</small>
+      </TableCell>
+    </TableRow>
   );
 }

@@ -2,6 +2,11 @@
 
 import type { InputOption, InputRequest, InputResolution } from "eve/client";
 
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
+
 import { humanTool } from "./room-store";
 
 const APPROVAL_OPTIONS: readonly InputOption[] = [
@@ -54,12 +59,33 @@ function resolvedText(request: InputRequest, resolution: InputResolution): strin
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
-    <div className="field">
-      <span className="k">{label}</span>
-      <span className="v">{value}</span>
+    <div className="flex gap-2.5 border-t border-border px-3 py-1.5 text-xs">
+      <span className="w-[52px] flex-none text-faint">{label}</span>
+      <span className="min-w-0 wrap-anywhere text-muted-foreground">{value}</span>
     </div>
   );
 }
+
+/** The card's top line: what it is, and whether it still needs you (an amber dot) or was handled. */
+function Head({ title, state, done }: { title: string; state: string; done: boolean }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 text-[12.5px] font-medium">
+      {title}
+      <span
+        className={cn(
+          "ml-auto flex items-center gap-1.5 text-[11.5px] font-normal text-muted-foreground before:size-1.5 before:rounded-full before:content-['']",
+          done ? "before:bg-faint" : "before:bg-warning",
+        )}
+      >
+        {state}
+      </span>
+    </div>
+  );
+}
+
+const BODY = "max-h-[280px] overflow-y-auto border-t border-border px-3 py-2.5 text-[12.5px] whitespace-pre-wrap wrap-anywhere";
+const LEAD = "block font-medium";
+const FOOT = "flex flex-wrap gap-1.5 px-3 py-2.5";
 
 /**
  * Something a Bot needs from you, shaped like the thing it is: an email ready to
@@ -89,53 +115,39 @@ export function AskCard({
   const email = isEmail(request);
   const signoff = isSignoff(request);
   const input = request.action?.input ?? {};
-  const className = done ? "card done" : "card";
+  const className = "my-2 w-full max-w-[440px] gap-0 self-start py-0 text-[12.5px]";
 
   const label = (option: InputOption) =>
     email ? (option.id === "approve" ? "Send email" : "Discard") : option.label;
-  const buttonClass = (option: InputOption) =>
-    option.style === "primary" || option.id === "approve"
-      ? "btn primary"
-      : option.style === "danger"
-        ? "btn danger"
-        : "btn";
+  const variantOf = (option: InputOption) =>
+    option.style === "primary" || option.id === "approve" ? "default" : option.style === "danger" ? "destructive" : "secondary";
 
   const foot = done ? (
-    <div className="card-foot">
-      <span className="answered">{resolvedText(request, resolution)}</span>
+    <div className={FOOT}>
+      <span className="text-xs text-muted-foreground">{resolvedText(request, resolution)}</span>
     </div>
   ) : (
-    <div className="card-foot">
+    <div className={FOOT}>
       {options.map((option) => (
-        <button
-          key={option.id}
-          type="button"
-          className={buttonClass(option)}
-          disabled={answering}
-          onClick={() => onAnswer(option.id)}
-        >
+        <Button key={option.id} size="sm" variant={variantOf(option)} disabled={answering} onClick={() => onAnswer(option.id)}>
           {label(option)}
-        </button>
+        </Button>
       ))}
       {options.length === 0 ? (
-        <button
-          type="button"
-          className="btn primary"
-          disabled={answering || note.trim() === ""}
-          onClick={() => onAnswer(undefined)}
-        >
+        <Button size="sm" disabled={answering || note.trim() === ""} onClick={() => onAnswer(undefined)}>
           Send
-        </button>
+        </Button>
       ) : null}
     </div>
   );
 
   const noteBox =
     !done && (request.allowFreeform === true || options.length === 0) ? (
-      <div className="card-note">
-        <textarea
+      <div className="border-t border-border px-3 pt-2">
+        <Textarea
           rows={2}
           value={note}
+          className="min-h-9 resize-y text-[12.5px]"
           placeholder={signoff ? "Add a note for the Bot (optional)" : "Type an answer"}
           onChange={(event) => onNote(event.target.value)}
         />
@@ -145,17 +157,15 @@ export function AskCard({
   if (email) {
     const cc = asText(input.cc);
     return (
-      <div className={className}>
-        <div className="card-head">
-          New email<span className="state">{done ? "Handled" : "Ready to send"}</span>
-        </div>
+      <Card className={className}>
+        <Head title="New email" state={done ? "Handled" : "Ready to send"} done={done} />
         <Field label="From" value={user || "you"} />
         <Field label="To" value={asText(input.to)} />
         {cc === "" ? null : <Field label="Cc" value={cc} />}
         <Field label="Subject" value={asText(input.subject)} />
-        <div className="card-body">{asText(input.body)}</div>
+        <div className={BODY}>{asText(input.body)}</div>
         {foot}
-      </div>
+      </Card>
     );
   }
 
@@ -163,12 +173,10 @@ export function AskCard({
     const url = asText(input.url);
     const skip = options.find((option) => option.id !== "approve")?.id ?? "deny";
     return (
-      <div className={className}>
-        <div className="card-head">
-          Take over the browser<span className="state">{done ? "Handled" : "Needs you"}</span>
-        </div>
-        <div className="card-body">
-          <span className="lead">{asText(input.reason)}</span>
+      <Card className={className}>
+        <Head title="Take over the browser" state={done ? "Handled" : "Needs you"} done={done} />
+        <div className={BODY}>
+          <span className={LEAD}>{asText(input.reason)}</span>
           {url === "" ? "" : `${url}\n`}
           Open the computer, take control, do this step in the browser, then hand it back. What you type goes
           straight to the page, never into the chat.
@@ -176,33 +184,31 @@ export function AskCard({
         {done ? (
           foot
         ) : (
-          <div className="card-foot">
-            <button type="button" className="btn primary" disabled={answering} onClick={onOpenComputer}>
+          <div className={FOOT}>
+            <Button size="sm" disabled={answering} onClick={onOpenComputer}>
               Open computer
-            </button>
-            <button type="button" className="btn" disabled={answering} onClick={() => onAnswer(skip)}>
+            </Button>
+            <Button size="sm" variant="secondary" disabled={answering} onClick={() => onAnswer(skip)}>
               Skip
-            </button>
+            </Button>
           </div>
         )}
-      </div>
+      </Card>
     );
   }
 
   if (signoff) {
     const [lead = "", ...rest] = request.prompt.split("\n");
     return (
-      <div className={className}>
-        <div className="card-head">
-          Sign-off<span className="state">{done ? "Handled" : "Ready for review"}</span>
-        </div>
-        <div className="card-body">
-          <span className="lead">{lead}</span>
+      <Card className={className}>
+        <Head title="Sign-off" state={done ? "Handled" : "Ready for review"} done={done} />
+        <div className={BODY}>
+          <span className={LEAD}>{lead}</span>
           {rest.join("\n").trim()}
         </div>
         {noteBox}
         {foot}
-      </div>
+      </Card>
     );
   }
 
@@ -214,12 +220,9 @@ export function AskCard({
         : "Question";
 
   return (
-    <div className={className}>
-      <div className="card-head">
-        {title}
-        <span className="state">{done ? "Handled" : "Needs you"}</span>
-      </div>
-      <div className="card-body">{request.prompt}</div>
+    <Card className={className}>
+      <Head title={title} state={done ? "Handled" : "Needs you"} done={done} />
+      <div className={BODY}>{request.prompt}</div>
       {request.kind === "tool-approval"
         ? Object.entries(input)
             .slice(0, 6)
@@ -229,6 +232,6 @@ export function AskCard({
         : null}
       {noteBox}
       {foot}
-    </div>
+    </Card>
   );
 }

@@ -40,6 +40,40 @@ Update the way you installed:
 git pull && npm install && npm run build && npm start     # or: docker compose up -d --build
 ```
 
+## Moving a workspace
+
+A workspace can move between Vercel and your own machine, in either
+direction. Everything the app keeps in its store travels: the roster, jobs
+and their journals, memory, connectors, usage, and the computer's backups.
+
+```bash
+npm run export -- --out workspace.bot.gz        # on the checkout pointed at the old store
+npm run import -- --in workspace.bot.gz --dry-run
+npm run import -- --in workspace.bot.gz         # on the checkout pointed at the new store, server stopped
+```
+
+Without a checkout, a deployment with `BOT_EXPORT=on` offers **Export this
+workspace** at the foot of the Usage sheet, which downloads the same file.
+
+Each command reads the same environment the server does, so a checkout
+with `npx vercel env pull` reads Vercel Blob and a standalone checkout reads
+`.data/`. Add `--workspace <id>` to move one workspace, and
+`--on-conflict skip` or `fail` to keep what the destination already has.
+
+What does not move:
+
+- **Live runs.** They live in eve's Workflow state, which stays where it
+  is. An open job arrives with its run dropped, its thread says it moved,
+  and the watchdog picks it up and continues from its journal.
+- **Conversations' sessions.** Each thread starts a fresh session and keeps
+  its history on screen. Memory carries what the team knows.
+- **The computer.** Its backup moves, and restores onto the new computer
+  only when it is the same kind (Vercel Sandbox, or local Docker) and CPU.
+
+The file holds connector keys and OAuth tokens, sealed, together with the
+key they are sealed with, so treat it like a password. `--no-secrets`
+leaves them out; reconnect the connectors after the import.
+
 ## Stored data
 
 Stored data is carried forward. A release that changes what is stored reads
