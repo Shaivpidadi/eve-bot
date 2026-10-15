@@ -29,6 +29,7 @@ import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
 import { sessionIsGone } from "../lib/gone";
+import { worldIsLocal } from "../lib/world";
 import { eventsOf, foldUntil } from "../lib/branch";
 import { writeIntro } from "../lib/intro";
 import { templateById } from "../lib/templates";
@@ -1204,7 +1205,8 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const previous = buildId();
       overrideBuildId(`qa-${Date.now().toString(36)}`);
       lastSweepAt = 0;
-      return json({ bumped: true, from: previous, to: buildId() });
+      // `local` says whether a lease from another build counts as lost here (see world.ts); on Vercel it never does.
+      return json({ bumped: true, from: previous, to: buildId(), local: worldIsLocal() });
     }),
 
     POST("/bot/v1/qa/computer/replace", async (request) => {
