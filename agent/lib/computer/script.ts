@@ -393,8 +393,16 @@ listening() {
 display_up() { xdpyinfo -display ":$1" >/dev/null 2>&1; }
 cdp_up() { curl -fsS -m 1 "http://127.0.0.1:$1/json/version" >/dev/null 2>&1; }
 
+# chrome_ok: Chrome is fully installed, not left half-installed by an install that
+# was cut short (a snapshot taken mid-install, a machine stopped). Where dpkg is
+# not the package manager, the binary being there is enough.
+chrome_ok() {
+  command -v dpkg >/dev/null || return 0
+  dpkg -s google-chrome-stable 2>/dev/null | grep -q '^Status: install ok installed'
+}
+
 installed() {
-  command -v google-chrome >/dev/null && command -v Xvnc >/dev/null && command -v websockify >/dev/null &&
+  chrome_ok && command -v google-chrome >/dev/null && command -v Xvnc >/dev/null && command -v websockify >/dev/null &&
     command -v xdotool >/dev/null && command -v xdpyinfo >/dev/null &&
     command -v openbox >/dev/null && command -v tint2 >/dev/null && command -v pcmanfm >/dev/null &&
     command -v xfce4-terminal >/dev/null && command -v dbus-daemon >/dev/null && command -v xsetroot >/dev/null &&
@@ -424,14 +432,21 @@ install_software() {
   local apt="sudo -n env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -y -qq"
   sudo -n true 2>/dev/null || fail install "installing the browser needs sudo on the computer"
   use_reachable_mirror
+  # An install cut short leaves dpkg half done, and apt refuses until it is finished.
+  # A package left half-unpacked ("reinstall required") cannot be finished without
+  # its archive, so it goes; this install puts each one back.
+  local broken
+  broken=$(dpkg -l 2>/dev/null | awk '/^..R/ { print $2 }')
+  [ -z "$broken" ] || sudo -n dpkg --remove --force-remove-reinstreq $broken >>"$log" 2>&1 || true
+  sudo -n env DEBIAN_FRONTEND=noninteractive dpkg --configure -a >>"$log" 2>&1 || true
   $apt update >>"$log" 2>&1 || fail install "apt-get update failed: $(tail -n 5 "$log")"
   $apt install --no-install-recommends $PACKAGES >>"$log" 2>&1 || fail install "could not install packages: $(tail -n 5 "$log")"
-  if ! command -v google-chrome >/dev/null; then
+  if ! command -v google-chrome >/dev/null || ! chrome_ok; then
     local arch
     arch=$(dpkg --print-architecture)
     curl -fsSL -o "$RUN/chrome.deb" "https://dl.google.com/linux/direct/google-chrome-stable_current_$arch.deb" >>"$log" 2>&1 ||
       fail install "could not download Google Chrome for $arch"
-    $apt install --no-install-recommends "$RUN/chrome.deb" >>"$log" 2>&1 || fail install "could not install Google Chrome: $(tail -n 5 "$log")"
+    $apt install --reinstall --no-install-recommends "$RUN/chrome.deb" >>"$log" 2>&1 || fail install "could not install Google Chrome: $(tail -n 5 "$log")"
     rm -f "$RUN/chrome.deb"
   fi
   mkdir -p "$HOME/.local/share/applications" 2>/dev/null
