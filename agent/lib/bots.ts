@@ -65,6 +65,7 @@ export async function hireBot(input: {
   persona: string;
   emoji?: string;
   skills?: string[];
+  intro?: Bot["intro"];
   /** Set when a Bot created this one at the operator's request. */
   createdBy?: { botId: string; name: string };
 }): Promise<Bot> {
@@ -82,6 +83,7 @@ export async function hireBot(input: {
     hiredBy: input.hiredBy,
     hiredAt: now,
     createdBy: input.createdBy ?? null,
+    ...(input.intro ? { intro: input.intro } : {}),
     updatedAt: now,
     stats: { jobsCompleted: 0, jobsFailed: 0 },
   };

@@ -672,8 +672,10 @@ function EmptyChat({
   onMore: () => void;
   onSuggest: (text: string) => void;
 }) {
-  const all = suggestionsFor(member);
-  const shown = showMore ? all : all.slice(0, 4);
+  // A Bot's own first jobs come first; the usual ones follow under "Show more".
+  const intro = member.profile?.intro ?? null;
+  const all = intro === null ? suggestionsFor(member) : [...intro.starters, ...suggestionsFor(member)];
+  const shown = showMore ? all : all.slice(0, intro === null ? 4 : intro.starters.length);
   return (
     <div className="m-auto w-[min(100%,460px)] px-5 py-10">
       <div className="mb-[18px] flex items-center gap-3">
@@ -683,6 +685,7 @@ function EmptyChat({
           <p className="mt-px mb-0 text-[12.5px] text-muted-foreground">{member.title}</p>
         </div>
       </div>
+      {intro === null ? null : <div className={cn(BUBBLE, THEIRS, "mb-[18px] rounded-tl-md")}>{intro.hello}</div>}
       <div className="flex flex-col">
         <div className="mb-1.5 flex items-center gap-[7px] text-[12.5px] text-foreground">
           <FolderIcon className="size-[15px] text-muted-foreground" />

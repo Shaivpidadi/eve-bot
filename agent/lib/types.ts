@@ -34,6 +34,8 @@ export interface Bot {
   section?: string | null;
   /** Kept off the roster until unhidden; still on the team. */
   hidden?: boolean;
+  /** How it introduces itself in its empty thread: from its template, or written when it was hired. */
+  intro?: { readonly hello: string; readonly starters: readonly string[] } | null;
   updatedAt: string;
   stats: {
     jobsCompleted: number;

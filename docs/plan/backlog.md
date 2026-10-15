@@ -270,16 +270,24 @@ persona) and HQ hires only when asked. Hiring several Bots means filling it
 several times, each lands in an empty thread, and there is no guidance on
 what a good persona is.
 
-- [ ] **H1 (M)** Templates: Researcher, Inbox triage, Sales follow-up, QA,
+- [x] **H1 (M)** Templates: Researcher, Inbox triage, Sales follow-up, QA,
       Ops monitor, Custom, each with role, persona, emoji and skills filled
       in and editable, plus a live avatar preview and name suggestions. The
       form becomes two steps: pick, then adjust.
+      As built (`lib/templates.ts`, `hire-dialog.tsx`): no avatar preview,
+      because a Bot's face is seeded from its id, which exists only once it is
+      hired; a preview would show a different face. The server takes skills,
+      emoji and the introduction from its own copy of the template.
 - [ ] **H2 (M)** "Describe your team": one text box, HQ proposes a roster on
       a card (name, role, one-line persona each), approve all or some, and
       `POST /bot/v1/bots/batch` creates them in one go.
-- [ ] **H3 (S)** A new Bot introduces itself: its thread opens with a short
+- [x] **H3 (S)** A new Bot introduces itself: its thread opens with a short
       hello in its own voice and one suggested first job, so no thread starts
       empty.
+      As built: three first jobs, not one. A template brings its own; any
+      other Bot gets one quick-model call when it is hired (in the background
+      from the console, awaited with a 15 s cap from `hire_bot` and
+      `create_bot`), charged to the new Bot.
 - [ ] **H4 (S)** Clone and edit from any Bot's menu (today's duplicate, with
       the form open on the copy).
 - [ ] **H5 (S)** Form polish: inline validation, duplicate-name check before
@@ -291,5 +299,5 @@ Track E and most of D shipped in 0.3.0. Still open, roughly in order:
 
 1. E7 (the full pass on a scratch deployment)
 2. S2 (smooth switching between threads' screens; needs a running computer to test)
-3. H1, H3, H2 (hiring templates, a Bot's first hello, describe-your-team)
+3. H2 (describe your team, HQ proposes a roster)
 4. A track, re-scoped against the mascot; H4, H5

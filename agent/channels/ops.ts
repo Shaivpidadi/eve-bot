@@ -30,6 +30,8 @@ import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
 import { sessionIsGone } from "../lib/gone";
 import { eventsOf, foldUntil } from "../lib/branch";
+import { writeIntro } from "../lib/intro";
+import { templateById } from "../lib/templates";
 import { crashRun, qaEnabled } from "../lib/qa";
 import { rewind } from "../lib/rewind";
 import { exportEnabled, exportTo } from "../lib/store/transfer";
@@ -659,10 +661,12 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /** Hire from the console: a name, a job, and how it should work. */
-    POST("/bot/v1/bots", async (request) => {
+    POST("/bot/v1/bots", async (request, { waitUntil }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const body = await readJson(request);
+      // A template brings its skills, emoji and introduction; the person's edits to the rest stand.
+      const template = templateById(body?.template);
       const name = text(body?.name, 1, 40);
       const role = text(body?.role, 1, 120);
       const persona = text(body?.persona, 20, 4_000);
@@ -681,7 +685,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         name,
         role,
         persona,
+        ...(template === null ? {} : { emoji: template.emoji, skills: [...template.skills], intro: template.intro }),
       });
+      if (template === null) waitUntil(writeIntro(bot).catch(() => null));
       return json({ bot: { id: bot.id, name: bot.name, room: roomForBot(bot.id) } }, 201);
     }),
 

@@ -124,6 +124,8 @@ export interface Member {
     readonly hiredAt: string;
     /** Name of the Bot that created this one, when a Bot did. */
     readonly createdBy: string | null;
+    /** Its hello and first jobs, for its empty thread. */
+    readonly intro: Bot["intro"];
   } | null;
 }
 
@@ -391,6 +393,7 @@ function botMember(
       stats: bot.stats,
       hiredAt: bot.hiredAt,
       createdBy: bot.createdBy?.name ?? null,
+      intro: bot.intro ?? null,
     },
   };
 }
