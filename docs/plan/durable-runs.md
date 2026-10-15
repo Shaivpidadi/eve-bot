@@ -7,7 +7,8 @@ upgrade (track E in [backlog.md](backlog.md)) comes first because D1 edits
 
 ## How to read this file
 
-- Every task and subtask carries one tag: `[to-do]`, `[in-progress]`, `[done]`.
+- Every task and subtask carries one tag: `[to-do]`, `[in-progress]`, `[done]`, or
+  `[parked]` (decided against for now; the reason is on the task).
   Change the tag in the same commit as the work.
 - Levels: track → task (D1.2) → subtask (D1.2.3) → steps. A task is done when
   every subtask is done and its "Done when" line holds.
@@ -42,11 +43,11 @@ Two helpers every track needs, built first:
 
 | Track | Status | Tasks done |
 | --- | --- | --- |
-| E. eve 0.78 upgrade (prerequisite, see backlog) | [to-do] | 0/7 |
+| E. eve upgrade, landed on 0.79.1 (see backlog) | [done] | 5/7, E6 and E7 open |
 | D0. Stranded runs | [in-progress] | 2/3 |
 | D1. The job record as the session log | [done] | 6/6 |
 | D2. A workspace that follows its owner | [done] | 4/4 |
-| D3. Thin hands | [in-progress] | 2/4 |
+| D3. Thin hands | [done] for now | 2/4, D3.3 and D3.4 parked |
 | D4. One Workflow world | [done] | 2/2 |
 | D5. Rewind | [in-progress] | 3/4 |
 
@@ -99,7 +100,9 @@ when the Workflow world is local.
 
 ### D0.3 Stranded conversations `[to-do]`
 
-Depends on E4 (eve 0.76's `409 session_stranded` and `ctx.session.predecessor`).
+E4 has landed. Since 0.3.0 a thread reads back across all its sessions, and a stranded
+session's history still shows (the stream route falls back on `SessionStrandedError`). What
+is left is carrying the conversation itself into the new session.
 
 - `[to-do]` D0.3.1 The console's recover path treats `409 session_stranded` like a wedged
   room: fresh session, message re-sent, thread note.
@@ -346,7 +349,13 @@ behind one interface with one implementation, then tries a second machine.
 - **Tests:** unit `[done]` (`tests/kinds.test.ts`): kind from configuration, capability refusal, the brief line, the restore matrix. The kind is on the board (`GET /bot/v1/state`, `computer.kind` and each member's `computer.kind`) rather than a new route; checked live: the state route names it and the panel caption reads "Team computer · Vercel Sandbox".
 - **Done when:** the console names the computer's kind and what it can do.
 
-### D3.3 Spike: a Mac as hands, shell and files only `[to-do]`
+### D3.3 Spike: a Mac as hands, shell and files only `[parked]`
+
+Parked (15 Oct 2026). A Bot with a shell on a person's Mac reaches their keychain, files
+and signed-in apps, which is more than the project wants to hand a model. The team keeps
+one shared computer on purpose: one screen to watch and take over, one browser profile so
+sign-ins carry across Bots. Revisit only with a separate macOS user and an allowlist of
+commands.
 
 - **Blocked (13 Oct 2026):** needs a Mac reachable over SSH (Remote Login on), or
   a cloud Mac. The interface it would implement (D3.1) and the capability flags
@@ -369,7 +378,9 @@ behind one interface with one implementation, then tries a second machine.
   findings doc against Docker's numbers.
 - **Done when:** the findings doc says whether a browser on the Mac is worth a track.
 
-### D3.4 Decision record `[to-do]`
+### D3.4 Decision record `[parked]`
+
+Parked with D3.3; the `Hands` interface (D3.1, D3.2) stays in place.
 
 - `[to-do]` D3.4.1 `docs/decisions/0003-hands.md`: the interface, the kinds, what a Mac
   browser would need (Chrome over DevTools, a VNC screen, a macOS fence), and whether to
@@ -497,8 +508,8 @@ D1 and the backup generations.
 6. D3.1 `[done]`, D3.2 `[done]`
 7. D4.1 `[done]`, D4.2 `[done]`
 8. D5.1 `[done]`, D5.2 `[done]`
-9. D3.3 `[to-do]` (blocked: needs a Mac reachable over SSH), D3.4 `[to-do]` (after D3.3), D5.3 `[to-do]` (after E4), D5.4 `[done]`, D2.3 `[done]`
+9. D3.3 `[parked]`, D3.4 `[parked]`, D5.3 `[to-do]`, D5.4 `[done]`, D2.3 `[done]`
 
-Also waiting on track E (the eve upgrade): D0.3.
+Track E has landed, so D0.3 and D5.3 are no longer blocked.
 
 Update the status board at the top with each commit.

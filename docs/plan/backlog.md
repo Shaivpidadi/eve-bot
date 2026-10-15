@@ -4,7 +4,8 @@ A living list. Pick from the top of a track, tick what lands, add what you
 learn. Sizes: S under half a day, M a day, L two to three days. Each task
 says what "done" looks like so a week can end mid-track without losing the
 thread. Background for the D tracks is in
-[../research/brain-hands-durable-runs.md](../research/brain-hands-durable-runs.md).
+[../research/brain-hands-durable-runs.md](../research/brain-hands-durable-runs.md);
+their task-level status lives in [durable-runs.md](durable-runs.md).
 
 ## D0. Stranded runs
 
@@ -12,10 +13,10 @@ The dev world quarantines active runs when the code generation changes; a
 standalone rebuild does the same. Vercel keeps old deployments alive, so
 this is a local and self-hosted problem.
 
-- [ ] **D0.1 (S)** On server start, list quarantined or orphaned Workflow runs
+- [x] **D0.1 (S)** On server start, list quarantined or orphaned Workflow runs
       and log one line per job they belonged to. Done: `npm run dev` after a
       code change prints which jobs lost their run.
-- [ ] **D0.2 (M)** Have the watchdog treat a job whose run is quarantined as
+- [x] **D0.2 (M)** Have the watchdog treat a job whose run is quarantined as
       lease-lapsed at once instead of waiting for the lease to expire. Done: a
       job interrupted by a rebuild is re-dispatched within one tick.
 
@@ -25,36 +26,36 @@ A fresh run today starts from the brief. Make it continue from where the
 last run got to. This is most of "a crash doesn't kill the run" and the base
 for rewind.
 
-- [ ] **D1.1 (M)** A journal on the job: `job.journal[]` of
+- [x] **D1.1 (M)** A journal on the job: `job.journal[]` of
       `{at, runToken, kind, text, data?}` with kinds `progress`, `decision`,
       `tab`, `file`, `artifact`, `asked`. Written by `log_progress`, the
       `page_*` tools (current URL and tab), `write_file`, `save_artifact`, and
       `request_takeover`. Capped (last 200). Done: a job's record shows the
       path the Bot took.
-- [ ] **D1.2 (M)** The brief replays the journal on a retry or revise: a
+- [x] **D1.2 (M)** The brief replays the journal on a retry or revise: a
       "Where the last run got to" section with the last entries, the open
       page, files written, what was asked and answered. Done: kill the server
       mid-job, let the watchdog re-run it, and the new run picks up without
       redoing finished steps.
-- [ ] **D1.3 (M)** A `note_to_self` tool (or a fold into `log_progress` with
+- [x] **D1.3 (M)** A `note_to_self` tool (or a fold into `log_progress` with
       `kind: decision`) the teammate is told to call at plan changes, so the
       journal carries intent, not only actions. Instructions updated.
-- [ ] **D1.4 (S)** A QA check that interrupts a running job and asserts the
+- [x] **D1.4 (S)** A QA check that interrupts a running job and asserts the
       re-run's brief carries the journal and the job closes once.
-- [ ] **D1.5 (M)** Console: the job card shows the journal as a timeline, and
+- [x] **D1.5 (M)** Console: the job card shows the journal as a timeline, and
       a re-run shows "continued from step N" where it picked up.
 
 ## D2. A workspace that follows its owner
 
-- [ ] **D2.1 (M)** `npm run export -- <file>` and `npm run import -- <file>`
+- [x] **D2.1 (M)** `npm run export -- <file>` and `npm run import -- <file>`
       that copy every document under the store prefix, the binary objects
       (backup archives, memory vectors), between any two drivers (fs, Blob).
       Done: a workspace exported from Vercel opens on a laptop with its
       roster, jobs, memory and connectors.
-- [ ] **D2.2 (M)** On import, open jobs are marked "run lost in the move" and
+- [x] **D2.2 (M)** On import, open jobs are marked "run lost in the move" and
       the watchdog re-dispatches them (runs do not move, D1 makes the re-run
       continue). Sessions start fresh; the console says so once per room.
-- [ ] **D2.3 (S)** Document it in `docs/updating.md`, including what does not
+- [x] **D2.3 (S)** Document it in `docs/updating.md`, including what does not
       move (Workflow state, the computer unless its backup is current).
 
 ## D3. Thin hands
@@ -63,40 +64,46 @@ The brain needs five things from a machine: run a command, read and write
 files, show a screen, drive a browser, hand a screen to a person. Today they
 are tangled with the Linux runtime.
 
-- [ ] **D3.1 (L)** Extract a `Hands` interface from `computer/runtime.ts` and
+- [x] **D3.1 (L)** Extract a `Hands` interface from `computer/runtime.ts` and
       `computer/control.ts` with the five operations, and make the Linux
       runtime its one implementation. No behaviour change. Done: tests pass,
       a job runs as before on Vercel and Docker.
-- [ ] **D3.2 (M)** A computer "kind" with capability flags (screen, browser,
+- [x] **D3.2 (M)** A computer "kind" with capability flags (screen, browser,
       handover, fence) recorded on the backup manifest and shown in the
       console. Done: the Team computer card names its kind.
-- [ ] **D3.3 (L)** Spike: a `mac-ssh` custom `SandboxBackend` that runs
+- [ ] ~~**D3.3 (L)**~~ *parked: no shell on a person's Mac, see durable-runs.md.* Spike: a `mac-ssh` custom `SandboxBackend` that runs
       commands and moves files over SSH to a Mac (cloud or local), shell and
       files only. Done: a job that needs no browser finishes on a Mac.
-- [ ] **D3.4 (later)** Browser and screen on a Mac: Chrome over DevTools,
+- [ ] ~~**D3.4 (later)**~~ *parked with D3.3.* Browser and screen on a Mac: Chrome over DevTools,
       screen over VNC, a macOS fence. Its own project.
 
 ## D4. One Workflow world for several brains
 
-- [ ] **D4.1 (M)** Spike `experimental.workflow.world` with
+- [x] **D4.1 (M)** Spike `experimental.workflow.world` with
       `@workflow/world-postgres` against a local Postgres, with `npm run dev`
       and a built `npm start` pointed at the same world. Record whether an
       idle session started by one is picked up by the other, and what the
       sandbox reconnect record does across the two.
-- [ ] **D4.2 (S)** Write the decision down in `docs/decisions/0002-*.md`.
+- [x] **D4.2 (S)** Write the decision down in `docs/decisions/0002-*.md`.
 
 ## D5. Rewind
 
-- [ ] **D5.1 (L)** Backup generations tied to journal entries: a backup is
+- [x] **D5.1 (L)** Backup generations tied to journal entries: a backup is
       taken (or a Vercel Sandbox snapshot requested) at each `decision` and
       before each outward action, named by the journal index.
-- [ ] **D5.2 (L)** "Rewind to here" on a journal entry: cancel the run,
+- [x] **D5.2 (L)** "Rewind to here" on a journal entry: cancel the run,
       restore the matching generation onto the computer, start a new run
       whose brief carries the journal up to that index.
 - [ ] **D5.3 (M)** Rewind a conversation: fork a room at a transcript index
       into a fresh session seeded with the transcript up to that point.
 
 ## A. Bots that feel alive
+
+0.3.0 replaced the SVG avatar with a WebGL mascot (`src/console/mascot.tsx`): a
+mood per presence including asleep, blinking, eyes and body that follow the
+pointer, a spin, and faces that wake on hover. The tab title already counts
+who needs you. Re-scope A1 to A9 against it before picking one up; the notes
+below are from before it.
 
 Research (13 Oct 2026): "Muse" is Meta's assistant, relaunched with a plush
 mascot, Jolly, designed by Alex Cornell: cream fur, beady eyes, pink cheeks,
@@ -238,12 +245,12 @@ held one screen per Bot, so the machinery for the other design is there.
       the console is open, poster crossfades to live instead of
       "Connecting…", posters prefetched for every working Bot, and opening a
       thread brings that Bot's tab to the front only when a person takes over.
-- [ ] **S3 (L)** A screen per working Bot: its own display and Chrome, the
+- [ ] ~~**S3 (L)**~~ *parked: one browser profile per workspace is deliberate, so sign-ins carry across Bots.* A screen per working Bot: its own display and Chrome, the
       profile seeded from the identity jar at start and exported back at the
       end so sign-ins still carry across. The pool caps concurrency (a fifth
       Bot waits or shares). Done: the Team computer card shows one mini screen
       per working Bot, and takeover opens the right one.
-- [ ] **S4 (S)** Resource check for S3 on Vercel Sandbox and Docker: memory
+- [ ] ~~**S4 (S)**~~ *parked with S3.* Resource check for S3 on Vercel Sandbox and Docker: memory
       per Chrome, `BOT_SANDBOX_VCPUS`, what happens at the cap. Written down
       before S3 starts.
 
@@ -269,16 +276,12 @@ what a good persona is.
 - [ ] **H5 (S)** Form polish: inline validation, duplicate-name check before
       submit, keyboard flow, the dialog on a sheet like Memory and Connectors.
 
-## Suggested first week
+## What's next
 
-The eve upgrade goes first because D1 edits the same files and because
-0.76 gives the watchdog a way to keep a conversation across a recovery.
+Track E and most of D shipped in 0.3.0. Still open, roughly in order:
 
-1. E1, E2 (bump, typecheck, `run_job` on the task model)
-2. E3, E4 (cancel and fence, console on stream 26)
-3. E5, E6, E7 (the small migrations, memory, the full pass)
-4. D1.1, D1.2 (the journal and the brief that replays it)
-5. D0.2, S1 (local rebuilds re-dispatch; each Bot's thread shows its own tab)
-
-Left for later, roughly in order: A1 to A5, S2, H1, H3, D1.4, D2.1, A7, H2,
-S3, D1.3, D1.5, D2.2, D2.3, D3, D4, D5, A6, A8, A9, H4, H5.
+1. E7 (the full pass on a scratch deployment) and E6 (memory capture)
+2. D0.3 (a recovered thread remembers its conversation) and D5.3 (rewind a conversation)
+3. S1, S2 (each Bot's thread shows its own tab; smooth switching)
+4. H1, H3, H2 (hiring templates, a Bot's first hello, describe-your-team)
+5. A track, re-scoped against the mascot; H4, H5
