@@ -328,6 +328,4 @@ what a good persona is.
 
 ## What's next
 
-Track E and most of D shipped in 0.3.0. Still open, roughly in order:
-
-Nothing open on the tracks above; new work goes here.
+Every track above is done or parked. New work goes here.
