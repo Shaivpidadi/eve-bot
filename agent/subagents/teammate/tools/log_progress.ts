@@ -5,7 +5,7 @@ import { record } from "../../../lib/activity";
 import { checkpointComputer } from "../../../lib/computer-backup";
 import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
-import { journal } from "../lib/journal";
+import { holdPoint, journal } from "../lib/journal";
 
 export default defineTool({
   description:
@@ -21,23 +21,36 @@ export default defineTool({
   }),
   label: { start: ({ note }) => note.slice(0, 80) },
   async execute({ jobId, note, kind, detail }, ctx) {
-    const who = operator(ctx);
-    // A superseded run's notes would read as the live run's in the job's feed.
-    const run = await guardSideEffect(ctx, jobId);
-    if (!run.ok) {
-      return { logged: false as const, reason: run.reason, message: run.message };
+    // A decision saves a rewind point; writes asked for in the same step wait for it.
+    const release = kind === "decision" ? holdPoint(ctx) : () => {};
+    try {
+      return await logProgress({ jobId, note, kind, detail }, ctx);
+    } finally {
+      release();
     }
-    await record({
-      workspaceId: who.workspaceId,
-      kind: "job.progress",
-      jobId,
-      botId: run.job.botId,
-      text: kind === "decision" ? `Decided: ${note}` : note,
-      ...(detail ? { data: detail } : {}),
-    });
-    await journal(ctx, { kind: kind ?? "progress", text: note, ...(detail ? { data: detail } : {}) }, jobId);
-    // Throttled inside: most progress notes do not trigger a backup.
-    await checkpointComputer(ctx);
-    return { logged: true as const };
   },
 });
+
+async function logProgress(
+  { jobId, note, kind, detail }: { jobId: string; note: string; kind?: "progress" | "decision" | undefined; detail?: Record<string, string | number | boolean | null> | undefined },
+  ctx: Parameters<typeof journal>[0],
+) {
+  const who = operator(ctx);
+  // A superseded run's notes would read as the live run's in the job's feed.
+  const run = await guardSideEffect(ctx, jobId);
+  if (!run.ok) {
+    return { logged: false as const, reason: run.reason, message: run.message };
+  }
+  await record({
+    workspaceId: who.workspaceId,
+    kind: "job.progress",
+    jobId,
+    botId: run.job.botId,
+    text: kind === "decision" ? `Decided: ${note}` : note,
+    ...(detail ? { data: detail } : {}),
+  });
+  await journal(ctx, { kind: kind ?? "progress", text: note, ...(detail ? { data: detail } : {}) }, jobId);
+  // Throttled inside: most progress notes do not trigger a backup.
+  await checkpointComputer(ctx);
+  return { logged: true as const };
+}

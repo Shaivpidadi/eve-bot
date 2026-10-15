@@ -55,6 +55,38 @@ export async function markPoint(ctx: ToolContext, jobId?: string, reason = "poin
   }
 }
 
+/**
+ * Rewind points being saved, per run. A model can ask for several tools in one
+ * step, which run side by side: "decided: write b next" alongside the write of
+ * b. The decision's point must be the files before that write, so the tools
+ * that change files wait for a point in flight (see `holdPoint`) first.
+ */
+const savingPoint = sessionState<Promise<void>>();
+
+/**
+ * Marks that a point is about to be saved for this run. Call it before the first
+ * `await` of the tool that saves it: tools of one step start in the order the
+ * model asked for them, so a write asked for after it then waits.
+ */
+export function holdPoint(ctx: ToolContext): () => void {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const previous = savingPoint.get(ctx.session.id) ?? Promise.resolve();
+  const chained = previous.then(() => held);
+  savingPoint.set(ctx.session.id, chained);
+  return () => {
+    release();
+    if (savingPoint.get(ctx.session.id) === chained) savingPoint.delete(ctx.session.id);
+  };
+}
+
+/** Waits for a rewind point this run is saving, before a tool changes files. */
+export async function afterPoint(ctx: ToolContext): Promise<void> {
+  await savingPoint.get(ctx.session.id);
+}
+
 /** The address each run last recorded, so a page is journaled once per visit and not per action on it. */
 const lastPage = sessionState<string>();
 
