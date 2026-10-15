@@ -105,6 +105,15 @@ pointer, a spin, and faces that wake on hover. The tab title already counts
 who needs you. Re-scope A1 to A9 against it before picking one up; the notes
 below are from before it.
 
+Re-scoped and done (15 Oct 2026), on the mascot rather than the SVG:
+expressions (A2) — a mouth and brows per mood (a small smile at rest, "hmm"
+thinking, a set mouth working, worried brows and an "o" when it needs you, a
+frown blocked, a grin done, a line asleep), eased so moods blend (A3);
+speaking (A5) — the mouth moves while a reply streams in (`voice.ts`); and
+needs-you (A7) — the sidebar face comes alive with an amber ring that pulses.
+`/bot/mascots?mood=…&speaking=1` shows them all. The rest (A1, A4, A6, A8,
+A9) is already covered by the mascot or no longer needed.
+
 Research (13 Oct 2026): "Muse" is Meta's assistant, relaunched with a plush
 mascot, Jolly, designed by Alex Cornell: cream fur, beady eyes, pink cheeks,
 customizable, with a keychain device (Muse Charm) that shows the character
@@ -320,4 +329,3 @@ what a good persona is.
 Track E and most of D shipped in 0.3.0. Still open, roughly in order:
 
 1. E7's manual part: Docker, a sign-in takeover, a connector call with approval
-2. A track, re-scoped against the mascot

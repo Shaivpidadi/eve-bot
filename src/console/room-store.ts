@@ -2,6 +2,7 @@ import type { InputRequest, InputResolution, MessageStreamEvent } from "eve/clie
 
 import { api, errorMessage, isRecord, redirectToLogin, SignedOutError } from "./api";
 import { withoutEmoji } from "./format";
+import { spoke } from "./voice";
 import type { ActivityEvent, Member } from "./types";
 
 /** How long a sent message may go unacknowledged by its thread before the console says so. */
@@ -497,6 +498,7 @@ export class RoomStore {
         break;
       }
       case "message.appended": {
+        spoke(this.room);
         const draft = `${event.data.turnId}:${event.data.stepIndex}`;
         this.drafts.set(draft, (this.drafts.get(draft) ?? "") + event.data.messageDelta);
         break;

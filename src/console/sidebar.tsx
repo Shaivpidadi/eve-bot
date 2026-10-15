@@ -332,7 +332,7 @@ export function Sidebar({
             onPointerEnter={() => setHovered(member.id)}
             onPointerLeave={() => setHovered((current) => (current === member.id ? null : current))}
           >
-            <LiveAvatar member={member} size={32} alive={hovered === member.id} onHover={onHover} />
+            <LiveAvatar member={member} size={32} alive={hovered === member.id} calling={needsYou} onHover={onHover} />
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline gap-2">
                 <span className={cn("min-w-0 flex-1 truncate text-[13px] font-medium", paused && "text-muted-foreground")}>
@@ -391,7 +391,7 @@ export function Sidebar({
         onPointerEnter={() => setHovered(member.id)}
         onPointerLeave={() => setHovered((current) => (current === member.id ? null : current))}
       >
-        <LiveAvatar member={member} size={40} alive={hovered === member.id} onHover={onHover} />
+        <LiveAvatar member={member} size={40} alive={hovered === member.id} calling={needsYou} onHover={onHover} />
         <span className={cn("max-w-full truncate text-xs font-medium", member.status === "paused" && "text-muted-foreground")}>
           {member.name}
         </span>
