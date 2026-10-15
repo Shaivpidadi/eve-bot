@@ -94,7 +94,7 @@ are tangled with the Linux runtime.
 - [x] **D5.2 (L)** "Rewind to here" on a journal entry: cancel the run,
       restore the matching generation onto the computer, start a new run
       whose brief carries the journal up to that index.
-- [ ] **D5.3 (M)** Rewind a conversation: fork a room at a transcript index
+- [x] **D5.3 (M)** Rewind a conversation: fork a room at a transcript index
       into a fresh session seeded with the transcript up to that point.
 
 ## A. Bots that feel alive
@@ -286,7 +286,6 @@ what a good persona is.
 Track E and most of D shipped in 0.3.0. Still open, roughly in order:
 
 1. E7 (the full pass on a scratch deployment)
-2. D5.3 (rewind a conversation)
-3. S1, S2 (each Bot's thread shows its own tab; smooth switching)
-4. H1, H3, H2 (hiring templates, a Bot's first hello, describe-your-team)
-5. A track, re-scoped against the mascot; H4, H5
+2. S1, S2 (each Bot's thread shows its own tab; smooth switching)
+3. H1, H3, H2 (hiring templates, a Bot's first hello, describe-your-team)
+4. A track, re-scoped against the mascot; H4, H5

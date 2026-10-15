@@ -49,7 +49,7 @@ Two helpers every track needs, built first:
 | D2. A workspace that follows its owner | [done] | 4/4 |
 | D3. Thin hands | [done] for now | 2/4, D3.3 and D3.4 parked |
 | D4. One Workflow world | [done] | 2/2 |
-| D5. Rewind | [in-progress] | 3/4 |
+| D5. Rewind | [done] | 4/4 |
 
 ## D0. Stranded runs `[done]`
 
@@ -488,19 +488,28 @@ D1 and the backup generations.
 - **Vercel Sandbox (14 Oct 2026, a test project):** passed in 155 s: rewound to step 3, files from step 3, job done.
 - **Done when:** the QA check passes on Vercel Sandbox and Docker. Both done.
 
-### D5.3 Rewind a conversation `[to-do]`
+### D5.3 Rewind a conversation `[done]`
 
 - **Files:** `agent/channels/ops.ts` (`POST /bot/v1/rooms/:room/fork`), `agent/lib/roomstate.ts`,
   `src/console/transcript.tsx` ("Branch from here" on a message).
-- `[to-do]` D5.3.1 Fork: start a fresh session for the room (as recover does) seeded through
+- `[done]` D5.3.1 Fork: start a fresh session for the room (as recover does) seeded through
   a `session.started` dynamic instruction with the transcript up to the chosen index
   (eve's `transcriptReducer` after E4), and keep the old session readable under a "before
-  the branch" divider.
-- `[to-do]` D5.3.2 Jobs started after the branch point stay as they are; the divider lists
-  them so nothing silently continues.
+  the branch" divider. As built: `POST /bot/v1/rooms/:room/fork { eventId }` names the point
+  by its stream event id, `lib/branch.ts` folds each of the thread's sessions with its own
+  reducer (sequences restart per session) up to it, the room keeps the result as a one-time
+  seed that `instructions/earlier.ts` hands to the next session, and "Branch from here" sits
+  on a Bot's replies only. The stream route reads a thread back while it has no session yet.
+- `[done]` D5.3.2 Jobs started after the branch point stay as they are; the divider lists
+  the ones still going so nothing silently continues (`withBranches` in `room-store.ts`).
 - **Tests:** turn test: a forked session's first turn sees the earlier transcript and not
   the messages after the index. QA: `qa/checks/fork.mjs`.
 - **Done when:** a person can take a thread back to a message and go a different way.
+- **Checked live (15 Oct 2026, `eve dev`):** branched HQ's desk to its first message, then
+  asked for the last question before this one: it quoted that first message, not the three
+  that followed. Then "Branch from here" in the console on a later reply: the old messages
+  fade under a divider quoting the reply, and the next answer carried on from it. Unit:
+  `tests/branch.test.ts`.
 
 ### D5.4 Write it down `[done]`
 
@@ -518,8 +527,6 @@ D1 and the backup generations.
 6. D3.1 `[done]`, D3.2 `[done]`
 7. D4.1 `[done]`, D4.2 `[done]`
 8. D5.1 `[done]`, D5.2 `[done]`
-9. D3.3 `[parked]`, D3.4 `[parked]`, D5.3 `[to-do]`, D5.4 `[done]`, D2.3 `[done]`
-
-Track E has landed, so D5.3 is no longer blocked.
+9. D3.3 `[parked]`, D3.4 `[parked]`, D5.3 `[done]`, D5.4 `[done]`, D2.3 `[done]`
 
 Update the status board at the top with each commit.

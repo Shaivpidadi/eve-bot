@@ -15,7 +15,7 @@ import { forgetGeneration } from "../lib/computer-backup";
 import { computerControl } from "../lib/computer/control";
 import { stopRunCommands } from "../lib/computer/shell";
 import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
-import { getJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
+import { getJob, isRoutine, listJobs, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
 import { FIELDS as MEMORY_FIELDS, forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, readFields, remember, restore as restoreMemory, revive as reviveMemory, rewrite as rewriteMemory, setField, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
@@ -23,12 +23,13 @@ import { CATALOG } from "../lib/catalog";
 import { addConnector, completeOAuth, confirmGuessedReads, disconnectOAuth, getConnector, listConnectors, needsConnect, OAUTH_CALLBACK_PATH, publicConnector, recheckConnector, removeConnector, replaceKey, startOAuth, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
-import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
+import { getRoomState, isWedged, noteAnswered, noteBranch, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
 import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
 import { sessionIsGone } from "../lib/gone";
+import { eventsOf, foldUntil } from "../lib/branch";
 import { crashRun, qaEnabled } from "../lib/qa";
 import { rewind } from "../lib/rewind";
 import { exportEnabled, exportTo } from "../lib/store/transfer";
@@ -108,7 +109,7 @@ async function restartWedgedRoom(
   workspaceId: string,
   room: string,
   attachSession: (sessionId: string) => { cancel(options?: { turnId?: string }): Promise<unknown> },
-  why: "wedged" | "gone" = "wedged",
+  why: "wedged" | "gone" | "branch" = "wedged",
 ): Promise<number> {
   const old = (await getRoomState(workspaceId, room))?.sessionId ?? null;
   const generation = await restartRoom(workspaceId, room);
@@ -122,10 +123,12 @@ async function restartWedgedRoom(
     kind: "bot.updated",
     botId: bot?.id ?? null,
     text:
-      why === "gone"
+      why === "branch"
+        ? `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} went back to an earlier message; the conversation carries on from there.`
+        : why === "gone"
         ? `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} moved to a fresh session after the server restarted; the conversation carries on.`
         : `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} stopped answering and was restarted; the last message was sent again.`,
-    data: { room, generation, restarted: true, ...(why === "gone" ? { reason: "session-gone" } : {}) },
+    data: { room, generation, restarted: true, ...(why === "wedged" ? {} : { reason: why === "gone" ? "session-gone" : "branch" }) },
   }).catch(() => undefined);
   return generation;
 }
@@ -227,6 +230,11 @@ async function resolveRoom(access: Access, raw: string | undefined): Promise<str
  * an earlier session's history does not change.
  */
 const recordedLengths = new Map<string, number>();
+/** A session's recorded events, read once to the end. */
+async function* streamOf(session: { getEventStream(options: { startIndex?: number; follow?: boolean }): Promise<ReadableStream<unknown>> }): AsyncIterable<unknown> {
+  yield* eventsOf(await session.getEventStream({ startIndex: 0, follow: false }));
+}
+
 async function recordedLength(session: { readonly id?: string; getEventStream(options: { startIndex?: number; follow?: boolean }): Promise<ReadableStream<unknown>> }): Promise<number> {
   const id = session.id ?? "";
   const known = recordedLengths.get(id);
@@ -377,6 +385,40 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /**
+     * Takes a thread back to one of its messages and carries on from there. The
+     * room moves to a fresh session that starts from the conversation up to that
+     * message (see instructions/earlier.ts); what was said after it stays
+     * readable on the old branch, and jobs the thread started after it keep
+     * going and are listed, so nothing continues unseen. Refused while the
+     * thread is answering.
+     */
+    POST("/bot/v1/rooms/:room/fork", async (request, { attachSession, params, resolveSession }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const room = await resolveRoom(gate.access, params.room);
+      if (room instanceof Response) return room;
+      const { workspaceId } = gate.access;
+      const body = await readJson(request);
+      const eventId = typeof body?.eventId === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(body.eventId) ? body.eventId : null;
+      if (eventId === null) return json({ error: "eventId is required" }, 400);
+
+      const state = await getRoomState(workspaceId, room);
+      if (state?.active === true) return json({ error: "The thread is answering; branch once it is done." }, 409);
+      const live = await resolveSession(await addressOf(workspaceId, room));
+      const current = live?.id ?? state?.sessionId ?? null;
+      const thread = [...(state?.sessions ?? []).filter((id) => id !== current), ...(current === null ? [] : [current])];
+      const point = await foldUntil(thread, (id) => streamOf(attachSession(id)), eventId);
+      if (point === null) return json({ error: "That message is not in this thread." }, 404);
+
+      const at = new Date().toISOString();
+      const later = (await listJobs(workspaceId, { limit: 200 })).filter((job) => job.room === room && job.createdAt > point.eventAt);
+      const jobs = later.map((job) => ({ id: job.id, title: job.title, status: job.status }));
+      await noteBranch(workspaceId, room, { eventId, eventAt: point.eventAt, at, by: gate.access.user, jobs }, point.messages);
+      const generation = await restartWedgedRoom(workspaceId, room, attachSession, "branch");
+      return json({ room, branched: true, generation, eventAt: point.eventAt, messages: point.messages.length, jobs });
+    }),
+
+    /**
      * Answers a pending approval or question.
      *
      * A plain message does not resolve one: it starts a new turn while the
@@ -509,13 +551,16 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const live = await resolveSession(await addressOf(gate.access.workspaceId, room));
       const state = await getRoomState(gate.access.workspaceId, room);
       const sessionId = live?.id ?? state?.sessionId ?? null;
-      if (sessionId === null) return none();
-      const session = live ?? attachSession(sessionId);
+      // Right after a branch the room has earlier sessions and no current one
+      // until the next message; the thread still reads back meanwhile.
+      if (sessionId === null && (state?.sessions ?? []).length === 0) return none();
+      const session = live ?? (sessionId === null ? null : attachSession(sessionId));
       // The thread's earlier sessions are read back first, as recorded, so a new
       // session never empties it; the reader's cursor runs across all of them,
       // and the first session names the thread (see roomstate.ts).
       const earlier = (state?.sessions ?? []).filter((id) => id !== sessionId);
-      const threadId = earlier[0] ?? sessionId;
+      // Never empty: with no current session, there is at least one earlier one.
+      const threadId = earlier[0] ?? sessionId ?? "";
 
       const requested = Number(new URL(request.url).searchParams.get("startIndex") ?? 0);
       const startIndex = Number.isInteger(requested) && requested >= 0 ? requested : 0;
@@ -571,6 +616,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
                 await pipe(await attachSession(id).getEventStream({ startIndex: skip, follow: false }));
                 skip = 0;
               }
+              if (session === null) return;
               let events: ReadableStream<unknown>;
               try {
                 events = await session.getEventStream({ startIndex: skip });
