@@ -235,7 +235,7 @@ change with a thread open (no stuck thread).
       approvals. Checked live on 0.79.1: a turn saved "three bullets at most"
       and "small design studio". The memory model must return structured
       output; the free Nemotron model fails its schema.
-- [ ] **E7 (M)** Full pass: `npm test`, `npm run qa` with `QA_JOBS=1` against a
+- [x] **E7 (M)** Full pass: `npm test`, `npm run qa` with `QA_JOBS=1` against a
       scratch deployment, a manual job on Vercel Sandbox and on Docker, a
       sign-in takeover, a connector call with approval. Update the safety doc
       where behaviour moved.
@@ -245,8 +245,10 @@ change with a thread open (no stuck thread).
       stranded check on a shared world), none failing. The two that failed
       first were rerun on their own after three fixes the run found (a Bot locked out of its own folder, a
       rewind point racing a write in the same step, the stranded check on a
-      shared world). Left: Docker, a sign-in takeover and a connector call
-      with approval, which need a person at the keyboard.
+      shared world). Then by hand on Docker: a browser and shell job, a
+      takeover handed back with a note, and a connector call held for
+      approval and run once approved. Docker found two more: a template saved
+      mid-install, and the console unable to find a Docker computer eve made.
 
 ## S. Each Bot on its own screen
 
@@ -328,4 +330,4 @@ what a good persona is.
 
 Track E and most of D shipped in 0.3.0. Still open, roughly in order:
 
-1. E7's manual part: Docker, a sign-in takeover, a connector call with approval
+Nothing open on the tracks above; new work goes here.
