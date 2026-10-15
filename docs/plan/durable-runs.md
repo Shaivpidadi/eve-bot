@@ -206,7 +206,7 @@ facts a run produced, written into the job record under the fence.
   through `write_file`, so the journal sees those files only through the Bot's own progress
   note. The check now waits for that note and judges redo by the file itself. Journaling
   shell writes would need parsing commands; left as is.
-- **Vercel Sandbox (14 Oct 2026, project eve-bot-test):** resume, re-run by HQ, passed in 221 s: resumed from step 2 of 6, file `first`, `second`, job done.
+- **Vercel Sandbox (14 Oct 2026, a test project):** resume, re-run by HQ, passed in 221 s: resumed from step 2 of 6, file `first`, `second`, job done.
 - **Done when:** the QA check passes on Vercel Sandbox and on Docker, and the ratio is recorded. Both done.
 
 ### D1.5 A note to self `[done]`
@@ -348,9 +348,8 @@ behind one interface with one implementation, then tries a second machine.
 
 ### D3.3 Spike: a Mac as hands, shell and files only `[to-do]`
 
-- **Blocked (13 Oct 2026):** no Mac reachable over SSH. This Mac has Remote Login off
-  (System Settings → General → Sharing → Remote Login), which is the owner's to turn on;
-  a cloud Mac works too. The interface it would implement (D3.1) and the capability flags
+- **Blocked (13 Oct 2026):** needs a Mac reachable over SSH (Remote Login on), or
+  a cloud Mac. The interface it would implement (D3.1) and the capability flags
   that would switch off its screen and browser (D3.2) are in place.
 
 - **Files:** `agent/lib/hands/mac-ssh.ts`, `agent/lib/computer-config.ts`
@@ -465,7 +464,7 @@ D1 and the backup generations.
   user, so the Bot's folder came back without the `bot-team` group's write bit and the Bot's
   shell could not write in it (the Bot reported it and blocked). Restore now keeps the
   archive's permissions and re-applies the shared-folder rules.
-- **Vercel Sandbox (14 Oct 2026, project eve-bot-test):** passed in 155 s: rewound to step 3, files from step 3, job done.
+- **Vercel Sandbox (14 Oct 2026, a test project):** passed in 155 s: rewound to step 3, files from step 3, job done.
 - **Done when:** the QA check passes on Vercel Sandbox and Docker. Both done.
 
 ### D5.3 Rewind a conversation `[to-do]`

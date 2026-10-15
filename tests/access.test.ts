@@ -115,8 +115,8 @@ describe("stored name", () => {
     vi.stubEnv("NODE_ENV", "test");
     const { authenticate, setStoredName, storedName } = await import("../agent/lib/access");
     expect(await storedName("default")).toBeNull();
-    expect(await setStoredName("default", "  Shaishav   Pidadi ")).toBe("Shaishav Pidadi");
-    expect(await authenticate(request())).toMatchObject({ ok: true, access: { user: "operator", profile: { name: "Shaishav Pidadi", source: "workspace" } } });
+    expect(await setStoredName("default", "  Ava   Pidadi ")).toBe("Ava Pidadi");
+    expect(await authenticate(request())).toMatchObject({ ok: true, access: { user: "operator", profile: { name: "Ava Pidadi", source: "workspace" } } });
     expect(await authenticate(request({ "x-bot-user": "ann@acme.test" }))).toMatchObject({ ok: true, access: { profile: { name: "ann@acme.test", source: "header" } } });
     expect(await authenticate(request({ "x-bot-workspace": "team-b" }))).toMatchObject({ ok: true, access: { profile: { source: "none" } } });
     expect(await setStoredName("default", "   ")).toBeNull();

@@ -37,14 +37,14 @@ describe("rewindJob", () => {
 
   it("cuts the journal, drops the run, and queues the job", async () => {
     const { jobs, job } = await jobWithJournal();
-    const rewound = await jobs.rewindJob(WORKSPACE, job.id, 2, "Shaishav", ["Sent an email to a@x"]);
+    const rewound = await jobs.rewindJob(WORKSPACE, job.id, 2, "Ava", ["Sent an email to a@x"]);
     expect(rewound.ok).toBe(true);
     if (!rewound.ok) return;
     expect(rewound.sessions).toEqual(["sess_A"]);
     const after = (await jobs.getJob(WORKSPACE, job.id)) as Job;
     expect(after).toMatchObject({ status: "queued", lease: null, result: null });
     expect(after.journal?.map((line) => line.text)).toEqual(["Started", "Wrote a"]);
-    expect(after.rewound).toMatchObject({ by: "Shaishav", index: 2, kept: ["Sent an email to a@x"] });
+    expect(after.rewound).toMatchObject({ by: "Ava", index: 2, kept: ["Sent an email to a@x"] });
     expect(after.rewound?.undone.map((line) => line.text)).toEqual(["Write b next", "Wrote b"]);
     // The old run is nobody now; the job is due for a fresh one.
     expect(jobs.runCheckOf(after, "sess_A").ok).toBe(false);
@@ -61,7 +61,7 @@ describe("rewindJob", () => {
 
   it("tells the next run where it was taken back to and what stays done", async () => {
     const { jobs, job, bot } = await jobWithJournal();
-    await jobs.rewindJob(WORKSPACE, job.id, 2, "Shaishav", ["Sent an email to a@x (sent, 2026-10-13 10:00 UTC)"]);
+    await jobs.rewindJob(WORKSPACE, job.id, 2, "Ava", ["Sent an email to a@x (sent, 2026-10-13 10:00 UTC)"]);
     const { renderBrief } = await import("../agent/lib/brief");
     const brief = renderBrief(bot, (await jobs.getJob(WORKSPACE, job.id)) as Job, { token: "run_2" });
     expect(brief).toContain("## Rewound");
@@ -111,11 +111,11 @@ describe("rewind", () => {
     const current = (await jobs.getJob(WORKSPACE, job.id)) as Job;
     await takeGeneration(hands, { workspaceId: WORKSPACE, job: current, botName: "Atlas", index: 0, reason: "start" });
     const { rewind } = await import("../agent/lib/rewind");
-    const done = await rewind({ workspaceId: WORKSPACE, jobId: job.id, index: 1, by: "Shaishav" }, async () => hands);
+    const done = await rewind({ workspaceId: WORKSPACE, jobId: job.id, index: 1, by: "Ava" }, async () => hands);
     expect(done.ok && done.outcome.files).toEqual({ restoredFrom: 0 });
     expect(restores[0]).toEqual({ paths: ["/workspace/bots/Atlas", "/workspace/bots/atlas"], bytes: [7] });
     const { recentActivity } = await import("../agent/lib/activity");
     const line = (await recentActivity(WORKSPACE, { jobId: job.id })).find((event) => event.kind === "job.rewound");
-    expect(line?.text).toContain('Shaishav took "Two files" back to step 1; its files are as they were at step 0');
+    expect(line?.text).toContain('Ava took "Two files" back to step 1; its files are as they were at step 0');
   });
 });
