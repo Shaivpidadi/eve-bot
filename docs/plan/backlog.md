@@ -242,10 +242,14 @@ reconnects the live view each time. The pool already supports several
 screens per machine (`MAX_SCREENS`, default 4, up to 9), and the table once
 held one screen per Bot, so the machinery for the other design is there.
 
-- [ ] **S1 (M)** A Bot's thread shows its own tab. Posters are captured per
+- [x] **S1 (M)** A Bot's thread shows its own tab. Posters are captured per
       target (the script already supports it), so each thread's thumbnail is
       that Bot's page, not whoever is in front; HQ's desk shows the front tab.
       Done: two Bots working show two different thumbnails.
+      Built with per-job tabs (32fbced): `refreshScreen` captures the run's
+      own tab into that Bot's poster, and the poster route falls back to the
+      latest frame for HQ. Left: members share the screen's `posterAt`, so a
+      new frame from one Bot refetches every thumbnail (correct, just wasteful).
 - [ ] **S2 (M)** Smooth switching: one live connection per screen kept while
       the console is open, poster crossfades to live instead of
       "Connecting…", posters prefetched for every working Bot, and opening a
@@ -286,6 +290,6 @@ what a good persona is.
 Track E and most of D shipped in 0.3.0. Still open, roughly in order:
 
 1. E7 (the full pass on a scratch deployment)
-2. S1, S2 (each Bot's thread shows its own tab; smooth switching)
+2. S2 (smooth switching between threads' screens; needs a running computer to test)
 3. H1, H3, H2 (hiring templates, a Bot's first hello, describe-your-team)
 4. A track, re-scoped against the mascot; H4, H5
