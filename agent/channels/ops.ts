@@ -28,7 +28,7 @@ import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
-import { sessionIsGone } from "../lib/session";
+import { sessionIsGone } from "../lib/gone";
 import { crashRun, qaEnabled } from "../lib/qa";
 import { rewind } from "../lib/rewind";
 import { exportEnabled, exportTo } from "../lib/store/transfer";

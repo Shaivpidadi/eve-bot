@@ -1,7 +1,7 @@
 import { SessionStrandedError } from "eve/channels";
 import { describe, expect, it } from "vitest";
 
-import { sessionIsGone } from "../agent/lib/session";
+import { sessionIsGone } from "../agent/lib/gone";
 
 /** Which send failures move a thread to a fresh session instead of failing the person's message. */
 describe("sessionIsGone", () => {
