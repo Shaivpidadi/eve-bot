@@ -784,6 +784,8 @@ cmd_drive() {
     if [ "$name" = chrome ]; then dst="$PROFILES"; else dst="/workspace/$name"; fi
     src="$mount/$name"
     mkdir -p "$dst"
+    # The profiles hold the team's sign-ins: the computer's user only, as the rest of its state.
+    if [ "$name" = chrome ] && sudo -n test -d "$src"; then sudo -n chmod 700 "$src" || fail drive "could not close $src"; fi
     if mountpoint -q "$dst"; then bound="$bound $name"; continue; fi
     # A browser already running on these profiles keeps them until the machine restarts.
     if [ "$name" = chrome ] && pgrep -f -- "--user-data-dir=$PROFILES" >/dev/null 2>&1; then continue; fi
@@ -791,9 +793,8 @@ cmd_drive() {
       sudo -n mkdir -p "$src" &&
         sudo -n chown "$(stat -c %u:%g "$dst")" "$src" &&
         sudo -n chmod "$(stat -c %a "$dst")" "$src" || fail drive "could not make $src on the drive"
+      if [ "$name" = chrome ]; then sudo -n chmod 700 "$src" || fail drive "could not close $src"; fi
     fi
-    # The profiles hold the team's sign-ins: the computer's user only, as the rest of its state.
-    if [ "$name" = chrome ]; then sudo -n chmod 700 "$src" || fail drive "could not close $src"; fi
     if [ -n "$(ls -A "$dst" 2>/dev/null)" ]; then
       sudo -n cp -a -n "$dst/." "$src/" && sudo -n find "$dst" -mindepth 1 -delete ||
         fail drive "could not move $dst onto the drive"
