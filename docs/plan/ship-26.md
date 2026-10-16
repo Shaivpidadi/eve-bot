@@ -92,9 +92,13 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   locked down with `BOT_SANDBOX_ALLOW_DOMAINS`). Instead `prepare` runs the new `bot-computer settle` on an incomplete
   install: it stops the background installer and any apt/dpkg it started, and finishes what dpkg can, so the template
   is consistent and whatever is missing installs on first use. With an image, the install finds everything and returns.
-- `[to-do]` V1.4 `script.ts` / `runtime.ts`: keep `installed()` as a health check; the install path, mirror rewrite and
+- `[done]` V1.4 `script.ts` / `runtime.ts`: keep `installed()` as a health check; the install path, mirror rewrite and
   `untilInstalled` remain only for the no-image fallback. `cmd_isolate` keeps only the per-boot fence.
-- `[to-do]` V1.5 CI: build the computer image on PRs (no push); a release workflow pushes to VCR and records the digest.
+  As built: no change needed. `installed()` already is the health check, and with the image the install path finds
+  everything; it stays for machines without one.
+- `[done]` V1.5 CI: build the computer image on PRs (no push); a release workflow pushes to VCR and records the digest.
+  As built: `.github/workflows/computer-image.yml` builds it for linux/amd64 and checks the software when the Dockerfile
+  or the installer changes. Publishing stays by hand (it needs a Vercel token in GitHub, which this repo does not hold).
 - `[to-do]` V1.6 Docs: `docs/configuration.md` (`BOT_COMPUTER_IMAGE`), `.env.example`, README "computer" section.
 - **Tests:** unit for the config branch (image vs fallback); `tests/hands.test.ts` still green; build test of the Dockerfile in CI.
 - **Done when:** a fresh Docker computer and a fresh Vercel computer run a browser + shell job with no apt step, and the
