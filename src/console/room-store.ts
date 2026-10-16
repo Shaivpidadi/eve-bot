@@ -32,7 +32,7 @@ export interface Notice {
  * A failed turn, in words for the person reading the thread. eve's own
  * message is kept for anything not recognised here.
  */
-function failureNotice(message: string): Omit<Notice, "icon"> {
+export function failureNotice(message: string): Omit<Notice, "icon"> {
   if (/generation-bound delivery/.test(message)) {
     return {
       label: "This thread cannot continue here",
@@ -55,6 +55,13 @@ function failureNotice(message: string): Omit<Notice, "icon"> {
     return {
       label: "No provider for this model",
       detail: `No AI Gateway provider can serve ${model ?? "the model"} with the data controls set on this deployment (BOT_ZDR, BOT_INFERENCE_REGION). Choose another model, or turn the setting off.`,
+      tone: "error",
+    };
+  }
+  if (/\bdoes not support (?:image|file|vision)\b|\bimage (?:or file )?input is not supported\b/i.test(message)) {
+    return {
+      label: "This model can't see the screen",
+      detail: "It reads text only, and the browser works from screenshots. Choose a model that takes images for this Bot (BOT_TEAMMATE_MODEL), then try again.",
       tone: "error",
     };
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildTimeline } from "../src/console/room-store";
+import { buildTimeline, failureNotice } from "../src/console/room-store";
 import type { ActivityEvent, Member } from "../src/console/types";
 
 /** Each thread shows its own work: a hand-off reads as a conversation, and other threads' jobs stay out. */
@@ -53,5 +53,14 @@ describe("a failed turn", () => {
     expect(buildTimeline(hq, [], [failed], [hq])).toEqual([]);
     const unmarked = { ...failed, data: { room: "desk" } };
     expect(buildTimeline(hq, [], [unmarked], [hq])).toEqual([]);
+  });
+});
+
+describe("failureNotice", () => {
+  it("names AI Gateway's refusals plainly and keeps any other message", () => {
+    expect(failureNotice('402 {"type":"quota_for_entity_exceeded"}').label).toBe("AI Gateway budget reached");
+    expect(failureNotice("No provider for nvidia/nemotron-3.5-lightning-free supports the requested inference region.").detail).toContain("nvidia/nemotron-3.5-lightning-free");
+    expect(failureNotice("This model does not support image or file input. Remove it and retry.").label).toBe("This model can't see the screen");
+    expect(failureNotice("socket hang up")).toMatchObject({ label: "Something went wrong", detail: "socket hang up" });
   });
 });

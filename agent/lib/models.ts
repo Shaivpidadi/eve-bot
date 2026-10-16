@@ -215,12 +215,18 @@ export function gatewayOptions(env: Readonly<Record<string, string | undefined>>
  *   `no_providers_available`, or for ZDR `no_zdr_providers_available` with the
  *   message "No ZDR … providers … available for model: <id>", and for a region
  *   "No provider for <id> supports the requested inference region" (both seen live).
+ * - `no-images`: the model takes text only, and the work sent it a screenshot
+ *   (the browser works from them): "This model does not support image or file
+ *   input" (seen live from free models).
  * Null for anything else, which keeps its own message.
  */
+/** A model refusing an image: Gateway's wording, and the usual provider ones. */
+export const NO_IMAGES = /\bdoes not support (?:image|file|vision)\b|\bimage (?:or file )?input is not supported\b/i;
+
 export function explainGatewayError(
   message: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
-): { readonly kind: "budget" | "no-providers"; readonly text: string } | null {
+): { readonly kind: "budget" | "no-providers" | "no-images"; readonly text: string } | null {
   if (/quota_for_entity_exceeded|\b402\b[^]*\bbudget\b/i.test(message)) {
     return {
       kind: "budget",
@@ -240,6 +246,12 @@ export function explainGatewayError(
         asked.length > 0
           ? `No AI Gateway provider can serve ${subject} with ${asked.join(" and ")}. Choose a model that offers it, or turn the setting off.`
           : `No AI Gateway provider can serve ${subject} right now. Choose another model, or try again later.`,
+    };
+  }
+  if (NO_IMAGES.test(message)) {
+    return {
+      kind: "no-images",
+      text: "This model reads text only, and the browser works from screenshots. Set BOT_TEAMMATE_MODEL (or the Bot's model) to one that takes images, then run it again.",
     };
   }
   return null;

@@ -209,7 +209,7 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
 ### V7. Free models and Token Pass (F7) `[to-do]` (small)
 - `[to-do]` V7.1 Try `stealth/cat-jam` as `BOT_MEMORY_MODEL` locally with the existing capture eval; keep Nemotron for
   HQ and teammate (user preference). Record pass rate here.
-- `[to-do]` V7.3 Name the problem when a text-only model meets the browser: map Gateway's "does not support image or
+- `[done]` V7.3 Name the problem when a text-only model meets the browser: map Gateway's "does not support image or
   file input" to "<model> can't see screenshots; the browser needs a vision model" (`explainGatewayError`).
 - `[to-do]` V7.2 Docs: free/cheap model options (Nemotron, Cat Jam: free, no ZDR, may disappear; Token Pass).
 
