@@ -60,8 +60,33 @@ export interface RoomState {
   turnAt?: string | null;
   /** How many times the room's session was restarted because it stopped answering. */
   restarts?: number;
+  /** Times a person took the thread back to an earlier message and carried on from there, oldest first. */
+  branches?: Branch[];
+  /** The conversation the next session starts from after a branch; used once, by the session that takes it. */
+  seed?: Seed | null;
   updatedAt: string;
 }
+
+/** A thread taken back to an earlier message. */
+export interface Branch {
+  /** The stream event (its `meta.id`) the thread went back to. */
+  readonly eventId: string;
+  /** When that message was said. */
+  readonly eventAt: string;
+  /** When the person branched. Messages between `eventAt` and this stay readable, on the old branch. */
+  readonly at: string;
+  readonly by: string;
+  /** Jobs this thread started after the branch point. They keep going; the thread lists them so nothing continues unseen. */
+  readonly jobs: readonly { readonly id: string; readonly title: string; readonly status: string }[];
+}
+
+export interface Seed {
+  readonly messages: readonly { readonly role: string; readonly text: string }[];
+  /** The session that took it, once one has. */
+  readonly takenBy: string | null;
+}
+
+const MAX_BRANCHES = 20;
 
 /**
  * How long a delivered message may wait before the thread counts as wedged.
@@ -215,6 +240,43 @@ const MAX_EARLIER_SESSIONS = 20;
 function withEarlier(sessions: readonly string[] | undefined, previous: string | null): string[] {
   const list = (sessions ?? []).filter((id) => id !== previous);
   return previous === null ? list : [...list, previous].slice(-MAX_EARLIER_SESSIONS);
+}
+
+/**
+ * The session a new one in this room took over from: the latest earlier session
+ * that is not `sessionId` itself. A room only gets a new session when it is first
+ * opened, restarted (which keeps the old ones), or reset (which forgets them), so
+ * this is the conversation the new session should carry on. Null for a fresh room.
+ */
+export function predecessorIn(state: Pick<RoomState, "sessionId" | "sessions"> | null, sessionId: string): string | null {
+  if (state === null) return null;
+  const earlier = withEarlier(state.sessions, state.sessionId ?? null).filter((id) => id !== sessionId);
+  return earlier.at(-1) ?? null;
+}
+
+/** Records a branch and the conversation the next session should start from. */
+export function noteBranch(workspaceId: string, room: string, branch: Branch, messages: Seed["messages"]): Promise<void> {
+  return updateRoom(workspaceId, room, (state) => ({
+    ...state,
+    branches: [...(state.branches ?? []), branch].slice(-MAX_BRANCHES),
+    seed: { messages, takenBy: null },
+  }));
+}
+
+/**
+ * The branch's conversation, for the session starting now. The first session to
+ * ask takes it; asking again from that same session (a retried resolver) gets it
+ * again, and any later session gets nothing.
+ */
+export async function takeSeed(workspaceId: string, room: string, sessionId: string): Promise<Seed["messages"] | null> {
+  let taken: Seed["messages"] | null = null;
+  await updateRoom(workspaceId, room, (state) => {
+    const seed = state.seed ?? null;
+    if (seed === null || (seed.takenBy !== null && seed.takenBy !== sessionId)) return state;
+    taken = seed.messages;
+    return { ...state, seed: { ...seed, takenBy: sessionId } };
+  });
+  return taken;
 }
 
 export function noteSession(workspaceId: string, room: string, sessionId: string): Promise<void> {

@@ -8,6 +8,7 @@
  * QA_JOBS=1, so the default run is free and fast enough to sit in front of a
  * deploy. Evidence for anything that fails is written under .qa/.
  * QA_ONLY=resume,stranded runs only the checks whose names contain those words.
+ * QA_BYPASS=<secret> sends Vercel's protection bypass header, for a protected preview.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";

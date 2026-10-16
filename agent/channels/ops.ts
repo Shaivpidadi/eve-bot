@@ -15,7 +15,7 @@ import { forgetGeneration } from "../lib/computer-backup";
 import { computerControl } from "../lib/computer/control";
 import { stopRunCommands } from "../lib/computer/shell";
 import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
-import { getJob, isRoutine, listOpenJobs, rescheduleJob } from "../lib/jobs";
+import { getJob, isRoutine, listJobs, listOpenJobs, rescheduleJob } from "../lib/jobs";
 import { listRecipes, removeRecipe } from "../lib/recipes";
 import { type Day, DAYS, defaultTimezone, isSchedule, type Schedule } from "../lib/schedule";
 import { FIELDS as MEMORY_FIELDS, forget as forgetMemory, isMemoryKind, isMemorySlot, MEMORY_SLOTS, pin as pinMemory, readEntries, readFields, remember, restore as restoreMemory, revive as reviveMemory, rewrite as rewriteMemory, setField, SLOTS as MEMORY_SLOT_COPY } from "../lib/memory";
@@ -23,11 +23,17 @@ import { CATALOG } from "../lib/catalog";
 import { addConnector, completeOAuth, confirmGuessedReads, disconnectOAuth, getConnector, listConnectors, needsConnect, OAUTH_CALLBACK_PATH, publicConnector, recheckConnector, removeConnector, replaceKey, startOAuth, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
 import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
-import { getRoomState, isWedged, noteAnswered, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
+import { getRoomState, isWedged, noteAnswered, noteBranch, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
 import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
+import { sessionIsGone } from "../lib/gone";
+import { worldIsLocal } from "../lib/world";
+import { eventsOf, foldUntil } from "../lib/branch";
+import { writeIntro } from "../lib/intro";
+import { templateById } from "../lib/templates";
+import { MAX_PROPOSED, proposeRoster } from "../lib/roster";
 import { crashRun, qaEnabled } from "../lib/qa";
 import { rewind } from "../lib/rewind";
 import { exportEnabled, exportTo } from "../lib/store/transfer";
@@ -107,6 +113,7 @@ async function restartWedgedRoom(
   workspaceId: string,
   room: string,
   attachSession: (sessionId: string) => { cancel(options?: { turnId?: string }): Promise<unknown> },
+  why: "wedged" | "gone" | "branch" = "wedged",
 ): Promise<number> {
   const old = (await getRoomState(workspaceId, room))?.sessionId ?? null;
   const generation = await restartRoom(workspaceId, room);
@@ -119,10 +126,79 @@ async function restartWedgedRoom(
     workspaceId,
     kind: "bot.updated",
     botId: bot?.id ?? null,
-    text: `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} stopped answering and was restarted; the last message was sent again.`,
-    data: { room, generation, restarted: true },
+    text:
+      why === "branch"
+        ? `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} went back to an earlier message; the conversation carries on from there.`
+        : why === "gone"
+        ? `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} moved to a fresh session after the server restarted; the conversation carries on.`
+        : `${bot === null ? "HQ's desk" : `${bot.name}'s thread`} stopped answering and was restarted; the last message was sent again.`,
+    data: { room, generation, restarted: true, ...(why === "wedged" ? {} : { reason: why === "gone" ? "session-gone" : "branch" }) },
   }).catch(() => undefined);
   return generation;
+}
+
+type Sender = (address: string) => { send: (message: string, options: { auth: SessionAuthContext }) => Promise<{ id: string }> };
+type Attacher = (sessionId: string) => { cancel(options?: { turnId?: string }): Promise<unknown> };
+
+/**
+ * Sends into a room, and when its session is gone, moves the room to a fresh
+ * one (earlier sessions kept, so the thread still reads back and the new session
+ * picks up the conversation) and sends once more.
+ */
+async function sendToRoom(
+  from: Sender,
+  attachSession: Attacher,
+  workspaceId: string,
+  room: string,
+  message: string,
+  auth: SessionAuthContext,
+): Promise<{ readonly session: { id: string }; readonly moved: boolean }> {
+  try {
+    return { session: await from(await addressOf(workspaceId, room)).send(message, { auth }), moved: false };
+  } catch (error) {
+    if (!sessionIsGone(error)) throw error;
+    await restartWedgedRoom(workspaceId, room, attachSession, "gone");
+    return { session: await from(await addressOf(workspaceId, room)).send(message, { auth }), moved: true };
+  }
+}
+
+/**
+ * Hires one Bot from what a person filled in: a name, a job and how it works,
+ * and optionally a template, which brings its skills, emoji and introduction.
+ * A Bot without a template gets skills from the request (short words only) and
+ * its introduction written in the background.
+ */
+async function hireFromForm(
+  access: Access,
+  body: Record<string, unknown> | null,
+  waitUntil: (work: Promise<unknown>) => void,
+): Promise<{ bot: { id: string; name: string; room: string } } | { error: string; status: 400 | 409 }> {
+  const name = text(body?.name, 1, 40);
+  const role = text(body?.role, 1, 120);
+  const persona = text(body?.persona, 20, 4_000);
+  if (name === null || role === null || persona === null) {
+    return { error: "A name (1–40), a job (1–120), and how it should work (20–4000 characters) are required.", status: 400 };
+  }
+  const clash = await findBot(access.workspaceId, name);
+  if (clash !== null) return { error: `${clash.name} is already on the team.`, status: 409 };
+  const template = templateById(body?.template);
+  const skills = Array.isArray(body?.skills)
+    ? body.skills.filter((skill): skill is string => typeof skill === "string" && /^[a-z][a-z -]{0,19}$/.test(skill)).slice(0, 8)
+    : [];
+  const bot = await hireBot({
+    workspaceId: access.workspaceId,
+    hiredBy: access.user,
+    name,
+    role,
+    persona,
+    ...(template === null
+      ? skills.length > 0
+        ? { skills }
+        : {}
+      : { emoji: template.emoji, skills: [...new Set([...template.skills, ...skills])], intro: template.intro }),
+  });
+  if (template === null) waitUntil(writeIntro(bot).catch(() => null));
+  return { bot: { id: bot.id, name: bot.name, room: roomForBot(bot.id) } };
 }
 
 /** This deployment's public address, for redirect URIs: the configured one, else what the request came in on. */
@@ -141,9 +217,9 @@ let lastSweepAt = 0;
 /** The app itself, acting in a room: what a schedule sends as. */
 /** Hands a teammate's note to its thread, as the runtime (see `teammail.ts`). */
 const sendInto =
-  (from: (address: string) => { send: (message: string, options: { auth: SessionAuthContext }) => Promise<unknown> }) =>
+  (from: Sender, attachSession: Attacher) =>
   async (workspaceId: string, room: string, message: string): Promise<void> => {
-    await from(await addressOf(workspaceId, room)).send(message, { auth: runtimePrincipal(workspaceId, room) });
+    await sendToRoom(from, attachSession, workspaceId, room, message, runtimePrincipal(workspaceId, room));
     await noteSent(workspaceId, room).catch(() => undefined);
   };
 
@@ -164,6 +240,8 @@ function principal(access: Access, room: string): SessionAuthContext {
     principalType: "user",
   };
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 async function readJson(request: Request): Promise<Record<string, unknown> | null> {
   try {
@@ -197,6 +275,11 @@ async function resolveRoom(access: Access, raw: string | undefined): Promise<str
  * an earlier session's history does not change.
  */
 const recordedLengths = new Map<string, number>();
+/** A session's recorded events, read once to the end. */
+async function* streamOf(session: { getEventStream(options: { startIndex?: number; follow?: boolean }): Promise<ReadableStream<unknown>> }): AsyncIterable<unknown> {
+  yield* eventsOf(await session.getEventStream({ startIndex: 0, follow: false }));
+}
+
 async function recordedLength(session: { readonly id?: string; getEventStream(options: { startIndex?: number; follow?: boolean }): Promise<ReadableStream<unknown>> }): Promise<number> {
   const id = session.id ?? "";
   const known = recordedLengths.get(id);
@@ -270,13 +353,13 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /** Everything the console needs: the roster with presence, and the feed. */
-    GET("/bot/v1/state", async (request, { from, waitUntil }) => {
+    GET("/bot/v1/state", async (request, { attachSession, from, waitUntil }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       void noteOrigin(request);
       const after = new URL(request.url).searchParams.get("after");
       // The console polls this every few seconds, so teammates' notes to each other go out here.
-      waitUntil(deliverNotes(sendInto(from), { workspaceId: gate.access.workspaceId }).catch(() => 0));
+      waitUntil(deliverNotes(sendInto(from, attachSession), { workspaceId: gate.access.workspaceId }).catch(() => 0));
       const board = await buildBoard(gate.access.workspaceId, {
         ...(after !== null && !Number.isNaN(Date.parse(after)) ? { after } : {}),
       });
@@ -287,9 +370,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * The server asking itself to deliver its outbox (see lib/self.ts): a job's
      * wake-up or a teammate's note, from a workflow that cannot reach a room.
      */
-    POST("/bot/v1/internal/flush", async (request, { from, waitUntil }) => {
+    POST("/bot/v1/internal/flush", async (request, { attachSession, from, waitUntil }) => {
       if (!(await isInternal(request))) return json({ error: "not found" }, 404);
-      waitUntil(deliverNotes(sendInto(from)).catch(() => 0));
+      waitUntil(deliverNotes(sendInto(from, attachSession)).catch(() => 0));
       return json({ flushing: true }, 202);
     }),
 
@@ -313,12 +396,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const { workspaceId } = gate.access;
       const recovered = isWedged(await getRoomState(workspaceId, room)) ? await restartWedgedRoom(workspaceId, room, attachSession) : false;
 
-      const session = await from(await addressOf(workspaceId, room)).send(message, {
-        auth: principal(gate.access, room),
-      });
+      const { session, moved } = await sendToRoom(from, attachSession, workspaceId, room, message, principal(gate.access, room));
       await noteSent(workspaceId, room).catch(() => undefined);
-      waitUntil(deliverNotes(sendInto(from), { workspaceId }).catch(() => 0));
-      return json({ room, sessionId: session.id, ...(recovered ? { recovered: true } : {}) });
+      waitUntil(deliverNotes(sendInto(from, attachSession), { workspaceId }).catch(() => 0));
+      return json({ room, sessionId: session.id, ...(recovered || moved ? { recovered: true } : {}) });
     }),
 
     /**
@@ -346,6 +427,40 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         sessionId = session.id;
       }
       return json({ room, recovered: true, generation, sessionId, redelivered: message !== null });
+    }),
+
+    /**
+     * Takes a thread back to one of its messages and carries on from there. The
+     * room moves to a fresh session that starts from the conversation up to that
+     * message (see instructions/earlier.ts); what was said after it stays
+     * readable on the old branch, and jobs the thread started after it keep
+     * going and are listed, so nothing continues unseen. Refused while the
+     * thread is answering.
+     */
+    POST("/bot/v1/rooms/:room/fork", async (request, { attachSession, params, resolveSession }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const room = await resolveRoom(gate.access, params.room);
+      if (room instanceof Response) return room;
+      const { workspaceId } = gate.access;
+      const body = await readJson(request);
+      const eventId = typeof body?.eventId === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(body.eventId) ? body.eventId : null;
+      if (eventId === null) return json({ error: "eventId is required" }, 400);
+
+      const state = await getRoomState(workspaceId, room);
+      if (state?.active === true) return json({ error: "The thread is answering; branch once it is done." }, 409);
+      const live = await resolveSession(await addressOf(workspaceId, room));
+      const current = live?.id ?? state?.sessionId ?? null;
+      const thread = [...(state?.sessions ?? []).filter((id) => id !== current), ...(current === null ? [] : [current])];
+      const point = await foldUntil(thread, (id) => streamOf(attachSession(id)), eventId);
+      if (point === null) return json({ error: "That message is not in this thread." }, 404);
+
+      const at = new Date().toISOString();
+      const later = (await listJobs(workspaceId, { limit: 200 })).filter((job) => job.room === room && job.createdAt > point.eventAt);
+      const jobs = later.map((job) => ({ id: job.id, title: job.title, status: job.status }));
+      await noteBranch(workspaceId, room, { eventId, eventAt: point.eventAt, at, by: gate.access.user, jobs }, point.messages);
+      const generation = await restartWedgedRoom(workspaceId, room, attachSession, "branch");
+      return json({ room, branched: true, generation, eventAt: point.eventAt, messages: point.messages.length, jobs });
     }),
 
     /**
@@ -481,13 +596,16 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const live = await resolveSession(await addressOf(gate.access.workspaceId, room));
       const state = await getRoomState(gate.access.workspaceId, room);
       const sessionId = live?.id ?? state?.sessionId ?? null;
-      if (sessionId === null) return none();
-      const session = live ?? attachSession(sessionId);
+      // Right after a branch the room has earlier sessions and no current one
+      // until the next message; the thread still reads back meanwhile.
+      if (sessionId === null && (state?.sessions ?? []).length === 0) return none();
+      const session = live ?? (sessionId === null ? null : attachSession(sessionId));
       // The thread's earlier sessions are read back first, as recorded, so a new
       // session never empties it; the reader's cursor runs across all of them,
       // and the first session names the thread (see roomstate.ts).
       const earlier = (state?.sessions ?? []).filter((id) => id !== sessionId);
-      const threadId = earlier[0] ?? sessionId;
+      // Never empty: with no current session, there is at least one earlier one.
+      const threadId = earlier[0] ?? sessionId ?? "";
 
       const requested = Number(new URL(request.url).searchParams.get("startIndex") ?? 0);
       const startIndex = Number.isInteger(requested) && requested >= 0 ? requested : 0;
@@ -543,6 +661,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
                 await pipe(await attachSession(id).getEventStream({ startIndex: skip, follow: false }));
                 skip = 0;
               }
+              if (session === null) return;
               let events: ReadableStream<unknown>;
               try {
                 events = await session.getEventStream({ startIndex: skip });
@@ -585,30 +704,49 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /** Hire from the console: a name, a job, and how it should work. */
-    POST("/bot/v1/bots", async (request) => {
+    POST("/bot/v1/bots", async (request, { waitUntil }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const body = await readJson(request);
-      const name = text(body?.name, 1, 40);
-      const role = text(body?.role, 1, 120);
-      const persona = text(body?.persona, 20, 4_000);
-      if (name === null || role === null || persona === null) {
-        return json(
-          { error: "A name (1–40), a job (1–120), and how it should work (20–4000 characters) are required." },
-          400,
-        );
-      }
-      const clash = await findBot(gate.access.workspaceId, name);
-      if (clash !== null) return json({ error: `${clash.name} is already on the team.` }, 409);
+      const hired = await hireFromForm(gate.access, body, waitUntil);
+      if ("error" in hired) return json({ error: hired.error }, hired.status);
+      return json({ bot: hired.bot }, 201);
+    }),
 
-      const bot = await hireBot({
-        workspaceId: gate.access.workspaceId,
-        hiredBy: gate.access.user,
-        name,
-        role,
-        persona,
-      });
-      return json({ bot: { id: bot.id, name: bot.name, room: roomForBot(bot.id) } }, 201);
+    /**
+     * "Describe your team": proposes Bots for what the person says they need,
+     * with the quick model. Creates nothing; the console shows the proposal and
+     * hires the ones the person keeps through the batch route.
+     */
+    POST("/bot/v1/bots/propose", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const need = text(body?.need, 10, 2_000);
+      if (need === null) return json({ error: "Say what you need help with, in a sentence or two (10–2000 characters)." }, 400);
+      const team = (await listBots(gate.access.workspaceId)).map((bot) => ({ name: bot.name, role: bot.role }));
+      try {
+        return json({ bots: await proposeRoster(gate.access.workspaceId, need, team) });
+      } catch (error) {
+        return json({ error: `Could not propose a team: ${error instanceof Error ? error.message : String(error)}` }, 502);
+      }
+    }),
+
+    /** Hires several Bots at once, each as the single route would; one that cannot be hired does not stop the rest. */
+    POST("/bot/v1/bots/batch", async (request, { waitUntil }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const list = Array.isArray(body?.bots) ? body.bots.slice(0, MAX_PROPOSED) : null;
+      if (list === null || list.length === 0) return json({ error: "bots must be a non-empty list" }, 400);
+      const hired: { id: string; name: string; room: string }[] = [];
+      const skipped: { name: string; error: string }[] = [];
+      for (const entry of list) {
+        const outcome = await hireFromForm(gate.access, isRecord(entry) ? entry : {}, waitUntil);
+        if ("error" in outcome) skipped.push({ name: isRecord(entry) && typeof entry.name === "string" ? entry.name : "?", error: outcome.error });
+        else hired.push(outcome.bot);
+      }
+      return json({ hired, skipped }, hired.length > 0 ? 201 : 400);
     }),
 
     /**
@@ -944,9 +1082,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const interrupt = interruptVia(attachSession, `Rewound to step ${index} by ${gate.access.user}`);
       for (const sessionId of outcome.sessions) await interrupt(sessionId).catch(() => undefined);
       if (outcome.sessions.length > 0) await stopRunCommands(outcome.sessions).catch(() => null);
-      const dispatched = await dispatchDue(async (job, message) => {
-        await from(await addressOf(job.workspaceId, job.room)).send(message, { auth: runtimePrincipal(job.workspaceId, job.room) });
-      });
+      const dispatched = await dispatchDue((job, message) => sendInto(from, attachSession)(job.workspaceId, job.room, message));
       return json({
         rewound: true,
         job: { id: outcome.job.id, title: outcome.job.title, status: outcome.job.status, steps: (outcome.job.journal ?? []).length },
@@ -1020,14 +1156,12 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * when it opens, so a job stranded by a restart is picked up in a minute
      * rather than at the next cron. At most one pass a minute per process.
      */
-    POST("/bot/v1/jobs/sweep", async (request, { from }) => {
+    POST("/bot/v1/jobs/sweep", async (request, { attachSession, from }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       if (Date.now() - lastSweepAt < SWEEP_EVERY_MS) return json({ swept: false, reason: "swept recently" });
       lastSweepAt = Date.now();
-      const outcome = await dispatchDue(async (job, message) => {
-        await from(await addressOf(job.workspaceId, job.room)).send(message, { auth: runtimePrincipal(job.workspaceId, job.room) });
-      });
+      const outcome = await dispatchDue((job, message) => sendInto(from, attachSession)(job.workspaceId, job.room, message));
       if (outcome.due > 0) console.log(`[bot] sweep: ${outcome.due} due, ${outcome.dispatched} dispatched, ${outcome.stranded} stranded, ${outcome.ms}ms`);
       return json({ swept: true, build: buildId(), ...outcome });
     }),
@@ -1071,7 +1205,8 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const previous = buildId();
       overrideBuildId(`qa-${Date.now().toString(36)}`);
       lastSweepAt = 0;
-      return json({ bumped: true, from: previous, to: buildId() });
+      // `local` says whether a lease from another build counts as lost here (see world.ts); on Vercel it never does.
+      return json({ bumped: true, from: previous, to: buildId(), local: worldIsLocal() });
     }),
 
     POST("/bot/v1/qa/computer/replace", async (request) => {

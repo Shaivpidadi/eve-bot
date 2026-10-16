@@ -494,13 +494,13 @@ const SYSTEM: Record<CaptureMode, string> = {
 /** The model that reads exchanges: `BOT_MEMORY_MODEL`, else a fast small Gateway model, else the endpoint's quick model. */
 export const DEFAULT_MEMORY_MODEL = "anthropic/claude-haiku-4-5";
 
-function extractionModelId(): string {
+export function extractionModelId(): string {
   const named = process.env.BOT_MEMORY_MODEL?.trim();
   if (named) return named;
   return customEndpoint() === null ? DEFAULT_MEMORY_MODEL : modelForEffort("quick");
 }
 
-function extractionModel() {
+export function extractionModel() {
   const id = extractionModelId();
   const endpoint = customEndpoint();
   return endpoint === null ? id : endpointModel(endpoint, id);

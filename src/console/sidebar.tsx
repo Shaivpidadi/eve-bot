@@ -248,7 +248,8 @@ export function Sidebar({
               if (!response.ok) return await errorMessage(response, "Could not duplicate the Bot.");
               const created = (await response.json()) as { bot: { id: string } };
               await onChanged();
-              onSelect(created.bot.id);
+              // The copy opens with its profile in edit, since a copy is made to be changed.
+              onEditProfile(created.bot.id);
               return null;
             } catch (caught) {
               return caught instanceof SignedOutError ? null : "Could not duplicate the Bot.";
@@ -331,7 +332,7 @@ export function Sidebar({
             onPointerEnter={() => setHovered(member.id)}
             onPointerLeave={() => setHovered((current) => (current === member.id ? null : current))}
           >
-            <LiveAvatar member={member} size={32} alive={hovered === member.id} onHover={onHover} />
+            <LiveAvatar member={member} size={32} alive={hovered === member.id} calling={needsYou} onHover={onHover} />
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline gap-2">
                 <span className={cn("min-w-0 flex-1 truncate text-[13px] font-medium", paused && "text-muted-foreground")}>
@@ -390,7 +391,7 @@ export function Sidebar({
         onPointerEnter={() => setHovered(member.id)}
         onPointerLeave={() => setHovered((current) => (current === member.id ? null : current))}
       >
-        <LiveAvatar member={member} size={40} alive={hovered === member.id} onHover={onHover} />
+        <LiveAvatar member={member} size={40} alive={hovered === member.id} calling={needsYou} onHover={onHover} />
         <span className={cn("max-w-full truncate text-xs font-medium", member.status === "paused" && "text-muted-foreground")}>
           {member.name}
         </span>

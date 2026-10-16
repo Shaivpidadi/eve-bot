@@ -4,6 +4,8 @@ import { z } from "zod";
 import { findBot, getBot, hireBot } from "../../../lib/bots";
 import { guardSideEffect } from "../../../lib/run-guard";
 import { operator } from "../../../lib/session";
+import { writeIntro } from "../../../lib/intro";
+import { within } from "../../../lib/cancel";
 
 export default defineTool({
   description:
@@ -48,6 +50,8 @@ export default defineTool({
       ...(input.skills ? { skills: input.skills } : {}),
       ...(creator === null ? {} : { createdBy: { botId: creator.id, name: creator.name } }),
     });
+    // Its hello and first jobs for its empty thread; a slow or failed write never holds up the hire.
+    await within(writeIntro(bot), 15_000).catch((error: unknown) => console.warn(`[bot] no intro for ${bot.name}: ${error instanceof Error ? error.message : String(error)}`));
     return { created: true as const, bot: { id: bot.id, name: bot.name, role: bot.role } };
   },
 });

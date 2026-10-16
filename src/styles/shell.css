@@ -14,6 +14,8 @@
   --animate-av-settle: av-settle 1.1s ease-out 1;
   /* A face under the pointer squishes once. */
   --animate-av-boop: av-boop 0.42s cubic-bezier(0.3, 1.6, 0.5, 1);
+  /* A face that needs you: a ring that swells and fades, again and again. */
+  --animate-calling: calling 1.8s ease-out infinite;
   /* The sheet the Usage, Memory and Connectors screens open in. */
   --animate-sheet-in: sheet-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 
@@ -25,5 +27,6 @@
   @keyframes av-sway { 0%, 100% { rotate: -7deg; } 50% { rotate: 7deg; } }
   @keyframes av-shiver { 0%, 70%, 100% { translate: 0 0; } 74%, 82%, 90% { translate: -5% 0; } 78%, 86% { translate: 5% 0; } }
   @keyframes av-settle { 0% { translate: 0 -10%; } 45% { translate: 0 3%; } 70% { translate: 0 -2%; } 100% { translate: 0 0; } }
+  @keyframes calling { from { scale: 1; opacity: 0.75; } to { scale: 1.45; opacity: 0; } }
   @keyframes sheet-in { from { transform: translateX(24px); opacity: 0.6; } to { transform: none; opacity: 1; } }
 }

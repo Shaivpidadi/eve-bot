@@ -15,6 +15,8 @@ export default [
       const probe = await call("/bot/v1/qa/build/bump", { method: "POST" });
       if (probe.status === 404) return { skipped: "the deployment has no BOT_QA=1" };
       expect(probe.status, 200, "bumping the build", { body: probe.body });
+      // On Vercel each deployment keeps its own runs alive, so a new build never strands a job there.
+      if (probe.body?.local === false) return { skipped: "a shared world (Vercel): runs outlive a new build, so nothing strands" };
 
       const after = new Date().toISOString();
       const room = `qa-${Date.now().toString(36)}`;

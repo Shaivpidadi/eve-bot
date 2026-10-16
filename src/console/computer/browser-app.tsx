@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { SignedOutError } from "../api";
 import type { Member } from "../types";
 import { backoff, botPath, requestConnection, type RelayConnection } from "./connection";
+import { adopt, park, type Parked } from "./parked";
 import { forwardMacShortcuts, PASTE, sendChord } from "./shortcuts";
 
 type Status =
@@ -31,6 +32,8 @@ interface Viewer {
 const ASLEEP_RECHECK_MS = 30_000;
 /** How often the full view tries again after the computer answered that it cannot connect. */
 const ERROR_RETRY_MS = 8_000;
+/** How long the live picture takes to fade in over the still frame (the container's duration-300). */
+const FADE_MS = 300;
 
 /** The last still frame, shown until the live picture arrives. */
 export const posterUrl = (member: Member): string | null =>
@@ -106,14 +109,52 @@ export function BrowserApp({
     let disposed = false;
     let timer: number | undefined;
     let failures = 0;
+    /** The live connection this view holds, parked for the next view when it closes. */
+    let held: Parked | null = null;
+    let connected = false;
 
     const retry = (delay: number) => {
       timer = window.setTimeout(() => void connect(), delay);
+    };
+    const dropped = (entry: Parked) => () => {
+      if (held === entry) held = null;
+      connected = false;
+      if (viewer.current === entry.client) viewer.current = null;
+      if (disposed) return;
+      failures += 1;
+      setStatus({ kind: "connecting" });
+      // Tokens are single use, so every reconnect asks for a new one.
+      retry(backoff(failures));
+    };
+    const hold = (entry: Parked, target: HTMLDivElement) => {
+      held = entry;
+      entry.onDrop = dropped(entry);
+      entry.onClipboard = (copied) => {
+        // What you copy on the computer lands on your own clipboard while you are in control.
+        if (controllingNow.current) void navigator.clipboard?.writeText(copied).catch(() => undefined);
+      };
+      const client = entry.client;
+      target.replaceChildren(entry.host);
+      client.viewOnly = compact || !controllingNow.current;
+      client.focusOnClick = !compact && controllingNow.current;
+      stopShortcuts();
+      stopShortcuts = forwardMacShortcuts(target, client, () => controllingNow.current);
+      viewer.current = client;
     };
 
     async function connect(): Promise<void> {
       if (disposed) return;
       const wantsControl = !compact && controllingNow.current;
+      // The picture from the last view, if it is still live: shown at once, no new handshake.
+      const parkedEntry = compact ? null : adopt(wantsControl ? "control" : "view");
+      if (parkedEntry !== null && container.current !== null) {
+        hold(parkedEntry, container.current);
+        connected = true;
+        setStatus({ kind: "live" });
+        // A fresh view would bring this Bot's tab to the front; ask for that, and drop the token it brings.
+        void requestConnection(botPath(botId, "computer/browser"), { access: parkedEntry.access }).catch(() => undefined);
+        return;
+      }
       let connection;
       try {
         connection = await requestConnection(
@@ -161,8 +202,11 @@ export function BrowserApp({
       const { default: RFB } = await import("@novnc/novnc");
       const target = container.current;
       if (disposed || target === null) return;
-      target.replaceChildren();
-      const client = new RFB(target, connection.url);
+      // noVNC renders into an element of its own, so the connection can move between views.
+      const host = document.createElement("div");
+      host.className = "absolute inset-0";
+      target.replaceChildren(host);
+      const client = new RFB(host, connection.url);
       client.scaleViewport = true;
       client.resizeSession = false;
       client.background = "transparent";
@@ -176,28 +220,20 @@ export function BrowserApp({
         client.qualityLevel = 2;
         client.compressionLevel = 9;
       }
+      const entry: Parked = { client, host, access: wantsControl ? "control" : "view", onDrop: null, onClipboard: null };
+      // Whichever view holds the connection hears about it, not only the one that opened it.
       client.addEventListener("connect", () => {
         failures = 0;
-        if (!disposed) setStatus({ kind: "live" });
+        if (held !== entry || disposed) return;
+        connected = true;
+        setStatus({ kind: "live" });
       });
-      client.addEventListener("disconnect", () => {
-        if (viewer.current === client) viewer.current = null;
-        if (disposed) return;
-        failures += 1;
-        setStatus({ kind: "connecting" });
-        // Tokens are single use, so every reconnect asks for a new one.
-        retry(backoff(failures));
-      });
+      client.addEventListener("disconnect", () => entry.onDrop?.());
       client.addEventListener("clipboard", (event) => {
-        // What you copy on the computer lands on your own clipboard while you are in control.
         const copied = (event as CustomEvent<{ text?: unknown }>).detail?.text;
-        if (controllingNow.current && typeof copied === "string") {
-          void navigator.clipboard?.writeText(copied).catch(() => undefined);
-        }
+        if (typeof copied === "string") entry.onClipboard?.(copied);
       });
-      stopShortcuts();
-      stopShortcuts = forwardMacShortcuts(target, client, () => controllingNow.current);
-      viewer.current = client;
+      hold(entry, target);
     }
 
     let stopShortcuts = () => {};
@@ -206,7 +242,10 @@ export function BrowserApp({
       disposed = true;
       stopShortcuts();
       window.clearTimeout(timer);
-      viewer.current?.disconnect();
+      // A live picture waits a minute for the next view; anything else is let go.
+      if (held !== null && connected && !compact) park(held);
+      else viewer.current?.disconnect();
+      held = null;
       viewer.current = null;
     };
   }, [botId, compact, watching, attempt]);
@@ -233,6 +272,16 @@ export function BrowserApp({
   useEffect(() => {
     onLive?.(live);
   }, [live, onLive]);
+  // The still frame stays under the live picture while it fades in, then goes.
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (!live) {
+      setSettled(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSettled(true), FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [live]);
 
   const posterCandidate = posterUrl(member);
   const poster = posterCandidate !== null && posterCandidate === brokenPoster ? null : posterCandidate;
@@ -258,7 +307,7 @@ export function BrowserApp({
       }}
     >
       {/* A live, authenticated, uncached frame: next/image would only get in the way. */}
-      {!live && status.kind !== "relay" && poster !== null ? (
+      {!settled && status.kind !== "relay" && poster !== null ? (
         <img
           className={cn(
             "absolute inset-0 size-full object-contain",
@@ -273,7 +322,8 @@ export function BrowserApp({
       <div
         ref={container}
         className={cn(
-          "absolute inset-0",
+          "absolute inset-0 transition-opacity duration-300 ease-out",
+          live || status.kind === "relay" ? "opacity-100" : "opacity-0",
           // Watching: keep the viewer's own arrow. noVNC hides it (cursor: none) until the computer sends a
           // cursor shape, which a view-only connection may never receive; only in control does the pointer
           // follow the computer's cursor.

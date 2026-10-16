@@ -94,7 +94,7 @@ are tangled with the Linux runtime.
 - [x] **D5.2 (L)** "Rewind to here" on a journal entry: cancel the run,
       restore the matching generation onto the computer, start a new run
       whose brief carries the journal up to that index.
-- [ ] **D5.3 (M)** Rewind a conversation: fork a room at a transcript index
+- [x] **D5.3 (M)** Rewind a conversation: fork a room at a transcript index
       into a fresh session seeded with the transcript up to that point.
 
 ## A. Bots that feel alive
@@ -104,6 +104,15 @@ mood per presence including asleep, blinking, eyes and body that follow the
 pointer, a spin, and faces that wake on hover. The tab title already counts
 who needs you. Re-scope A1 to A9 against it before picking one up; the notes
 below are from before it.
+
+Re-scoped and done (15 Oct 2026), on the mascot rather than the SVG:
+expressions (A2) — a mouth and brows per mood (a small smile at rest, "hmm"
+thinking, a set mouth working, worried brows and an "o" when it needs you, a
+frown blocked, a grin done, a line asleep), eased so moods blend (A3);
+speaking (A5) — the mouth moves while a reply streams in (`voice.ts`); and
+needs-you (A7) — the sidebar face comes alive with an amber ring that pulses.
+`/bot/mascots?mood=…&speaking=1` shows them all. The rest (A1, A4, A6, A8,
+A9) is already covered by the mascot or no longer needed.
 
 Research (13 Oct 2026): "Muse" is Meta's assistant, relaunched with a plush
 mascot, Jolly, designed by Alex Cornell: cream fur, beady eyes, pink cheeks,
@@ -219,12 +228,27 @@ a Vercel preview: a due job, a job scheduled two minutes out (woken on time
 with no console open), a cancel mid-job, a Bot-to-Bot message, and a code
 change with a thread open (no stuck thread).
 
-- [ ] **E6 (S)** Memory: try provider capture again now that history arrives;
-      keep the hooks if the provider still misses job turns.
-- [ ] **E7 (M)** Full pass: `npm test`, `npm run qa` with `QA_JOBS=1` against a
+- [x] **E6 (S)** Memory: try provider capture again now that history arrives;
+      keep the hooks if the provider still misses job turns. Kept the hooks:
+      the provider's history is bare model messages, with no way to tell the
+      person from a teammate's note or a task result, and no declined
+      approvals. Checked live on 0.79.1: a turn saved "three bullets at most"
+      and "small design studio". The memory model must return structured
+      output; the free Nemotron model fails its schema.
+- [x] **E7 (M)** Full pass: `npm test`, `npm run qa` with `QA_JOBS=1` against a
       scratch deployment, a manual job on Vercel Sandbox and on Docker, a
       sign-in takeover, a connector call with approval. Update the safety doc
       where behaviour moved.
+      Done on Vercel (15 Oct 2026): `QA_JOBS=1` against a protected preview
+      (`QA_BYPASS`): 11 pass and 4 skip by design (the two "stranger is
+      refused" checks behind Vercel's protection, no key-based connector, the
+      stranded check on a shared world), none failing. The two that failed
+      first were rerun on their own after three fixes the run found (a Bot locked out of its own folder, a
+      rewind point racing a write in the same step, the stranded check on a
+      shared world). Then by hand on Docker: a browser and shell job, a
+      takeover handed back with a note, and a connector call held for
+      approval and run once approved. Docker found two more: a template saved
+      mid-install, and the console unable to find a Docker computer eve made.
 
 ## S. Each Bot on its own screen
 
@@ -237,14 +261,24 @@ reconnects the live view each time. The pool already supports several
 screens per machine (`MAX_SCREENS`, default 4, up to 9), and the table once
 held one screen per Bot, so the machinery for the other design is there.
 
-- [ ] **S1 (M)** A Bot's thread shows its own tab. Posters are captured per
+- [x] **S1 (M)** A Bot's thread shows its own tab. Posters are captured per
       target (the script already supports it), so each thread's thumbnail is
       that Bot's page, not whoever is in front; HQ's desk shows the front tab.
       Done: two Bots working show two different thumbnails.
-- [ ] **S2 (M)** Smooth switching: one live connection per screen kept while
+      Built with per-job tabs (32fbced): `refreshScreen` captures the run's
+      own tab into that Bot's poster, and the poster route falls back to the
+      latest frame for HQ. Left: members share the screen's `posterAt`, so a
+      new frame from one Bot refetches every thumbnail (correct, just wasteful).
+- [x] **S2 (M)** Smooth switching: one live connection per screen kept while
       the console is open, poster crossfades to live instead of
       "Connecting…", posters prefetched for every working Bot, and opening a
       thread brings that Bot's tab to the front only when a person takes over.
+      As built (`computer/parked.ts`): closing the computer parks its live
+      connection for a minute and the next open adopts it; the still frame
+      stays under the picture while it fades in. Opening still brings that
+      Bot's tab to the front, so the picture is its work. Measured on a
+      Vercel preview: first open live in 2.7 s, reopen in 7 ms. No poster
+      prefetch: the board already carries each frame's time.
 - [ ] ~~**S3 (L)**~~ *parked: one browser profile per workspace is deliberate, so sign-ins carry across Bots.* A screen per working Bot: its own display and Chrome, the
       profile seeded from the identity jar at start and exported back at the
       end so sign-ins still carry across. The pool caps concurrency (a fifth
@@ -261,27 +295,37 @@ persona) and HQ hires only when asked. Hiring several Bots means filling it
 several times, each lands in an empty thread, and there is no guidance on
 what a good persona is.
 
-- [ ] **H1 (M)** Templates: Researcher, Inbox triage, Sales follow-up, QA,
+- [x] **H1 (M)** Templates: Researcher, Inbox triage, Sales follow-up, QA,
       Ops monitor, Custom, each with role, persona, emoji and skills filled
       in and editable, plus a live avatar preview and name suggestions. The
       form becomes two steps: pick, then adjust.
-- [ ] **H2 (M)** "Describe your team": one text box, HQ proposes a roster on
+      As built (`lib/templates.ts`, `hire-dialog.tsx`): no avatar preview,
+      because a Bot's face is seeded from its id, which exists only once it is
+      hired; a preview would show a different face. The server takes skills,
+      emoji and the introduction from its own copy of the template.
+- [x] **H2 (M)** "Describe your team": one text box, HQ proposes a roster on
       a card (name, role, one-line persona each), approve all or some, and
       `POST /bot/v1/bots/batch` creates them in one go.
-- [ ] **H3 (S)** A new Bot introduces itself: its thread opens with a short
+      As built: in the New Bot dialog rather than HQ's thread. The quick model
+      proposes up to five (`lib/roster.ts`, `POST /bot/v1/bots/propose`), each
+      matched to a template when one fits, never one the team already has;
+      the person ticks which to hire.
+- [x] **H3 (S)** A new Bot introduces itself: its thread opens with a short
       hello in its own voice and one suggested first job, so no thread starts
       empty.
-- [ ] **H4 (S)** Clone and edit from any Bot's menu (today's duplicate, with
+      As built: three first jobs, not one. A template brings its own; any
+      other Bot gets one quick-model call when it is hired (in the background
+      from the console, awaited with a 15 s cap from `hire_bot` and
+      `create_bot`), charged to the new Bot.
+- [x] **H4 (S)** Clone and edit from any Bot's menu (today's duplicate, with
       the form open on the copy).
-- [ ] **H5 (S)** Form polish: inline validation, duplicate-name check before
+- [x] **H5 (S)** Form polish: inline validation, duplicate-name check before
       submit, keyboard flow, the dialog on a sheet like Memory and Connectors.
+      As built: the name is checked against the team as you type, a short
+      "how it should work" says how many characters it still needs, the
+      name field takes focus, and ⌘/Ctrl+Enter hires. It stays a dialog: a
+      sheet suits the long Memory and Connectors pages, not a short form.
 
 ## What's next
 
-Track E and most of D shipped in 0.3.0. Still open, roughly in order:
-
-1. E7 (the full pass on a scratch deployment) and E6 (memory capture)
-2. D0.3 (a recovered thread remembers its conversation) and D5.3 (rewind a conversation)
-3. S1, S2 (each Bot's thread shows its own tab; smooth switching)
-4. H1, H3, H2 (hiring templates, a Bot's first hello, describe-your-team)
-5. A track, re-scoped against the mascot; H4, H5
+Every track above is done or parked. New work goes here.

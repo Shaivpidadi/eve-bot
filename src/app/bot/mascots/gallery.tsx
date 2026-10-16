@@ -1,11 +1,12 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { faceOf } from "@/console/avatar";
 import type { Member, Presence } from "@/console/types";
+import { spoke } from "@/console/voice";
 
 const Mascot = dynamic(() => import("@/console/mascot").then((module) => module.Mascot), { ssr: false });
 
@@ -39,6 +40,12 @@ export function MascotGallery() {
     const asked = new URLSearchParams(window.location.search).get("mood");
     return MOODS.find((entry) => entry === asked) ?? "idle";
   });
+  // ?speaking=1 has every face talking, as if its reply were streaming in.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("speaking") !== "1") return;
+    const timer = window.setInterval(() => IDS.forEach((id) => spoke(`gallery-${id}`)), 120);
+    return () => window.clearInterval(timer);
+  }, []);
   return (
     <div className="min-h-screen bg-background p-7 text-[13px] text-foreground">
       <div className="mb-7 flex gap-1.5">
@@ -64,6 +71,7 @@ export function MascotGallery() {
             id,
             kind: id === "hq" ? "hq" : "bot",
             name: id,
+            room: `gallery-${id}`,
             status: mood === "paused" ? "paused" : "active",
             presence: mood === "paused" ? "idle" : mood,
           } as unknown as Member;

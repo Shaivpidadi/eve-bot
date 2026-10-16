@@ -29,9 +29,12 @@ const REAL: HookDeps = { deps: defaultDeps, trace, record, jobOf, binding: sessi
  * what the tools returned from `action.result`. When the turn completes, the
  * gatekeeper pipeline in `capture.ts` decides what to keep.
  *
- * This is a hook rather than the provider's own capture handler because eve
- * 0.58 emits `turn.completed` without the settled history, so that handler is
- * never dispatched. Hooks are observe-only and at-least-once; capture is
+ * This is a hook rather than the provider's own `capture` handler. Since eve
+ * 0.68 that handler does receive the settled history, but only as model
+ * messages: it cannot tell the person's words from a teammate's note, a task
+ * result or a routine report that reached HQ's thread, and it never sees a
+ * declined approval. The events carry who sent what, so the hook stays
+ * (checked on 0.79.1). Hooks are observe-only and at-least-once; capture is
  * idempotent per turn, and a failure here never touches the turn.
  */
 

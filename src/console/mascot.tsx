@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Avatar, faceOf } from "./avatar";
 import type { Member, Presence } from "./types";
+import { speaking } from "./voice";
 
 /**
  * A member's face, alive: a small raymarched WebGL gummy in the same shape and
@@ -53,6 +54,10 @@ uniform float uOpen;
 uniform float uMood;
 uniform float uSat;
 uniform float uSide;
+uniform float uSmile;
+uniform float uMouthOpen;
+uniform vec2 uBrow;
+uniform float uBrowShow;
 
 const float FRAME = 1.32;
 const float RIM = 0.3;
@@ -149,6 +154,26 @@ float eye(vec2 q) {
   return sdRoundBox(q, vec2(0.088, h), min(0.088, h));
 }
 
+/** The mouth: a curved line that smiles (uSmile > 0) or frowns, opening into a
+ *  rounded "o" as uMouthOpen grows (speaking, surprise, a grin). */
+float mouth(vec2 q) {
+  float w = 0.09 + 0.04 * max(uSmile, 0.0);
+  // Corners up for a smile, down for a frown: about 0.05 at the corners at full strength.
+  float bend = uSmile * 5.5;
+  float line = abs(q.y - bend * (q.x * q.x - w * w * 0.5)) - 0.024;
+  line = max(line, abs(q.x) - w);
+  vec2 size = vec2(0.05 + 0.045 * uMouthOpen, 0.028 + 0.15 * uMouthOpen);
+  float open = sdRoundBox(q - vec2(0.0, -0.015), size, min(size.x, size.y));
+  return mix(line, open, smoothstep(0.08, 0.3, uMouthOpen));
+}
+
+/** One brow over an eye: lifted by uBrow.x, tilted by uBrow.y (positive raises the inner end: worried). */
+float brow(vec2 q, float inner) {
+  q.y -= 0.255 + uBrow.x * 0.06;
+  q = rot(inner * uBrow.y * 0.5) * q;
+  return sdRoundBox(q, vec2(0.085, 0.026), 0.026);
+}
+
 void main() {
   vec2 p0 = v * FRAME;
   float px = 2.0 * FRAME / uRes.y;
@@ -213,6 +238,13 @@ void main() {
   float blush = exp(-dot(bl, bl)) * front * 0.35 * uSat;
   col = mix(col, mix(col, vec3(1.0, 0.45, 0.55), 0.55), blush);
   col = mix(col, vec3(0.08, 0.08, 0.09), eyes);
+  vec2 mq = q.xy - vec2(uSide * 0.03 + g.x * 0.6, -0.17 - uEyeY + g.y * 0.5);
+  float lips = (1.0 - smoothstep(-px, px, mouth(mq))) * front;
+  col = mix(col, vec3(0.08, 0.08, 0.09), lips * 0.92);
+  if (uBrowShow > 0.01) {
+    float brows = min(brow(eyeL, 1.0), brow(eyeR * vec2(-1.0, 1.0), 1.0));
+    col = mix(col, vec3(0.08, 0.08, 0.09), (1.0 - smoothstep(-px, px, brows)) * front * uBrowShow);
+  }
   if (uMood < 0.5 && uOpen > 0.5) {
     float glint = min(length(eyeL - vec2(0.03, 0.1 * uOpen)), length(eyeR - vec2(0.03, 0.1 * uOpen))) - 0.03;
     col = mix(col, vec3(1.0), (1.0 - smoothstep(-px, px, glint)) * 0.9 * front);
@@ -324,7 +356,7 @@ export function Mascot({
       center: u("uCenter"), res: u("uRes"), time: u("uTime"), color: u("uColor"), shape: u("uShape"), eyeY: u("uEyeY"), seat: u("uSeat"),
       offset: u("uOffset"), scale: u("uScale"), lean: u("uLean"), wobble: u("uWobble"), yaw: u("uYaw"),
       jiggle: u("uJiggle"), pitch: u("uPitch"), gaze: u("uGaze"), open: u("uOpen"), mood: u("uMood"), sat: u("uSat"),
-      side: u("uSide"),
+      side: u("uSide"), smile: u("uSmile"), mouthOpen: u("uMouthOpen"), brow: u("uBrow"), browShow: u("uBrowShow"),
     };
     gl.uniform2f(uniforms.res, element.width, element.height);
     gl.uniform3f(uniforms.color, ...hexToRgb(face.color));
@@ -400,6 +432,9 @@ export function Mascot({
     let shown = false;
 
     let gaze = { x: 0, y: 0 };
+    // The expression eases toward each mood's, so a face never snaps from one to the next.
+    const expression = { smile: 0.35, open: 0, browLift: 0, browTilt: 0, brows: 0 };
+    const room = member.room;
     let lookWeight = 0;
     let nextBlink = performance.now() + 1500 + Math.random() * 3000;
     let blinkUntil = 0;
@@ -442,6 +477,12 @@ export function Mascot({
       let open = 1;
       let moodCode = 0;
       let sat = 1;
+      // Mouth and brows, per mood: a small smile at rest.
+      let smile = 0.35;
+      let mouthOpen = 0;
+      let browLift = 0;
+      let browTilt = 0;
+      let brows = 0;
 
       const breathe = Math.sin(t * 1.7) * 0.022;
       scale = [1 + breathe, 1 - breathe];
@@ -449,6 +490,9 @@ export function Mascot({
         target = { x: Math.cos(t * 1.4) * 0.8, y: 0.55 + Math.sin(t * 1.4) * 0.3 };
         sway = Math.sin(t * 0.9) * 0.32;
         wobble = 0.9;
+        smile = 0;
+        browLift = 0.8;
+        brows = 1;
       } else if (m === "working") {
         const phase = Math.abs(Math.sin(t * 4.2));
         offset = [0, phase * 0.11];
@@ -456,18 +500,30 @@ export function Mascot({
         scale = [1 + landing * 0.1 - phase * 0.03, 1 - landing * 0.12 + phase * 0.05];
         target = { x: Math.sin(t * 0.9) * 0.4, y: -0.2 };
         wobble = 0.8;
+        smile = 0.12;
+        browTilt = -0.35;
+        brows = 0.8;
       } else if (m === "waiting") {
         lean = Math.sin(t * 2.3) * 0.13;
         open = 1.08;
         wobble = 0.6;
+        smile = 0;
+        mouthOpen = 0.3;
+        browLift = 1;
+        browTilt = 0.45;
+        brows = 1;
       } else if (m === "blocked") {
         const burst = Math.max(0, Math.sin(t * 2.6)) ** 6;
         offset = [Math.sin(t * 42) * 0.035 * burst, 0];
         moodCode = -1;
         target = { x: 0, y: -0.35 };
+        smile = -0.7;
+        browTilt = -1;
+        brows = 1;
       } else if (m === "done") {
         moodCode = 1;
         offset = [0, Math.abs(Math.sin(t * 2.4)) * 0.04];
+        smile = 1;
         // Now and then, a happy twirl (showing off its bum on the way round).
         if (!still && spin.drag === null && now > nextTwirl && now - spin.releasedAt > 2200) {
           spin.velocity += 13;
@@ -477,11 +533,23 @@ export function Mascot({
       } else if (m === "paused") {
         moodCode = 2;
         sat = 0.15;
+        smile = 0.05;
         const slow = Math.sin(t * 0.9) * 0.03;
         scale = [1 + slow, 1 - slow];
         wobble = 0.2;
       }
       scale = [scale[0]! * (1 + squish.value), scale[1]! * (1 - squish.value * 1.2)];
+      // Talking while its reply streams in: the mouth opens and closes with the text.
+      if (!still && m !== "paused" && speaking(room)) {
+        mouthOpen = 0.3 + 0.7 * Math.abs(Math.sin(t * 11)) * (0.7 + 0.3 * Math.sin(t * 3.7));
+        smile = Math.max(smile, 0.15);
+      }
+      const settle = 1 - Math.exp(-dt * (mouthOpen > expression.open ? 18 : 9));
+      expression.smile += (smile - expression.smile) * (1 - Math.exp(-dt * 6));
+      expression.open += (mouthOpen - expression.open) * settle;
+      expression.browLift += (browLift - expression.browLift) * (1 - Math.exp(-dt * 6));
+      expression.browTilt += (browTilt - expression.browTilt) * (1 - Math.exp(-dt * 6));
+      expression.brows += (brows - expression.brows) * (1 - Math.exp(-dt * 6));
 
       if (moodCode === 0 && m !== "paused" && now > nextBlink) {
         blinkUntil = now + 130;
@@ -508,6 +576,10 @@ export function Mascot({
       gl.uniform1f(uniforms.open, open);
       gl.uniform1f(uniforms.mood, moodCode);
       gl.uniform1f(uniforms.sat, sat);
+      gl.uniform1f(uniforms.smile, expression.smile);
+      gl.uniform1f(uniforms.mouthOpen, expression.open);
+      gl.uniform2f(uniforms.brow, expression.browLift, expression.browTilt);
+      gl.uniform1f(uniforms.browShow, expression.brows);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       if (!shown) {
         shown = true;

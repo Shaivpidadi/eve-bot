@@ -73,6 +73,7 @@ const STEP_WORDS: Readonly<Record<string, string>> = {
 /** Each notice's glyph, in lucide. */
 const NOTICE_ICONS: Readonly<Record<NoticeIcon, LucideIcon>> = {
   alert: CircleAlertIcon,
+  branch: GitBranchIcon,
   brain: BrainIcon,
   check: CircleCheckIcon,
   clock: ClockIcon,
@@ -84,6 +85,9 @@ const NOTICE_ICONS: Readonly<Record<NoticeIcon, LucideIcon>> = {
   plug: PlugIcon,
   x: XIcon,
 };
+
+/** What was said after a message the thread later went back to: readable, set back. */
+const OLD = "opacity-45 saturate-50";
 
 /** A chat bubble; who it belongs to adds its side and colour. */
 const BUBBLE =
@@ -206,7 +210,7 @@ export function Transcript({
       switch (item.kind) {
         case "you":
           rows.push(
-            <div key={item.key} className="group/msg flex max-w-full origin-bottom-right flex-row-reverse items-center gap-1 self-end">
+            <div key={item.key} className={cn("group/msg flex max-w-full origin-bottom-right flex-row-reverse items-center gap-1 self-end", item.old && OLD)}>
               <div className={cn(BUBBLE, YOURS)}>
                 <MentionText text={item.text} onColor />
               </div>
@@ -216,18 +220,19 @@ export function Transcript({
           break;
         case "bot":
           rows.push(
-            <div key={item.key} className="group/msg flex max-w-full origin-bottom-left items-center gap-1 self-start">
+            <div key={item.key} className={cn("group/msg flex max-w-full origin-bottom-left items-center gap-1 self-start", item.old && OLD)}>
               <div className={cn(BUBBLE, THEIRS)}>
                 <Prose text={item.text} />
               </div>
               <RememberButton text={item.text} />
+              <BranchButton eventId={item.key} store={store} disabled={room.live} />
             </div>,
           );
           break;
         case "peer": {
           const sender = team.find((entry) => entry.name.toLowerCase() === item.from.toLowerCase());
           rows.push(
-            <div key={item.key} className="flex max-w-full origin-bottom-left items-end gap-1.5 self-start">
+            <div key={item.key} className={cn("flex max-w-full origin-bottom-left items-end gap-1.5 self-start", item.old && OLD)}>
               {sender === undefined ? null : <Avatar member={sender} size={24} />}
               <div className={cn(BUBBLE, THEIRS, "rounded-tl-md")}>
                 <span className="mb-0.5 block text-[11.5px] font-semibold text-muted-foreground">{item.from}</span>
@@ -247,6 +252,7 @@ export function Transcript({
               className={cn(
                 "my-2.5 flex flex-wrap items-center justify-center gap-1.5 self-center text-center text-[11.5px] text-faint",
                 error && "text-destructive",
+                item.old && OLD,
               )}
             >
               {face === undefined ? (
@@ -666,8 +672,10 @@ function EmptyChat({
   onMore: () => void;
   onSuggest: (text: string) => void;
 }) {
-  const all = suggestionsFor(member);
-  const shown = showMore ? all : all.slice(0, 4);
+  // A Bot's own first jobs come first; the usual ones follow under "Show more".
+  const intro = member.profile?.intro ?? null;
+  const all = intro === null ? suggestionsFor(member) : [...intro.starters, ...suggestionsFor(member)];
+  const shown = showMore ? all : all.slice(0, intro === null ? 4 : intro.starters.length);
   return (
     <div className="m-auto w-[min(100%,460px)] px-5 py-10">
       <div className="mb-[18px] flex items-center gap-3">
@@ -677,6 +685,7 @@ function EmptyChat({
           <p className="mt-px mb-0 text-[12.5px] text-muted-foreground">{member.title}</p>
         </div>
       </div>
+      {intro === null ? null : <div className={cn(BUBBLE, THEIRS, "mb-[18px] rounded-tl-md")}>{intro.hello}</div>}
       <div className="flex flex-col">
         <div className="mb-1.5 flex items-center gap-[7px] text-[12.5px] text-foreground">
           <FolderIcon className="size-[15px] text-muted-foreground" />
@@ -706,6 +715,34 @@ function EmptyChat({
  * Keeps one message as a memory about the person, by hand. Long messages are
  * kept whole up to the store's limit; the Memory page is where to trim them.
  */
+/**
+ * Takes the thread back to this reply: what came after stays readable on the
+ * old branch, and the next message carries on from here. Only on a Bot's reply
+ * the stream recorded (the server finds it again by its event id); going back
+ * to one of your own messages would leave a question hanging.
+ */
+function BranchButton({ eventId, store, disabled }: { eventId: string; store: RoomStore; disabled: boolean }) {
+  const [busy, setBusy] = useState(false);
+  if (!eventId.startsWith("evt_")) return null;
+  return (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      className="flex-none text-muted-foreground opacity-0 transition-opacity group-focus-within/msg:opacity-100 group-hover/msg:opacity-100"
+      aria-label="Branch from here"
+      title={disabled ? "Wait for the reply to finish" : "Branch from here: carry on from this message"}
+      disabled={disabled || busy}
+      onClick={async () => {
+        setBusy(true);
+        await store.branch(eventId);
+        setBusy(false);
+      }}
+    >
+      <GitBranchIcon />
+    </Button>
+  );
+}
+
 function RememberButton({ text }: { text: string }) {
   const [state, setState] = useState<"idle" | "busy" | "done" | "failed">("idle");
   if (text.trim() === "") return null;

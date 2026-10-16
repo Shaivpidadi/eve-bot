@@ -4,6 +4,7 @@ import { Sandbox as VercelSandbox } from "@vercel/sandbox";
 
 import { COMPUTER_NAME } from "../computer";
 import { COMPUTER_PORT, computerMode, localComputer, vercelCredentialsError, type ComputerMode } from "../computer-config";
+import { machineName } from "../team-computer";
 import type { ComputerIo } from "./runtime";
 
 /**
@@ -182,6 +183,13 @@ function dockerControl(): ComputerControl {
   const bind = process.env.BOT_COMPUTER_LOCAL_BIND?.trim() || "127.0.0.1";
   const forwarderImage = process.env.BOT_COMPUTER_FORWARDER_IMAGE?.trim() || "alpine/socat";
   let forwarding: Promise<void> | null = null;
+  /**
+   * The container the computer runs in. Since eve 0.79 eve's Docker provider
+   * makes it and names it (`eve-sbx-…`); the team computer's machine record
+   * says which (see `lib/team-computer.ts`). A computer from before keeps its
+   * own name. On the console network it is always reachable as COMPUTER_NAME.
+   */
+  const container = () => machineName();
 
   /** The host a browser should connect to, given the one it reached the console by. */
   function gatewayHost(reachedBy: string | null | undefined): string {
@@ -192,7 +200,7 @@ function dockerControl(): ComputerControl {
   }
 
   async function state(): Promise<"running" | "stopped" | "missing"> {
-    const inspected = await docker(cli, ["container", "inspect", "--format", "{{.State.Running}}", COMPUTER_NAME]);
+    const inspected = await docker(cli, ["container", "inspect", "--format", "{{.State.Running}}", await container()]);
     if (inspected.exitCode !== 0) {
       if (/no such (object|container)/i.test(inspected.stderr)) return "missing";
       throw new Error(dockerProblem(inspected.stderr));
@@ -204,7 +212,7 @@ function dockerControl(): ComputerControl {
   async function awake(): Promise<boolean> {
     const current = await state();
     if (current === "missing") return false;
-    if (current === "stopped") expectDocker(await docker(cli, ["start", COMPUTER_NAME]), "start the computer");
+    if (current === "stopped") expectDocker(await docker(cli, ["start", await container()]), "start the computer");
     return true;
   }
 
@@ -213,9 +221,9 @@ function dockerControl(): ComputerControl {
       const created = await docker(cli, ["network", "create", "--label", "eve-bot.console=1", network]);
       if (created.exitCode !== 0 && !/already exists/i.test(created.stderr)) expectDocker(created, "create the console network");
     }
-    const networks = await docker(cli, ["container", "inspect", "--format", "{{json .NetworkSettings.Networks}}", COMPUTER_NAME]);
+    const networks = await docker(cli, ["container", "inspect", "--format", "{{json .NetworkSettings.Networks}}", await container()]);
     if (!networks.stdout.toString("utf8").includes(`"${network}"`)) {
-      const joined = await docker(cli, ["network", "connect", "--alias", COMPUTER_NAME, network, COMPUTER_NAME]);
+      const joined = await docker(cli, ["network", "connect", "--alias", COMPUTER_NAME, network, await container()]);
       if (joined.exitCode !== 0 && !/already exists/i.test(joined.stderr)) {
         throw new Error(
           `The computer could not join ${network}: ${joined.stderr.trim()}. A local computer with networking turned off (BOT_SANDBOX_ALLOW_DOMAINS) cannot be watched live.`,
@@ -245,14 +253,14 @@ function dockerControl(): ComputerControl {
 
   const io: ComputerIo = {
     async run(command, options = {}) {
-      const result = await docker(cli, ["exec", "-w", "/workspace", COMPUTER_NAME, "bash", "-lc", command], {
+      const result = await docker(cli, ["exec", "-w", "/workspace", await container(), "bash", "-lc", command], {
         ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       });
       return { exitCode: result.exitCode, stdout: result.stdout.toString("utf8"), stderr: result.stderr };
     },
     async readBinaryFile(path) {
       const quoted = quote(path);
-      const result = await docker(cli, ["exec", COMPUTER_NAME, "bash", "-lc", `if [ -e ${quoted} ]; then exec cat ${quoted}; else exit 43; fi`]);
+      const result = await docker(cli, ["exec", await container(), "bash", "-lc", `if [ -e ${quoted} ]; then exec cat ${quoted}; else exit 43; fi`]);
       if (result.exitCode === 43) return null;
       expectDocker(result, `read ${path}`);
       return new Uint8Array(result.stdout);
@@ -260,7 +268,7 @@ function dockerControl(): ComputerControl {
     async writeBinaryFile(path, content) {
       const folder = path.slice(0, path.lastIndexOf("/")) || "/";
       expectDocker(
-        await docker(cli, ["exec", "-i", COMPUTER_NAME, "bash", "-lc", `mkdir -p ${quote(folder)} && cat > ${quote(path)}`], { input: content }),
+        await docker(cli, ["exec", "-i", await container(), "bash", "-lc", `mkdir -p ${quote(folder)} && cat > ${quote(path)}`], { input: content }),
         `write ${path}`,
       );
     },

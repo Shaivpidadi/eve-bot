@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import type { BashToolOutput } from "eve/tools/bash";
 
 import { isolatedBash } from "../../../lib/computer/shell";
-import { journal } from "../lib/journal";
+import { afterPoint, journal } from "../lib/journal";
 
 /**
  * eve's `bash`, run as the computer's unprivileged `bot` user so a command can
@@ -13,6 +13,8 @@ import { journal } from "../lib/journal";
 export default defineTool({
   ...isolatedBash,
   async execute(input, ctx) {
+    // A rewind point saved in this same step is taken before this changes any file.
+    await afterPoint(ctx);
     // eve's bash answers with one result, never a stream (see lib/computer/shell.ts).
     const output = (await isolatedBash.execute(input, ctx)) as BashToolOutput;
     if (output.status === "completed" && output.exitCode !== 0) {

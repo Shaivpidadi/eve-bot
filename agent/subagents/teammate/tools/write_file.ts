@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 
 import { COMPUTER_PATHS } from "../../../lib/computer";
 import { isolatedWriteFile } from "../../../lib/computer/shell";
-import { journal } from "../lib/journal";
+import { afterPoint, journal } from "../lib/journal";
 
 /**
  * eve's `write_file`, writing as the Bot shell's own user (see `lib/computer/shell.ts`).
@@ -14,6 +14,8 @@ const KEPT = [COMPUTER_PATHS.bots, COMPUTER_PATHS.shared];
 export default defineTool({
   ...isolatedWriteFile,
   async execute(input, ctx) {
+    // A rewind point saved in this same step is taken before this changes any file.
+    await afterPoint(ctx);
     // eve's write_file answers with one result, never a stream.
     const output = (await isolatedWriteFile.execute(input, ctx)) as { existed: boolean; path: string };
     const { filePath, content } = input as { filePath?: unknown; content?: unknown };

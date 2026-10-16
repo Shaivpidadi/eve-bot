@@ -2,6 +2,7 @@ import type { InputRequest, InputResolution, MessageStreamEvent } from "eve/clie
 
 import { api, errorMessage, isRecord, redirectToLogin, SignedOutError } from "./api";
 import { withoutEmoji } from "./format";
+import { spoke } from "./voice";
 import type { ActivityEvent, Member } from "./types";
 
 /** How long a sent message may go unacknowledged by its thread before the console says so. */
@@ -12,7 +13,7 @@ const NO_REPLY_MS = 50_000;
 const HQ_ROOM_NAME = "desk";
 
 /** The glyph a notice wears; the transcript draws each with its lucide icon. */
-export type NoticeIcon = "alert" | "brain" | "check" | "clock" | "dot" | "folder" | "mail" | "monitor" | "person" | "plug" | "x";
+export type NoticeIcon = "alert" | "branch" | "brain" | "check" | "clock" | "dot" | "folder" | "mail" | "monitor" | "person" | "plug" | "x";
 
 export interface Notice {
   readonly icon: NoticeIcon;
@@ -59,7 +60,8 @@ export interface StepsItem {
   readonly events: readonly ActivityEvent[];
 }
 
-export type TimelineItem = RoomItem | StepsItem;
+/** `old` marks what was said after a message the thread later went back to: still readable, on the old branch. */
+export type TimelineItem = (RoomItem | StepsItem) & { readonly old?: boolean };
 
 export interface RoomSnapshot {
   readonly loaded: boolean;
@@ -382,6 +384,27 @@ export class RoomStore {
     return true;
   }
 
+  /**
+   * Takes the thread back to one of its messages (see the fork route). What
+   * was said after it stays where it is, faded under a divider the board
+   * brings; the next message carries on from the chosen one.
+   */
+  async branch(eventId: string): Promise<boolean> {
+    try {
+      const response = await api(`/bot/v1/rooms/${encodeURIComponent(this.room)}/fork`, { method: "POST", body: JSON.stringify({ eventId }) });
+      if (!response.ok) {
+        this.pushError("Could not go back to that message", await errorMessage(response, "The server refused."));
+        return false;
+      }
+    } catch (error) {
+      if (error instanceof SignedOutError) return false;
+      this.pushError("Could not go back to that message", error instanceof Error ? error.message : String(error));
+      return false;
+    }
+    this.poke();
+    return true;
+  }
+
   /** The thread was started over on the server: show it empty and follow whatever comes next. */
   restart(): void {
     // The current follower is on the old session's stream; drop it before reading again.
@@ -475,6 +498,7 @@ export class RoomStore {
         break;
       }
       case "message.appended": {
+        spoke(this.room);
         const draft = `${event.data.turnId}:${event.data.stepIndex}`;
         this.drafts.set(draft, (this.drafts.get(draft) ?? "") + event.data.messageDelta);
         break;
@@ -838,6 +862,51 @@ export function buildTimeline(
     } else {
       out.push({ kind: "steps", key: `steps:${event.id}`, at: event.at, jobId: event.jobId, events: [event] });
     }
+  }
+  return withBranches(out, member.branches ?? []);
+}
+
+/**
+ * Marks what a thread said after a message it later went back to, and puts a
+ * divider where the new branch starts: how much stayed behind, and the jobs
+ * started back there that are still going, so nothing continues unseen.
+ */
+export function withBranches(items: readonly TimelineItem[], branches: readonly Member["branches"][number][]): TimelineItem[] {
+  let out = [...items];
+  for (const branch of branches) {
+    const point = out.findIndex((item) => item.key === branch.eventId);
+    if (point < 0) continue;
+    let last = point;
+    let left = 0;
+    for (let index = point + 1; index < out.length; index++) {
+      const item = out[index];
+      if (item === undefined || item.at > branch.at) break;
+      out[index] = { ...item, old: true };
+      last = index;
+      if (item.kind === "you" || item.kind === "bot" || item.kind === "peer") left++;
+    }
+    const open = branch.jobs.filter((job) => !["done", "failed", "cancelled"].includes(job.status));
+    const said = out[point];
+    const words = said !== undefined && "text" in said ? said.text.replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim().replace(/^(?:[-•]|\d+[.)])\s+/, "") : "";
+    const quote = words === "" ? null : `\u201c${words.length > 60 ? `${words.slice(0, 58).replace(/\s+\S*$/, "")}\u2026` : words}\u201d`;
+    const divider: TimelineItem = {
+      kind: "notice",
+      key: `branch:${branch.at}`,
+      at: branch.at,
+      icon: "branch",
+      label: quote === null ? "Went back to an earlier message" : `Went back to ${quote}`,
+      ...(left > 0 || open.length > 0
+        ? {
+            detail: [
+              left > 0 ? `${left} ${left === 1 ? "message" : "messages"} above stay on the old branch` : null,
+              open.length > 0 ? `still going from it: ${open.map((job) => job.title).join(", ")}` : null,
+            ]
+              .filter((part) => part !== null)
+              .join(" · "),
+          }
+        : {}),
+    };
+    out = [...out.slice(0, last + 1), divider, ...out.slice(last + 1)];
   }
   return out;
 }

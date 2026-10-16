@@ -351,6 +351,7 @@ export function Console() {
 
       <HireDialog
         open={hiring}
+        taken={members.map((entry) => entry.name)}
         onClose={() => setHiring(false)}
         onHired={async (id) => {
           await refresh();

@@ -17,7 +17,7 @@ import { isRoutine, listOpenJobs } from "./jobs";
 import { describeSchedule } from "./schedule";
 import { ledgerTotal, NO_USAGE, readLedger, type Usage } from "./usage";
 import { HQ_ROOM, roomForBot } from "./rooms";
-import { getRoomState, type AnsweredInput, type RoomState } from "./roomstate";
+import { getRoomState, type AnsweredInput, type Branch, type RoomState } from "./roomstate";
 import type { ActivityEvent, Bot, Job } from "./types";
 
 /**
@@ -100,6 +100,8 @@ export interface Member {
   readonly preview: { text: string; from: "you" | "bot" | "activity"; at: string } | null;
   /** When the thread was last started over; activity before it stays out of the thread. */
   readonly clearedAt: string | null;
+  /** Times the thread was taken back to an earlier message (see `roomstate.ts`). */
+  readonly branches: readonly Branch[];
   /** What this member's model steps have cost, all time. */
   readonly usage: Usage;
   readonly pending: number;
@@ -122,6 +124,8 @@ export interface Member {
     readonly hiredAt: string;
     /** Name of the Bot that created this one, when a Bot did. */
     readonly createdBy: string | null;
+    /** Its hello and first jobs, for its empty thread. */
+    readonly intro: Bot["intro"];
   } | null;
 }
 
@@ -286,6 +290,7 @@ function hqMember(room: RoomState | null, open: readonly Job[], screen: ScreenAl
     action: pending[0]?.prompt ?? own.action,
     preview: room?.preview ?? null,
     clearedAt: room?.clearedAt ?? null,
+    branches: room?.branches ?? [],
     usage,
     pending: pending.length,
     answered: answeredIn(room),
@@ -347,6 +352,7 @@ function botMember(
       room?.preview ??
       (latest === undefined ? null : { text: latest.text, from: "activity", at: latest.at }),
     clearedAt: room?.clearedAt ?? null,
+    branches: room?.branches ?? [],
     usage,
     pending: room?.pending.length ?? 0,
     answered: answeredIn(room),
@@ -387,6 +393,7 @@ function botMember(
       stats: bot.stats,
       hiredAt: bot.hiredAt,
       createdBy: bot.createdBy?.name ?? null,
+      intro: bot.intro ?? null,
     },
   };
 }
