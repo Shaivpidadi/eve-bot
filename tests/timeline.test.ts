@@ -51,5 +51,7 @@ describe("a failed turn", () => {
   it("shows once in its own thread: from the stream, not again from the feed", () => {
     const failed = event({ kind: "job.failed", botId: "hq", jobId: null, text: "A turn failed (MODEL_CALL_FAILED): No ZDR providers", data: { room: "desk", turn: true } });
     expect(buildTimeline(hq, [], [failed], [hq])).toEqual([]);
+    const unmarked = { ...failed, data: { room: "desk" } };
+    expect(buildTimeline(hq, [], [unmarked], [hq])).toEqual([]);
   });
 });
