@@ -141,7 +141,7 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   the workspace budget like any job.
 - **Tests:** unit for ingest (verify, de-dup, enqueue); live on production: an assigned Linear issue starts a job.
 
-### V6. AI Gateway controls (F6) `[in-progress]` (small; independent)
+### V6. AI Gateway controls (F6) `[done]` (small; independent)
 - `[done]` V6.1 One `gatewayOptions()` in `agent/lib/models.ts` for every Gateway call (HQ and teammate model resolvers,
   `generateText` in memory/intro/roster, `embed`, Jev): `zeroDataRetention` from `BOT_ZDR=1`, `inferenceRegion` from
   `BOT_INFERENCE_REGION=us`.
@@ -158,6 +158,12 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
 - `[done]` V6.4 Docs: configuration, `docs/safety.md` (what ZDR/US-only do and cost; Gateway budgets as a backstop set
   in the dashboard).
 - **Tests:** unit for options per call site and the two error mappings (`tests/models.test.ts`, `tests/budget.test.ts`).
+- **Checked live (16 Oct 2026, `eve dev`, free `nvidia/nemotron-3.5-lightning-free`):** `BOT_ZDR=1` reached Gateway through
+  eve's `modelOptions` and was refused, as Nemotron has no ZDR provider; `BOT_INFERENCE_REGION=us` was refused the same
+  way, so the untyped option does reach Gateway; with neither, HQ answered. Gateway's real wording differs from its
+  docs (`no_zdr_providers_available`, "No provider for <id> supports the requested inference region"); both are
+  recognised. Each failed turn now shows once in its thread (it showed twice before, from the stream and the feed).
+  **Not checked live:** a Gateway budget running out (402), which needs a budget set in the dashboard.
 
 ### V7. Free models and Token Pass (F7) `[to-do]` (small)
 - `[to-do]` V7.1 Try `stealth/cat-jam` as `BOT_MEMORY_MODEL` locally with the existing capture eval; keep Nemotron for
