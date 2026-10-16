@@ -54,13 +54,28 @@ Already in use: eve, AI SDK 7.
 Tags: `[to-do]`, `[in-progress]`, `[done]`, `[parked]`. One commit per task, Conventional Commits,
 no co-author line. Each task names files, tests, and "done when". Statuses below are all `[to-do]`.
 
-### V0. Ground truth spikes `[to-do]` (do first; each ends in a short findings note in this file)
-- `[to-do]` V0.1 **Image spike**: build the computer Dockerfile, push with `vercel vcr build docker . --push`, start a
+### V0. Ground truth spikes `[in-progress]` (do first; each ends in a short findings note in this file)
+- `[in-progress]` V0.1 **Image spike**: build the computer Dockerfile, push with `vercel vcr build docker . --push`, start a
   sandbox from it via eve `VercelSandbox.environment({ image })` on a scratch preview; confirm eve's `prepare` snapshot
   still layers on top, `image_not_ready` handling, cold-start time vs today.
-- `[to-do]` V0.2 **Drive spike**: `Drive.getOrCreate`, mount at `/team` through eve `environment.open({ mounts })` in
+  **Findings (16 Oct):** `vercel vcr build docker agent/sandbox bot-computer --push` builds linux/amd64 in about 4 min
+  under emulation on an arm64 Mac (cached rebuilds about 20 s); the push needs `vercel vcr login docker` first
+  (credentials last ~12 h), otherwise it fails with `not_authorized` after the build. Pushed as
+  `vcr.vercel.com/<team>/<project>/bot-computer:latest`. A sandbox from it starts in 12 s cold (first pull) and 1.6 s
+  warm, runs as `vercel-sandbox`, and has Chrome, Xvnc, websockify, xdotool, openbox and agent-browser with dpkg clean.
+  **Go.** Still to check: the same through eve on a scratch preview (`prepare` snapshot on top of the image).
+- `[done]` V0.2 **Drive spike**: `Drive.getOrCreate`, mount at `/team` through eve `environment.open({ mounts })` in
   `team-computer.ts`; confirm: survives sandbox stop and delete; resume does not need the mount re-passed; Chrome profile
   on the drive works (Singleton locks, speed); whether the bundled `@vercel/sandbox` version needs a bump for `fork()`.
+  **Findings (16 Oct, `@vercel/sandbox` 3.8.0 script):** a drive is created in about 0.1 s and a sandbox with it mounted
+  at `/team` starts in under 1 s. Files, a SQLite WAL database, symlinks (`SingletonLock`-style) and `flock` all work,
+  and everything written survives the sandbox stopping and a brand-new sandbox mounting it. Writes are as fast as the
+  sandbox's own disk (200 MB fsync'd in 0.17 s vs 0.12 s, 1000 small files in 0.04 s). A second read-write mount is
+  refused with 409 ("already attached as read-write"), which matches one shared computer. `fork()` is a copy-on-write
+  copy in 0.3 s; writing to the fork leaves the original alone. eve 0.79.1 already passes `mounts` from
+  `environment.open()` to `Sandbox.create`, and its bundled SDK has `Drive` and mounts (no `fork`, which V2 does not
+  need), so no SDK bump. The mount root is writable by the sandbox user. Not tried yet: a real Chrome profile on it.
+  **Go** for V2.
 - `[to-do]` V0.3 **Daemon spike**: a 20-line daemon in this project that loops `dispatchDue` + `deliverOutbox` against
   the store with its OIDC token; confirm it reaches Blob/store and AI Gateway, and its cost on Hobby (10 CPU-h/month).
 - `[to-do]` V0.4 **Connect spike**: one Connect connector (Linear) through `@vercel/connect/eve` in the teammate's
