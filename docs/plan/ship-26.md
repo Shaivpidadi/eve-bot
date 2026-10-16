@@ -65,8 +65,13 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   the store with its OIDC token; confirm it reaches Blob/store and AI Gateway, and its cost on Hobby (10 CPU-h/month).
 - `[to-do]` V0.4 **Connect spike**: one Connect connector (Linear) through `@vercel/connect/eve` in the teammate's
   connection set; confirm our `approval.request` / `approval.response` hooks still fire with Connect auth.
-- `[to-do]` V0.5 Check `vercelControl()` in `agent/lib/computer/control.ts`: it uses `COMPUTER_NAME`, not
+- `[done]` V0.5 Check `vercelControl()` in `agent/lib/computer/control.ts`: it uses `COMPUTER_NAME`, not
   `machineName()` (the Docker bug we just fixed). Fix if eve can name a Vercel sandbox differently.
+  **Finding:** it can, and does: eve names every sandbox it creates `eve-sbx-vercel-<identity>` (`vercelSessionName`).
+  Our test project only worked because it adopted a 0.58 machine named `bot-computer`; a fresh deployment, or a
+  replaced machine, would have had no live view, no takeover and no runtime charge (`computer-spend.ts` had the same
+  lookup). Both now read the name from the machine record, in a store-only `lib/machine.ts` so workflow code that
+  reaches the charge never loads eve's sandbox providers.
 - **Done when:** each spike has a findings line here and a go/no-go for its track.
 
 ### V1. Team computer from a prebuilt image (F1) `[to-do]`

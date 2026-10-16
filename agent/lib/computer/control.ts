@@ -4,7 +4,7 @@ import { Sandbox as VercelSandbox } from "@vercel/sandbox";
 
 import { COMPUTER_NAME } from "../computer";
 import { COMPUTER_PORT, computerMode, localComputer, vercelCredentialsError, type ComputerMode } from "../computer-config";
-import { machineName } from "../team-computer";
+import { machineName } from "../machine";
 import type { ComputerIo } from "./runtime";
 
 /**
@@ -60,7 +60,9 @@ function vercelControl(): ComputerControl {
     const problem = vercelCredentialsError();
     if (problem !== null) throw new Error(problem);
     try {
-      cached = { sandbox: await VercelSandbox.get({ name: COMPUTER_NAME }), at: Date.now() };
+      // eve names a sandbox it creates itself (`eve-sbx-vercel-…`); the machine record says which,
+      // and a computer adopted from before keeps COMPUTER_NAME (see lib/team-computer.ts).
+      cached = { sandbox: await VercelSandbox.get({ name: await machineName() }), at: Date.now() };
     } catch (error) {
       if (!notFound(error)) throw error;
       cached = { sandbox: null, at: Date.now() };

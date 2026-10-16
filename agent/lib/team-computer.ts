@@ -8,6 +8,7 @@ import {
 } from "eve/sandbox/provider";
 
 import { COMPUTER_NAME } from "./computer";
+import { type ComputerProviderName, readMachineRecord, writeMachineRecord } from "./machine";
 
 /**
  * One computer for the whole team, on eve's per-session sandboxes.
@@ -31,16 +32,8 @@ import { COMPUTER_NAME } from "./computer";
  * The console reaches the machine by the recorded native name (see
  * `computer/control.ts`).
  */
-export type ComputerProviderName = "vercel" | "docker" | "microsandbox";
-
-export interface MachineRecord {
-  readonly provider: ComputerProviderName;
-  /** The built-in provider's own state for the machine: what it needs to reconnect. */
-  readonly state: SandboxPreparedArtifact;
-  readonly at: string;
-}
-
-const RECORD_KEY = `computer/${COMPUTER_NAME}/machine.json`;
+export type { ComputerProviderName, MachineRecord } from "./machine";
+export { machineName, readMachineRecord } from "./machine";
 
 type Inner = SandboxProviderImplementation<object | undefined, SandboxPreparedArtifact, SandboxPreparedArtifact, SandboxSession>;
 
@@ -49,28 +42,6 @@ export function innerImplementation(environment: object): Inner {
   const runtime = Reflect.get(environment, Symbol.for("eve.sandbox-provider-runtime")) as { implementation?: Inner } | undefined;
   if (runtime?.implementation === undefined) throw new Error("This eve version does not expose sandbox provider runtimes.");
   return runtime.implementation;
-}
-
-export async function readMachineRecord(): Promise<MachineRecord | null> {
-  const { readDoc } = await import("./store");
-  return (await readDoc<MachineRecord>(RECORD_KEY))?.value ?? null;
-}
-
-async function writeMachineRecord(record: MachineRecord): Promise<void> {
-  const { writeDoc } = await import("./store");
-  await writeDoc(RECORD_KEY, record);
-}
-
-/**
- * The machine's native name, for code that reaches it without eve: the recorded
- * Vercel Sandbox or Docker container, or the computer's own name for a machine
- * from before this record existed (which the Vercel provider adopts).
- */
-export async function machineName(): Promise<string> {
-  const record = await readMachineRecord().catch(() => null);
-  const state = (record?.state ?? null) as { sandboxName?: unknown; containerName?: unknown; name?: unknown } | null;
-  const name = state?.sandboxName ?? state?.containerName ?? state?.name;
-  return typeof name === "string" && name !== "" ? name : COMPUTER_NAME;
 }
 
 /** The calling session's view of the shared machine. */
