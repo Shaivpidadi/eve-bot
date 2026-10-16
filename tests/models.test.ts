@@ -99,3 +99,15 @@ describe("AI Gateway data controls", () => {
     vi.unstubAllEnvs();
   });
 });
+
+describe("explainGatewayError", () => {
+  it("says plainly when a Gateway budget ran out, or no provider fits the data controls", async () => {
+    const { explainGatewayError } = await import("../agent/lib/models");
+    expect(explainGatewayError('402 {"error":{"message":"Budget exceeded","type":"quota_for_entity_exceeded"}}')).toMatchObject({ kind: "budget" });
+    const none = explainGatewayError("400 no_providers_available", { BOT_ZDR: "1", BOT_INFERENCE_REGION: "us" });
+    expect(none).toMatchObject({ kind: "no-providers" });
+    expect(none?.text).toContain("Zero Data Retention (BOT_ZDR) and inference in US (BOT_INFERENCE_REGION)");
+    expect(explainGatewayError("400 no_providers_available", {})?.text).toContain("right now");
+    expect(explainGatewayError("fetch failed")).toBeNull();
+  });
+});

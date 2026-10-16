@@ -37,7 +37,7 @@ import { learnFromFeedback } from "../lib/memory/outcomes";
 import { sameFindings } from "../lib/findings";
 import { jevEnabled, judge } from "../lib/jev";
 import { completionQuestions, noteShadow, readVerdict, unmetCriteria } from "../lib/jev-watch";
-import { DEFAULT_EFFORT, nextEffort } from "../lib/models";
+import { DEFAULT_EFFORT, explainGatewayError, nextEffort } from "../lib/models";
 import { ROUTINE_REPORT_PREFIX } from "../lib/rooms";
 import { nextWake } from "../lib/run-stop";
 import { operator } from "../lib/session";
@@ -299,7 +299,9 @@ async function runCycle(
 
   // The budget stopped the bot mid-run (see the teammate's usage hook): the job
   // waits for a person with the reason, rather than failing.
-  const budgetStop = settled.ok ? null : await budgetHalted(workspaceId, claim.token);
+  // An AI Gateway budget that ran out stops it the same way.
+  const gateway = settled.ok ? null : explainGatewayError(settled.error);
+  const budgetStop = settled.ok ? null : ((await budgetHalted(workspaceId, claim.token)) ?? (gateway?.kind === "budget" ? gateway.text : null));
   if (budgetStop !== null) {
     await markBlocked(workspaceId, jobId, budgetStop, claim.token);
     return answer({ jobId, ran: true, status: "blocked", reason: budgetStop });
@@ -310,7 +312,7 @@ async function runCycle(
   // files saved along the way.
   const salvaged = await salvageResult(workspaceId, jobId, claim, settled.ok ? settled.raw : null);
   if (salvaged === null) {
-    const error = settled.ok ? "The bot ended without a result: nothing was recorded, said, or saved." : settled.error;
+    const error = settled.ok ? "The bot ended without a result: nothing was recorded, said, or saved." : (gateway?.text ?? settled.error);
     await markFailed(workspaceId, jobId, error, claim.token);
     return answer({ jobId, ran: true, status: "failed", error });
   }

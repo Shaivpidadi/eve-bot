@@ -206,6 +206,40 @@ export function gatewayOptions(env: Readonly<Record<string, string | undefined>>
   return Object.keys(gateway).length === 0 ? null : { gateway };
 }
 
+/**
+ * Two AI Gateway refusals worth saying plainly, from an error's message:
+ * - `budget`: a Gateway budget (set for the team, project, key or user in the
+ *   dashboard) is used up: HTTP 402 `quota_for_entity_exceeded`.
+ * - `no-providers`: no provider can serve the model under the data controls
+ *   asked for (`BOT_ZDR`, `BOT_INFERENCE_REGION`): 400 `no_providers_available`.
+ * Null for anything else, which keeps its own message.
+ */
+export function explainGatewayError(
+  message: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): { readonly kind: "budget" | "no-providers"; readonly text: string } | null {
+  if (/quota_for_entity_exceeded/i.test(message)) {
+    return {
+      kind: "budget",
+      text: "Stopped by an AI Gateway budget: the budget set for this team, project or key in the Vercel dashboard (AI Gateway → Budgets) is used up. Raise it there, or wait for it to reset, then run it again.",
+    };
+  }
+  if (/no_providers_available/i.test(message)) {
+    const asked = [
+      /^(1|true|on|yes)$/i.test(env.BOT_ZDR?.trim() ?? "") ? "Zero Data Retention (BOT_ZDR)" : null,
+      env.BOT_INFERENCE_REGION?.trim() ? `inference in ${env.BOT_INFERENCE_REGION.trim().toUpperCase()} (BOT_INFERENCE_REGION)` : null,
+    ].filter((part): part is string => part !== null);
+    return {
+      kind: "no-providers",
+      text:
+        asked.length > 0
+          ? `No AI Gateway provider can serve this model with ${asked.join(" and ")}. Choose a model that offers it, or turn the setting off.`
+          : "No AI Gateway provider can serve this model right now. Choose another model, or try again later.",
+    };
+  }
+  return null;
+}
+
 /** `gatewayOptions` as eve wants it next to a model: `{ modelOptions: { providerOptions } }`, or nothing. */
 export function gatewayModelOptions(): { readonly modelOptions?: { readonly providerOptions: GatewayOptions } } {
   const options = gatewayOptions();

@@ -148,10 +148,13 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   As built: HQ's static model and the teammate's per-turn selection carry it as eve `modelOptions.providerOptions`;
   direct calls merge it with `withGatewayOptions`. `@ai-sdk/gateway` 4.0.113 types only `zeroDataRetention`, but the
   provider sends options through unvalidated, so `inferenceRegion` reaches Gateway as documented.
-- `[to-do]` V6.2 Recognise HTTP 402 `quota_for_entity_exceeded`: halt the run with the budget reason
+- `[done]` V6.2 Recognise HTTP 402 `quota_for_entity_exceeded`: halt the run with the budget reason
   (`BUDGET_HALT_REASON` in `lib/budget.ts`) and a feed line "AI Gateway budget reached", not a raw error.
-- `[to-do]` V6.3 Map 400 `no_providers_available` (ZDR/region with no compliant provider) to a clear message naming the
+- `[done]` V6.3 Map 400 `no_providers_available` (ZDR/region with no compliant provider) to a clear message naming the
   model and the setting.
+  As built: `explainGatewayError` in `lib/models.ts`. A Gateway budget stop blocks the job with the reason, as our
+  own budget stop does, so it waits for a person rather than failing; "no provider" fails it with the setting named.
+  The console says both plainly when HQ's own turn fails (`failureNotice` in `room-store.ts`).
 - `[to-do]` V6.4 Docs: configuration, `docs/safety.md` (what ZDR/US-only do and cost; Gateway budgets as a backstop set
   in the dashboard).
 - **Tests:** unit for options per call site and the two error mappings (`tests/models.test.ts`, `tests/budget.test.ts`).

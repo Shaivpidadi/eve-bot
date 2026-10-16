@@ -42,6 +42,21 @@ function failureNotice(message: string): Omit<Notice, "icon"> {
       action: "start-over",
     };
   }
+  // AI Gateway's own refusals (see explainGatewayError in agent/lib/models.ts), said plainly.
+  if (/quota_for_entity_exceeded/i.test(message)) {
+    return {
+      label: "AI Gateway budget reached",
+      detail: "The budget set for this team, project or key in the Vercel dashboard (AI Gateway → Budgets) is used up. Raise it there, or wait for it to reset.",
+      tone: "error",
+    };
+  }
+  if (/no_providers_available/i.test(message)) {
+    return {
+      label: "No provider for this model",
+      detail: "No AI Gateway provider can serve the model with the data controls set on this deployment (BOT_ZDR, BOT_INFERENCE_REGION). Choose another model, or turn the setting off.",
+      tone: "error",
+    };
+  }
   return { label: "Something went wrong", detail: message, tone: "error" };
 }
 
