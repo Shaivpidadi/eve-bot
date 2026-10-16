@@ -143,7 +143,12 @@ so it cannot reach the browser, the team's sign-ins, or the gateway key. See
 - One computer per deployment, shared by every Bot and workspace. Sign-ins are
   pooled. Use separate deployments for work that must be isolated.
 - Backups can be up to `BOT_BACKUP_EVERY_MINUTES` old; browser profiles are not
-  archived, the team's sign-ins are.
+  archived, the team's sign-ins are. With `BOT_COMPUTER_DRIVE=on` (Vercel) the
+  work folders and the browser profiles live on a Vercel Drive instead, so a
+  lost machine loses nothing written before it, and only the machine's own
+  software and scratch (`/workspace/sessions`) start over. The drive itself is
+  open to the computer's root only; a Bot's shell reaches the work folders
+  through the same paths and access as before, and never the profiles.
 - Egress is open by default so the browser can install itself. Set an
   allow-list before pointing a Bot at anything sensitive.
 - Page content is untrusted. An allow-list is the control that holds, not the
