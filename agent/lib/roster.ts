@@ -5,6 +5,7 @@ import { spent } from "./jev";
 import { extractionModel, extractionModelId } from "./memory/capture";
 import { chargeUsage, reportedCost } from "./spend";
 import { TEMPLATES } from "./templates";
+import { withGatewayOptions } from "./models";
 
 /** The most Bots one description proposes; a team grows from there. */
 export const MAX_PROPOSED = 5;
@@ -38,6 +39,7 @@ export async function proposeRoster(workspaceId: string, need: string, team: rea
   const result = await generateText({
     model: extractionModel(),
     output: Output.object({ schema: PROPOSAL }),
+    providerOptions: withGatewayOptions(),
     system: [
       "You plan a small team of AI teammates for a person. Each teammate works in a browser and a shell on a shared computer, can be scheduled, and asks before anything is sent, paid, deleted or published.",
       `Propose one teammate per distinct kind of recurring work in what they describe, at most ${MAX_PROPOSED}, fewer when fewer fit. Do not propose work someone on the team already covers. A teammate called HQ already runs the team, so never propose a manager or coordinator.`,

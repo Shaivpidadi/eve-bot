@@ -180,12 +180,51 @@ export function tokenLimits(role: keyof typeof TOKEN_LIMITS): {
 }
 
 /** HQ's model: a Gateway model name, or a model on the custom endpoint with its context window. */
+/** What AI Gateway is asked for on every call, beyond the model: JSON, as provider options must be. */
+export type GatewayOptions = { readonly gateway: { readonly [key: string]: boolean | { readonly scope: string; readonly geoRegion: string } } };
+
+/**
+ * AI Gateway's data controls, from the deployment's settings, for every call
+ * that goes through Gateway: HQ and the teammate (eve's own calls), memory,
+ * introductions and roster proposals, embeddings, and Jev.
+ *
+ * - `BOT_ZDR=1` asks for Zero Data Retention: only providers with a no-retention
+ *   agreement serve the call (per request, on Pro and Enterprise teams).
+ * - `BOT_INFERENCE_REGION=us` keeps inference in that region; Gateway fails the
+ *   call rather than run it elsewhere, at a higher price.
+ *
+ * Either one can leave a model with no provider; Gateway then answers 400
+ * `no_providers_available` and `explainGatewayError` says which setting did it.
+ * Null with neither set, or on a custom endpoint, which never sees Gateway.
+ */
+export function gatewayOptions(env: Readonly<Record<string, string | undefined>> = process.env): GatewayOptions | null {
+  if (env.BOT_MODEL_BASE_URL?.trim()) return null;
+  const gateway: Record<string, boolean | { scope: string; geoRegion: string }> = {};
+  if (/^(1|true|on|yes)$/i.test(env.BOT_ZDR?.trim() ?? "")) gateway.zeroDataRetention = true;
+  const region = env.BOT_INFERENCE_REGION?.trim().toLowerCase() ?? "";
+  if (/^[a-z]{2,8}$/.test(region)) gateway.inferenceRegion = { scope: "zone", geoRegion: region };
+  return Object.keys(gateway).length === 0 ? null : { gateway };
+}
+
+/** `gatewayOptions` as eve wants it next to a model: `{ modelOptions: { providerOptions } }`, or nothing. */
+export function gatewayModelOptions(): { readonly modelOptions?: { readonly providerOptions: GatewayOptions } } {
+  const options = gatewayOptions();
+  return options === null ? {} : { modelOptions: { providerOptions: options } };
+}
+
+/** `gatewayOptions` as the AI SDK takes it on a call, merged into any provider options the call already has. */
+export function withGatewayOptions<T extends Record<string, unknown>>(providerOptions?: T): (T & Partial<GatewayOptions>) | undefined {
+  const options = gatewayOptions();
+  if (options === null) return providerOptions;
+  return { ...(providerOptions ?? ({} as T)), ...options };
+}
+
 export function hqModel():
-  | { readonly model: string }
+  | { readonly model: string; readonly modelOptions?: { readonly providerOptions: GatewayOptions } }
   | { readonly model: LanguageModel; readonly modelContextWindowTokens: number } {
   const endpoint = customEndpoint();
   const named = process.env.BOT_HQ_MODEL?.trim();
-  if (endpoint === null) return { model: named || "anthropic/claude-sonnet-5" };
+  if (endpoint === null) return { model: named || "anthropic/claude-sonnet-5", ...gatewayModelOptions() };
   return { model: endpointModel(endpoint, named || endpointDefaultModel()), modelContextWindowTokens: endpoint.contextWindowTokens };
 }
 

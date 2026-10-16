@@ -70,3 +70,32 @@ describe("models", () => {
     expect(custom.tokenLimits("hq")).toEqual({ maxInputTokensPerSession: false, maxOutputTokensPerSession: 2_000_000 });
   });
 });
+
+describe("AI Gateway data controls", () => {
+  it("asks for nothing unless a control is set, and never on a custom endpoint", async () => {
+    const { gatewayOptions } = await import("../agent/lib/models");
+    expect(gatewayOptions({})).toBeNull();
+    expect(gatewayOptions({ BOT_ZDR: "0", BOT_INFERENCE_REGION: "" })).toBeNull();
+    expect(gatewayOptions({ BOT_ZDR: "1", BOT_MODEL_BASE_URL: "http://localhost:11434/v1" })).toBeNull();
+  });
+
+  it("asks for Zero Data Retention and a region in Gateway's own shape", async () => {
+    const { gatewayOptions } = await import("../agent/lib/models");
+    expect(gatewayOptions({ BOT_ZDR: "1" })).toEqual({ gateway: { zeroDataRetention: true } });
+    expect(gatewayOptions({ BOT_INFERENCE_REGION: "US" })).toEqual({ gateway: { inferenceRegion: { scope: "zone", geoRegion: "us" } } });
+    expect(gatewayOptions({ BOT_ZDR: "true", BOT_INFERENCE_REGION: "us" })).toEqual({
+      gateway: { zeroDataRetention: true, inferenceRegion: { scope: "zone", geoRegion: "us" } },
+    });
+    // Not a region name: left out rather than sent.
+    expect(gatewayOptions({ BOT_INFERENCE_REGION: "us; drop" })).toBeNull();
+  });
+
+  it("merges into a call's own provider options and sits next to eve's model", async () => {
+    vi.stubEnv("BOT_ZDR", "1");
+    vi.stubEnv("BOT_MODEL_BASE_URL", "");
+    const { gatewayModelOptions, withGatewayOptions } = await import("../agent/lib/models");
+    expect(withGatewayOptions({ openai: { dimensions: 512 } })).toEqual({ openai: { dimensions: 512 }, gateway: { zeroDataRetention: true } });
+    expect(gatewayModelOptions()).toEqual({ modelOptions: { providerOptions: { gateway: { zeroDataRetention: true } } } });
+    vi.unstubAllEnvs();
+  });
+});

@@ -141,10 +141,13 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   the workspace budget like any job.
 - **Tests:** unit for ingest (verify, de-dup, enqueue); live on production: an assigned Linear issue starts a job.
 
-### V6. AI Gateway controls (F6) `[to-do]` (small; independent)
-- `[to-do]` V6.1 One `gatewayOptions()` in `agent/lib/models.ts` for every Gateway call (HQ and teammate model resolvers,
+### V6. AI Gateway controls (F6) `[in-progress]` (small; independent)
+- `[done]` V6.1 One `gatewayOptions()` in `agent/lib/models.ts` for every Gateway call (HQ and teammate model resolvers,
   `generateText` in memory/intro/roster, `embed`, Jev): `zeroDataRetention` from `BOT_ZDR=1`, `inferenceRegion` from
   `BOT_INFERENCE_REGION=us`.
+  As built: HQ's static model and the teammate's per-turn selection carry it as eve `modelOptions.providerOptions`;
+  direct calls merge it with `withGatewayOptions`. `@ai-sdk/gateway` 4.0.113 types only `zeroDataRetention`, but the
+  provider sends options through unvalidated, so `inferenceRegion` reaches Gateway as documented.
 - `[to-do]` V6.2 Recognise HTTP 402 `quota_for_entity_exceeded`: halt the run with the budget reason
   (`BUDGET_HALT_REASON` in `lib/budget.ts`) and a feed line "AI Gateway budget reached", not a raw error.
 - `[to-do]` V6.3 Map 400 `no_providers_available` (ZDR/region with no compliant provider) to a clear message naming the
