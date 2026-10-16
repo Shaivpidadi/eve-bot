@@ -213,7 +213,8 @@ export function gatewayOptions(env: Readonly<Record<string, string | undefined>>
  * - `no-providers`: no provider can serve the model under the data controls
  *   asked for (`BOT_ZDR`, `BOT_INFERENCE_REGION`): a 400 typed
  *   `no_providers_available`, or for ZDR `no_zdr_providers_available` with the
- *   message "No ZDR … providers … available for model: <id>" (seen live).
+ *   message "No ZDR … providers … available for model: <id>", and for a region
+ *   "No provider for <id> supports the requested inference region" (both seen live).
  * Null for anything else, which keeps its own message.
  */
 export function explainGatewayError(
@@ -226,8 +227,8 @@ export function explainGatewayError(
       text: "Stopped by an AI Gateway budget: the budget set for this team, project or key in the Vercel dashboard (AI Gateway → Budgets) is used up. Raise it there, or wait for it to reset, then run it again.",
     };
   }
-  if (/no_[a-z_]*providers_available|\bno\b[^.]*\bproviders\b[^.]*\bavailable\b/i.test(message)) {
-    const model = /for model:\s*([\w./:-]*[\w-])/i.exec(message)?.[1] ?? null;
+  if (/no_[a-z_]*providers_available|\bno\b[^.]*\bproviders\b[^.]*\bavailable\b|\bno provider for\b.*?\bsupports the requested\b/i.test(message)) {
+    const model = /\bfor (?:model:\s*)?([\w-]+\/[\w./:-]*[\w-])/i.exec(message)?.[1] ?? null;
     const subject = model === null ? "this model" : model;
     const asked = [
       /^(1|true|on|yes)$/i.test(env.BOT_ZDR?.trim() ?? "") ? "Zero Data Retention (BOT_ZDR)" : null,

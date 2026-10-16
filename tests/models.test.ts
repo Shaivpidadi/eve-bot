@@ -112,6 +112,9 @@ describe("explainGatewayError", () => {
     const live = explainGatewayError("No ZDR (Zero Data Retention) providers or ZDR-attested BYOK credentials available for model: nvidia/nemotron-3.5-lightning-free. Providers considered: nvidia", { BOT_ZDR: "1" });
     expect(live?.kind).toBe("no-providers");
     expect(live?.text).toContain("nvidia/nemotron-3.5-lightning-free with Zero Data Retention (BOT_ZDR)");
+    const region = explainGatewayError("No provider for nvidia/nemotron-3.5-lightning-free supports the requested inference region. Providers considered: nvidia (scope=zone, geoRegion=us).", { BOT_INFERENCE_REGION: "us" });
+    expect(region?.kind).toBe("no-providers");
+    expect(region?.text).toContain("nvidia/nemotron-3.5-lightning-free with inference in US (BOT_INFERENCE_REGION)");
     expect(explainGatewayError("fetch failed")).toBeNull();
   });
 });

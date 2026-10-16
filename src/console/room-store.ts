@@ -50,8 +50,8 @@ function failureNotice(message: string): Omit<Notice, "icon"> {
       tone: "error",
     };
   }
-  if (/no_[a-z_]*providers_available|\bno\b[^.]*\bproviders\b[^.]*\bavailable\b/i.test(message)) {
-    const model = /for model:\s*([\w./:-]*[\w-])/i.exec(message)?.[1];
+  if (/no_[a-z_]*providers_available|\bno\b[^.]*\bproviders\b[^.]*\bavailable\b|\bno provider for\b.*?\bsupports the requested\b/i.test(message)) {
+    const model = /\bfor (?:model:\s*)?([\w-]+\/[\w./:-]*[\w-])/i.exec(message)?.[1];
     return {
       label: "No provider for this model",
       detail: `No AI Gateway provider can serve ${model ?? "the model"} with the data controls set on this deployment (BOT_ZDR, BOT_INFERENCE_REGION). Choose another model, or turn the setting off.`,
