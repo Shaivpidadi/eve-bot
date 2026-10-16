@@ -155,7 +155,7 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   As built: `explainGatewayError` in `lib/models.ts`. A Gateway budget stop blocks the job with the reason, as our
   own budget stop does, so it waits for a person rather than failing; "no provider" fails it with the setting named.
   The console says both plainly when HQ's own turn fails (`failureNotice` in `room-store.ts`).
-- `[to-do]` V6.4 Docs: configuration, `docs/safety.md` (what ZDR/US-only do and cost; Gateway budgets as a backstop set
+- `[done]` V6.4 Docs: configuration, `docs/safety.md` (what ZDR/US-only do and cost; Gateway budgets as a backstop set
   in the dashboard).
 - **Tests:** unit for options per call site and the two error mappings (`tests/models.test.ts`, `tests/budget.test.ts`).
 

@@ -103,6 +103,22 @@ usage page loads (and by the tick); until a rate is set it is shown as
 unpriced. `BOT_JOB_COST_LIMIT_USD` and `BOT_HQ_COST_LIMIT_USD` still cap each
 session.
 
+An AI Gateway budget, set in the Vercel dashboard for the team, project or
+API key, is a second ceiling under these: Gateway refuses calls once it is
+used up, and a job stopped that way is blocked with the reason, as above.
+
+## Data controls
+
+`BOT_ZDR=1` asks AI Gateway for Zero Data Retention on every call that goes
+through it: HQ, the teammate, memory, introductions, roster proposals,
+embeddings and Jev. Only providers with a no-retention agreement serve those
+calls; per request it is free, on Pro and Enterprise teams. `BOT_INFERENCE_REGION=us`
+keeps inference in the US for the same calls, at Gateway's higher regional
+price. Either can leave a model with no provider: the call fails with a
+message naming the setting rather than running somewhere else. Neither
+applies to a custom endpoint (`BOT_MODEL_BASE_URL`), which never sees Gateway,
+nor to free stealth models, which may keep prompts.
+
 ## Rewind
 
 Rewinding a job puts back only what that job owns on the shared computer:

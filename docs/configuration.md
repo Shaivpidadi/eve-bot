@@ -13,6 +13,8 @@ of it; these are the ones that matter.
 | `BOT_HQ_MODEL` | pin HQ to one model |
 | `BOT_MODEL_PRICES` | `model=in/out` USD per million tokens, so spend caps hold off Gateway; OpenRouter is read automatically |
 | `BOT_JEV` / `BOT_JEV_MODEL` / `BOT_JEV_CONFIDENCE` | the decision model behind memory and the browser gate; `off` disables it (see [Development](development.md#a-second-opinion-on-small-decisions)) |
+| `BOT_ZDR` | `1` asks AI Gateway for Zero Data Retention on every call: only providers with a no-retention agreement serve it (Pro and Enterprise; see [Safety](safety.md#data-controls)) |
+| `BOT_INFERENCE_REGION` | `us` keeps inference in that region; Gateway fails a call it cannot serve there rather than run it elsewhere |
 
 ## Spend
 
