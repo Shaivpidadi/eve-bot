@@ -55,7 +55,7 @@ Tags: `[to-do]`, `[in-progress]`, `[done]`, `[parked]`. One commit per task, Con
 no co-author line. Each task names files, tests, and "done when". Statuses below are all `[to-do]`.
 
 ### V0. Ground truth spikes `[in-progress]` (do first; each ends in a short findings note in this file)
-- `[in-progress]` V0.1 **Image spike**: build the computer Dockerfile, push with `vercel vcr build docker . --push`, start a
+- `[done]` V0.1 **Image spike**: build the computer Dockerfile, push with `vercel vcr build docker . --push`, start a
   sandbox from it via eve `VercelSandbox.environment({ image })` on a scratch preview; confirm eve's `prepare` snapshot
   still layers on top, `image_not_ready` handling, cold-start time vs today.
   **Findings (16 Oct):** `vercel vcr build docker agent/sandbox bot-computer --push` builds linux/amd64 in about 4 min
@@ -63,7 +63,8 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   (credentials last ~12 h), otherwise it fails with `not_authorized` after the build. Pushed as
   `vcr.vercel.com/<team>/<project>/bot-computer:latest`. A sandbox from it starts in 12 s cold (first pull) and 1.6 s
   warm, runs as `vercel-sandbox`, and has Chrome, Xvnc, websockify, xdotool, openbox and agent-browser with dpkg clean.
-  **Go.** Still to check: the same through eve on a scratch preview (`prepare` snapshot on top of the image).
+  **Go.** Through eve (a dev server with `BOT_COMPUTER=vercel` and `BOT_COMPUTER_IMAGE`; a scratch preview sits behind
+  Deployment Protection), `prepare` snapshots on top of the image as before, and its install steps are no-ops.
 - `[done]` V0.2 **Drive spike**: `Drive.getOrCreate`, mount at `/team` through eve `environment.open({ mounts })` in
   `team-computer.ts`; confirm: survives sandbox stop and delete; resume does not need the mount re-passed; Chrome profile
   on the drive works (Singleton locks, speed); whether the bundled `@vercel/sandbox` version needs a bump for `fork()`.
@@ -89,7 +90,7 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   reaches the charge never loads eve's sandbox providers.
 - **Done when:** each spike has a findings line here and a go/no-go for its track.
 
-### V1. Team computer from a prebuilt image (F1) `[in-progress]`
+### V1. Team computer from a prebuilt image (F1) `[done]`
 - `[done]` V1.1 `agent/sandbox/Dockerfile`: Ubuntu base matching eve's, `PACKAGES` from `computer/script.ts`, Chrome
   `.deb`, agent-browser, the `bot` user and `bot-team` group, `/usr/local/lib/bot-computer/bot_shell.py`. Multi-arch
   build locally (arm64 Mac), linux/amd64 for VCR.
@@ -124,7 +125,12 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   Before: the last fresh Docker computer took about 3.5 min to appear, then failed its install. Docker reused layers
   from an earlier build of the same Dockerfile; a machine that never built it adds about 2.5 min once.
   (Free Nemotron stalled on a Gateway 500 before the job reached the computer; Cat Jam ran it.)
-  **Vercel half:** waits on V0.1 (push the image to Vercel Container Registry, start a computer from it).
+- **Checked live, Vercel (16 Oct 2026, free `stealth/cat-jam`):** a brand-new computer (`bot-ship-img`) from the VCR
+  image was prepared and ran the shell step 26 s after asking, template included; on the warm machine Chrome was up
+  8 s after a browser request. The page loaded (agent-browser on the machine reads the title "Example Domain").
+  Before: first boot ran the apt and Chrome install, several minutes. The browser *job* did not finish on free
+  models: the browser agent sends screenshots and Cat Jam answers "This model does not support image or file input"
+  (Nemotron is text-only too), so browser jobs need a vision model (see V7.3).
 
 ### V2. Team computer on a Vercel Drive (F2) `[to-do]` (Vercel only; depends on V0.2)
 - `[to-do]` V2.1 Decide the layout from V0.2: drive at `/team` with `/workspace/{shared,bots,downloads,.computer}` as
@@ -203,6 +209,8 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
 ### V7. Free models and Token Pass (F7) `[to-do]` (small)
 - `[to-do]` V7.1 Try `stealth/cat-jam` as `BOT_MEMORY_MODEL` locally with the existing capture eval; keep Nemotron for
   HQ and teammate (user preference). Record pass rate here.
+- `[to-do]` V7.3 Name the problem when a text-only model meets the browser: map Gateway's "does not support image or
+  file input" to "<model> can't see screenshots; the browser needs a vision model" (`explainGatewayError`).
 - `[to-do]` V7.2 Docs: free/cheap model options (Nemotron, Cat Jam: free, no ZDR, may disappear; Token Pass).
 
 ### V8. Passport sign-in (F8) `[parked]` until someone on Enterprise asks
