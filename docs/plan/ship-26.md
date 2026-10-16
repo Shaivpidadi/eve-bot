@@ -74,11 +74,16 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   reaches the charge never loads eve's sandbox providers.
 - **Done when:** each spike has a findings line here and a go/no-go for its track.
 
-### V1. Team computer from a prebuilt image (F1) `[to-do]`
-- `[to-do]` V1.1 `agent/sandbox/Dockerfile`: Ubuntu base matching eve's, `PACKAGES` from `computer/script.ts`, Chrome
+### V1. Team computer from a prebuilt image (F1) `[in-progress]`
+- `[done]` V1.1 `agent/sandbox/Dockerfile`: Ubuntu base matching eve's, `PACKAGES` from `computer/script.ts`, Chrome
   `.deb`, agent-browser, the `bot` user and `bot-team` group, `/usr/local/lib/bot-computer/bot_shell.py`. Multi-arch
   build locally (arm64 Mac), linux/amd64 for VCR.
-- `[to-do]` V1.2 `computer-config.ts`: Docker/microsandbox use `.dockerfile()`; Vercel uses `image: BOT_COMPUTER_IMAGE`
+  As built: on eve's own image (`ghcr.io/vercel/eve:0.79.1`, Ubuntu 26.04, the `vercel-sandbox` user with sudo), it bakes
+  in only the slow parts: the apt packages, Chrome and agent-browser. The `bot` user, the fence and the programs still
+  come from `prepare` and `ensureRuntime`, which find the software present and return in seconds; one install path,
+  and a machine without the image works as before. Local arm64 build: 2 min 35 s, 2.39 GB; every `installed()` check
+  passes inside it. `tests/computer-image.test.ts` keeps it in step with `PACKAGES` and the agent-browser version.
+- `[done]` V1.2 `computer-config.ts`: Docker/microsandbox use `.dockerfile()`; Vercel uses `image: BOT_COMPUTER_IMAGE`
   (a VCR ref), falling back to today's install when unset, so a fresh clone still works.
 - `[to-do]` V1.3 `sandbox/sandbox.ts` `prepare()`: with an image, only `mkdir` the paths; without one, keep the install
   but **fail the template on an incomplete install** instead of `console.warn` (closes the mid-install template hole
