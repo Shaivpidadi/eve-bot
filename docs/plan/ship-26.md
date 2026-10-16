@@ -211,7 +211,7 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
 - **Tests:** `tests/connector-connect.test.ts` (add, sign in through the callback, wrong grant, sign out, token per
   connection, gate). Live: see V0.4.
 
-### V5. Event-driven Bots via MCP Events (F5) `[blocked]` (depends on V4)
+### V5. Event-driven Bots via MCP Events (F5) `[parked]` (depends on V4)
 - `[to-do]` V5.1 Event subscriptions as a new routine kind: "when <event> on <connector>, <brief>", stored with the Bot.
 - `[to-do]` V5.2 Ingest: eve's `experimental_events.onEvent` on the connection → verify → `enqueue` into the Bot's room
   (durable, since Connect does not replay) → `flushOutboxSoon`.
@@ -226,6 +226,11 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   with a static `connect()`, which runtime-added connectors are not. Built so far: the receiver
   (`POST /bot/v1/hooks/connect`, `lib/triggers.ts`: Connect-token check, durable once-per-delivery inbox, 401 to
   anything else, checked on production); routing to Bots not started.
+- **Decided 16 Oct:** parked until Linear's MCP server offers MCP Events (or Connect forwards Linear triggers). The
+  receiver stays: one route for every connector, so a connector that gains events needs no new endpoint. MCP Events
+  are the target, since their catalog names each event and its schema, so no per-app payload code; triggers (raw
+  provider webhooks, Slack only today) would need a small mapping per app. `/bot/v1/hooks/recent` stays QA-only
+  until events are routed to workspaces.
 
 ### V6. AI Gateway controls (F6) `[done]` (small; independent)
 - `[done]` V6.1 One `gatewayOptions()` in `agent/lib/models.ts` for every Gateway call (HQ and teammate model resolvers,
