@@ -130,23 +130,34 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   8 s after a browser request. The page loaded (agent-browser on the machine reads the title "Example Domain").
   Before: first boot ran the apt and Chrome install, several minutes. The browser *job* did not finish on free
   models: the browser agent sends screenshots and Cat Jam answers "This model does not support image or file input"
-  (Nemotron is text-only too), so browser jobs need a vision model (see V7.3).
+  (Nemotron is text-only too), so browser jobs need a vision model (see V7.3). The browser work itself ran: the feed
+  shows "Opened https://example.com in the live browser. Tab title = Example Domain" before the screenshot failed.
 
-### V2. Team computer on a Vercel Drive (F2) `[to-do]` (Vercel only; depends on V0.2)
-- `[to-do]` V2.1 Decide the layout from V0.2: drive at `/team` with `/workspace/{shared,bots,downloads,.computer}` as
-  symlinks or bind targets, so every path Bots know stays the same. `sessions` and `attachments` stay off the drive.
-- `[to-do]` V2.2 `team-computer.ts`: `Drive.getOrCreate({ name: COMPUTER_NAME, region })` and pass `mounts` on start;
-  record the drive in `machine.json`; a replaced machine mounts the same drive.
-- `[to-do]` V2.3 `computer-backup.ts`: when the computer's kind has a persistent workspace, skip restore and make the
-  backup a slow off-site copy (hourly or on demand); Docker and microsandbox keep today's tar path unchanged.
-- `[to-do]` V2.4 `kinds.ts`: `Capabilities.persistentWorkspace`; `describeKind` and the panel caption say so.
-- `[to-do]` V2.5 Rewind (`generations.ts`) stays per-job tar (a whole-drive point would rewind other Bots' work, per D5.1);
-  revisit only if per-Bot drives become cheap.
-- `[to-do]` V2.6 Export/import (`lib/store/transfer.ts`): a Drive-backed workspace exports by taking one backup first.
-- `[to-do]` V2.7 Docs: configuration, `docs/updating.md`, `docs/safety.md` (what survives what).
-- **Tests:** unit for the kind branch in backup/restore; QA `computer/replace` check on a preview: replace the machine,
-  next job finds its files and sign-ins.
-- **Done when:** on a preview, deleting the sandbox loses nothing written before it, browser sign-ins included.
+### V2. Team computer on a Vercel Drive (F2) `[done]` (Vercel only, opt-in `BOT_COMPUTER_DRIVE=on`)
+- `[done]` V2.1 Layout: the drive mounts at `/team` (root-only, 0700) and `bot-computer drive` bind-mounts
+  `/team/{shared,bots,downloads,chrome}` over `/workspace/{shared,bots,downloads}` and the browser profiles. Bind
+  mounts, not symlinks: every path stays real, so `confine()`'s realpath check, the Files listing and the shell's
+  `bot-team` access need no change. `sessions` and `attachments` stay off the drive. Binds end when the machine
+  stops, so they are redone whenever a session gets the machine; anything written while unbound moves onto the drive
+  first (the drive's copy wins), which is also how an existing machine migrates.
+- `[done]` V2.2 `computer-drive.ts` + `team-computer.ts`: `Drive.getOrCreate({ name: COMPUTER_NAME })` before a new
+  machine (`beforeStart`), mounts in the open options (also used when a resume finds the machine gone, which before
+  dropped the local network policy too), `onMachine` gives a pre-drive machine the drive via `sandbox.update({ mounts })`
+  (applies from its next start) and binds. A start refused because the replaced machine still holds the drive
+  (409, released ~11 s after a delete) is retried for up to 2 min. `@vercel/sandbox` bumped to 3.8.0 for `Drive`.
+- `[done]` V2.3 `computer-backup.ts`: a claimed drive (`/team/.bot-drive`) is never restored over; a new drive gets the
+  latest backup once, through the binds, then is claimed. Backups default to hourly with a drive.
+- `[parked]` V2.4 `Capabilities.persistentWorkspace` / panel caption: nothing reads it yet; add with a UI need.
+- `[done]` V2.5 Rewind stays per-job tar (unchanged).
+- `[parked]` V2.6 Export/import: unchanged; the backup it already takes covers the drive's folders through the binds.
+- `[done]` V2.7 Docs: `docs/configuration.md`, `.env.example`, `docs/safety.md`.
+- **Checked live (16 Oct 2026, dev server with the computer on Vercel, free `stealth/cat-jam`):** the drive was made at
+  Vercel's default size (1 TiB shown, no Hobby refusal); a file written before the binds moved onto the drive; the
+  Bot's shell writes through the binds as its own user; the machine was deleted and a brand-new one (new boot, an
+  off-drive marker gone) had the drive's file and the browser-profile marker. Found and fixed live: the machine's
+  script was older than the app (bind now brings the scripts up first), `/team` and `/team/chrome` were readable by
+  the Bot's shell (now 0700, test added), and a replacement started inside the ~11 s release window failed with 409
+  (retry, unit-tested; the window could not be hit on purpose again). Unit: `tests/computer-drive.test.ts`.
 
 ### V3. Background work on Vercel Daemons (F3) `[to-do]` (production only; depends on V0.3)
 - `[to-do]` V3.1 `daemon/` entry + Dockerfile: a loop every 30 s doing `dispatchDue`, `deliverOutbox`, `reapIdleScreens`,
