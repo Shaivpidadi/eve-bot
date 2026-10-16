@@ -211,7 +211,7 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
 - **Tests:** `tests/connector-connect.test.ts` (add, sign in through the callback, wrong grant, sign out, token per
   connection, gate). Live: see V0.4.
 
-### V5. Event-driven Bots via MCP Events (F5) `[to-do]` (depends on V4)
+### V5. Event-driven Bots via MCP Events (F5) `[blocked]` (depends on V4)
 - `[to-do]` V5.1 Event subscriptions as a new routine kind: "when <event> on <connector>, <brief>", stored with the Bot.
 - `[to-do]` V5.2 Ingest: eve's `experimental_events.onEvent` on the connection → verify → `enqueue` into the Bot's room
   (durable, since Connect does not replay) → `flushOutboxSoon`.
@@ -219,6 +219,13 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
 - `[to-do]` V5.4 Budget and noise guards: per-routine rate limit, de-dup by event idempotency key, events count against
   the workspace budget like any job.
 - **Tests:** unit for ingest (verify, de-dup, enqueue); live on production: an assigned Linear issue starts a job.
+- **Findings (16 Oct):** blocked upstream for Linear. Linear's MCP server advertises only `tools` (no events extension)
+  and answers Connect's `events/list` with "Method not found", so MCP Events cannot subscribe. Connect's other path,
+  connector triggers (the provider's own webhooks), is Slack-only today: `vercel connect attach … --triggers` answers
+  "only Slack supports incoming webhooks today". eve's built-in `experimental_events` also needs a static connection
+  with a static `connect()`, which runtime-added connectors are not. Built so far: the receiver
+  (`POST /bot/v1/hooks/connect`, `lib/triggers.ts`: Connect-token check, durable once-per-delivery inbox, 401 to
+  anything else, checked on production); routing to Bots not started.
 
 ### V6. AI Gateway controls (F6) `[done]` (small; independent)
 - `[done]` V6.1 One `gatewayOptions()` in `agent/lib/models.ts` for every Gateway call (HQ and teammate model resolvers,
