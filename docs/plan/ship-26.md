@@ -85,9 +85,13 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   passes inside it. `tests/computer-image.test.ts` keeps it in step with `PACKAGES` and the agent-browser version.
 - `[done]` V1.2 `computer-config.ts`: Docker/microsandbox use `.dockerfile()`; Vercel uses `image: BOT_COMPUTER_IMAGE`
   (a VCR ref), falling back to today's install when unset, so a fresh clone still works.
-- `[to-do]` V1.3 `sandbox/sandbox.ts` `prepare()`: with an image, only `mkdir` the paths; without one, keep the install
+- `[done]` V1.3 `sandbox/sandbox.ts` `prepare()`: with an image, only `mkdir` the paths; without one, keep the install
   but **fail the template on an incomplete install** instead of `console.warn` (closes the mid-install template hole
   even before images).
+  As built, differently: failing the template would leave no computer at all where the install cannot finish (egress
+  locked down with `BOT_SANDBOX_ALLOW_DOMAINS`). Instead `prepare` runs the new `bot-computer settle` on an incomplete
+  install: it stops the background installer and any apt/dpkg it started, and finishes what dpkg can, so the template
+  is consistent and whatever is missing installs on first use. With an image, the install finds everything and returns.
 - `[to-do]` V1.4 `script.ts` / `runtime.ts`: keep `installed()` as a health check; the install path, mirror rewrite and
   `untilInstalled` remain only for the no-image fallback. `cmd_isolate` keeps only the per-boot fence.
 - `[to-do]` V1.5 CI: build the computer image on PRs (no push); a release workflow pushes to VCR and records the digest.

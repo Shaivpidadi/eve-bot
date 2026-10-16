@@ -751,6 +751,18 @@ cmd_identity() {
   esac
 }
 
+# settle: stop an install that is still running and leave dpkg consistent, so a
+# snapshot taken now (a template) has no half-unpacked package in it. Whatever
+# it did not finish is installed when the computer is first used.
+cmd_settle() {
+  stop_process installer "$INSTALLER_PATTERN"
+  sudo -n pkill -TERM -x apt-get 2>/dev/null
+  sudo -n pkill -TERM -x dpkg 2>/dev/null
+  sleep 1
+  sudo -n env DEBIAN_FRONTEND=noninteractive dpkg --configure -a >/dev/null 2>&1 || true
+  printf '{"ok":true,"settled":true}\n'
+}
+
 cmd_recover() {
   local n
   for n in 1 2 3 4 5 6 7 8 9; do
@@ -786,7 +798,8 @@ case "$1" in
   identity) cmd_identity "$2" "$3" ;;
   isolate) cmd_isolate "$2" ;;
   recover) cmd_recover ;;
-  *) fail args "usage: bot-computer version | install | ensure N | stop N | status | launch browser|files|terminal | raise N | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | isolate PORTS | recover" ;;
+  settle) cmd_settle ;;
+  *) fail args "usage: bot-computer version | install | ensure N | stop N | status | launch browser|files|terminal | raise N | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | isolate PORTS | recover | settle" ;;
 esac
 `;
 
