@@ -77,8 +77,23 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   `environment.open()` to `Sandbox.create`, and its bundled SDK has `Drive` and mounts (no `fork`, which V2 does not
   need), so no SDK bump. The mount root is writable by the sandbox user. Not tried yet: a real Chrome profile on it.
   **Go** for V2.
-- `[to-do]` V0.3 **Daemon spike**: a 20-line daemon in this project that loops `dispatchDue` + `deliverOutbox` against
+- `[done]` V0.3 **Daemon spike**: a 20-line daemon in this project that loops `dispatchDue` + `deliverOutbox` against
   the store with its OIDC token; confirm it reaches Blob/store and AI Gateway, and its cost on Hobby (10 CPU-h/month).
+  **Findings (16 Oct, production of the test project, free `stealth/cat-jam`):** built as V3's real shape rather than
+  a throwaway: `daemon/` (zero-dependency Node loop + Dockerfile) calls `POST /bot/v1/internal/tick` every 30 s with
+  its OIDC token; the route (`lib/worker.ts`) accepts only a Vercel-signed token for this project's production
+  environment and runs the watchdog's work. Deploy built the image (`daemon.worker` in VCR) with no extra setup;
+  ticks arrived every ~30 s with 200s; on the next deploy the old worker's last tick (17:23:07) came before the new
+  one's first (17:23:23), so one worker at a time. **Behaviour:** a job whose run was killed mid-command (QA crash
+  fault), with no sweep and no console, was picked up 21 s later ("continuing from step 1, attempt 2") and finished;
+  only the worker could have dispatched it (the cron is daily; sweep and rewind were not called). The daemon's own
+  stdout is not in `vercel logs` CLI output (dashboard only). **Cost:** an ordinary pass is 3 Blob advanced ops
+  (2 lists, 1 put) + 1 simple op (counted against an instrumented store): ~260k advanced ops/month, about $1.30 on
+  Pro. **On Hobby it is not viable**: Blob includes 2,000 advanced ops a month and blocks the store for 30 days past
+  that, which 30-s passes reach in ~6 hours. The worker was removed from production after the check.
+  **Go for Pro (opt-in, documented), no-go on Hobby.** Open: how to opt in, since `vercel.json` cannot be
+  conditional (ship the block commented in docs, or ship it with a worker that idles unless `BOT_WORKER=on`).
+
 - `[to-do]` V0.4 **Connect spike**: one Connect connector (Linear) through `@vercel/connect/eve` in the teammate's
   connection set; confirm our `approval.request` / `approval.response` hooks still fire with Connect auth.
 - `[done]` V0.5 Check `vercelControl()` in `agent/lib/computer/control.ts`: it uses `COMPUTER_NAME`, not
