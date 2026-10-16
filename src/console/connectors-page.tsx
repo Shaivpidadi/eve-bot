@@ -42,7 +42,7 @@ interface ConnectorRow {
   readonly description: string;
   readonly enabled: boolean;
   readonly gate: ConnectorGate;
-  readonly auth: { readonly kind: ConnectorKeyKind; readonly header?: string; readonly connected?: boolean; readonly connectedAt?: string | null; readonly issuer?: string };
+  readonly auth: { readonly kind: ConnectorKeyKind; readonly header?: string; readonly connected?: boolean; readonly connectedAt?: string | null; readonly issuer?: string; readonly connector?: string };
   readonly check: { readonly ok: boolean; readonly at: string; readonly tools: readonly string[]; readonly error: string | null };
   readonly policy?: Readonly<Record<string, "read" | "write">>;
   /** Tools whose read/write a person set here; the rest are guesses from the name. */
@@ -74,6 +74,7 @@ const KEY_LABEL: Readonly<Record<ConnectorKeyKind, string>> = {
   bearer: "Bearer key",
   header: "Key in a header",
   oauth: "Signed in",
+  connect: "Signed in through Vercel Connect",
 };
 
 const host = (url: string) => {
@@ -203,7 +204,9 @@ function ConnectorCard({
   );
 }
 
-const needsConnect = (connector: ConnectorRow) => connector.auth.kind === "oauth" && connector.auth.connected !== true;
+/** Connectors that sign in rather than take a key: through the server's own OAuth, or Vercel Connect. */
+const signsIn = (connector: ConnectorRow) => connector.auth.kind === "oauth" || connector.auth.kind === "connect";
+const needsConnect = (connector: ConnectorRow) => signsIn(connector) && connector.auth.connected !== true;
 
 function statusOf(connector: ConnectorRow): { readonly text: string; readonly tone: "ok" | "bad" | "off" } {
   if (!connector.enabled) return { text: "Off", tone: "off" };
@@ -545,7 +548,7 @@ function ConnectorDetail({
           <Row>
             <RowMain
               title={
-                connector.auth.kind === "oauth"
+                signsIn(connector)
                   ? connector.auth.connected
                     ? `Signed in${connector.auth.connectedAt ? ` ${when(connector.auth.connectedAt)}` : ""}`
                     : "Not signed in yet"
@@ -554,26 +557,28 @@ function ConnectorDetail({
                     : `${KEY_LABEL[connector.auth.kind]}${connector.auth.header ? ` · ${connector.auth.header}` : ""}`
               }
             >
-              {connector.auth.kind === "oauth" && !connector.auth.connected
+              {connector.auth.kind === "connect" && !connector.auth.connected
+                ? `Signing in happens through Vercel Connect (${connector.auth.connector ?? "its connector"}), for the whole workspace; no key to paste, and none is kept here.`
+                : connector.auth.kind === "oauth" && !connector.auth.connected
                 ? `Signing in happens on ${connector.auth.issuer ? host(connector.auth.issuer) : "the server"}; no key to paste.`
                 : connector.check.ok
                   ? `Reached ${when(connector.check.at)}`
                   : connector.check.error ?? "Could not be reached"}
             </RowMain>
-            {connector.auth.kind === "oauth" ? (
+            {signsIn(connector) ? (
               <Button size="sm" disabled={busy} onClick={() => void onSignIn()}>
                 {connector.auth.connected ? "Sign in again" : "Connect"}
               </Button>
             ) : null}
             <Status tone={status.tone}>{status.text}</Status>
           </Row>
-          {connector.auth.kind === "oauth" && connector.auth.connected ? (
+          {signsIn(connector) && connector.auth.connected ? (
             <button type="button" className={rowBtnCls} disabled={busy} onClick={() => void onDisconnect()}>
               <LogOutIcon className="size-3.5 flex-none text-muted-foreground" />
               <RowMain>Disconnect this account. The connector stays; sign in again any time.</RowMain>
             </button>
           ) : null}
-          {connector.auth.kind === "none" || connector.auth.kind === "oauth" ? null : replacing ? (
+          {connector.auth.kind === "none" || signsIn(connector) ? null : replacing ? (
             <form
               className={cn(rowCls, "gap-2")}
               onSubmit={async (event) => {
@@ -761,6 +766,7 @@ function AddForm({ adding, busy, onCancel, onSubmit }: { adding: NonNullable<Add
   const [kind, setKind] = useState<ConnectorKeyKind>("none");
   const [header, setHeader] = useState("X-Api-Key");
   const [secret, setSecret] = useState("");
+  const [via, setVia] = useState("");
   const [description, setDescription] = useState("");
   const [gate, setGate] = useState<ConnectorGate>(adding.kind === "catalog" ? adding.entry.gate : "writes");
 
@@ -774,7 +780,9 @@ function AddForm({ adding, busy, onCancel, onSubmit }: { adding: NonNullable<Add
         void onSubmit(
           adding.kind === "catalog"
             ? { catalog: adding.entry.id, key: { secret }, gate }
-            : { label, url, description, gate, key: { kind, ...(kind === "header" ? { header } : {}), ...(kind === "none" ? {} : { secret }) } },
+            : kind === "connect"
+              ? { label, url, description, gate, connect: via.trim() }
+              : { label, url, description, gate, key: { kind, ...(kind === "header" ? { header } : {}), ...(kind === "none" ? {} : { secret }) } },
         );
       }}
     >
@@ -827,7 +835,18 @@ function AddForm({ adding, busy, onCancel, onSubmit }: { adding: NonNullable<Add
               <Input id={field("header")} value={header} onChange={(event) => setHeader(event.target.value)} required placeholder="X-Api-Key" />
             </FormField>
           ) : null}
-          {kind === "none" ? null : (
+          {kind === "connect" ? (
+            <>
+              <FormField label="Vercel Connect connector" id={field("via")}>
+                <Input id={field("via")} value={via} onChange={(event) => setVia(event.target.value)} required placeholder="linear/acme-linear" autoComplete="off" />
+              </FormField>
+              <Faint>
+                Made with <Code>vercel connect create</Code> and attached to this project (<Code>vercel connect list</Code> shows its UID). One sign-in serves the
+                whole workspace, and Vercel keeps the token; on a Vercel deployment only.
+              </Faint>
+            </>
+          ) : null}
+          {kind === "none" || kind === "connect" ? null : (
             <FormField label="Key value" id={field("value")}>
               <Input id={field("value")} type="password" value={secret} onChange={(event) => setSecret(event.target.value)} required autoComplete="off" placeholder="Stored encrypted; Bots never see it" />
             </FormField>
@@ -856,6 +875,7 @@ const KIND_ITEMS: readonly { value: ConnectorKeyKind; label: string }[] = [
   { value: "none", label: "No key, or let the server sign me in" },
   { value: "bearer", label: "Bearer key (Authorization header)" },
   { value: "header", label: "Key in a custom header" },
+  { value: "connect", label: "Sign in through Vercel Connect" },
 ];
 
 function FormField({ label, id, children }: { label: string; id: string; children: ReactNode }) {

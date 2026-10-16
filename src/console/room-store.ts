@@ -32,7 +32,7 @@ export interface Notice {
  * A failed turn, in words for the person reading the thread. eve's own
  * message is kept for anything not recognised here.
  */
-function failureNotice(message: string): Omit<Notice, "icon"> {
+export function failureNotice(message: string): Omit<Notice, "icon"> {
   if (/generation-bound delivery/.test(message)) {
     return {
       label: "This thread cannot continue here",
@@ -40,6 +40,29 @@ function failureNotice(message: string): Omit<Notice, "icon"> {
         "It was started under the development server (npm run dev), and this server cannot pick it up. Start it over to keep talking; the roster, finished work, and memory stay.",
       tone: "error",
       action: "start-over",
+    };
+  }
+  // AI Gateway's own refusals (see explainGatewayError in agent/lib/models.ts), said plainly.
+  if (/quota_for_entity_exceeded|\b402\b[^]*\bbudget\b/i.test(message)) {
+    return {
+      label: "AI Gateway budget reached",
+      detail: "The budget set for this team, project or key in the Vercel dashboard (AI Gateway → Budgets) is used up. Raise it there, or wait for it to reset.",
+      tone: "error",
+    };
+  }
+  if (/no_[a-z_]*providers_available|\bno\b[^.]*\bproviders\b[^.]*\bavailable\b|\bno provider for\b.*?\bsupports the requested\b/i.test(message)) {
+    const model = /\bfor (?:model:\s*)?([\w-]+\/[\w./:-]*[\w-])/i.exec(message)?.[1];
+    return {
+      label: "No provider for this model",
+      detail: `No AI Gateway provider can serve ${model ?? "the model"} with the data controls set on this deployment (BOT_ZDR, BOT_INFERENCE_REGION). Choose another model, or turn the setting off.`,
+      tone: "error",
+    };
+  }
+  if (/\bdoes not support (?:image|file|vision)\b|\bimage (?:or file )?input is not supported\b/i.test(message)) {
+    return {
+      label: "This model can't see the screen",
+      detail: "It reads text only, and the browser works from screenshots. Choose a model that takes images for this Bot (BOT_TEAMMATE_MODEL), then try again.",
+      tone: "error",
     };
   }
   return { label: "Something went wrong", detail: message, tone: "error" };
@@ -788,6 +811,9 @@ export function buildTimeline(
   const fixtures = qaFixtureBots(activity);
   for (const event of activity) {
     if (event.botId != null && fixtures.has(event.botId)) continue;
+    // A failed turn of this thread is already on it, from its own stream (see agent/hooks/audit.ts).
+    // Recorded before it was marked, it is known by its wording.
+    if ((event.data?.turn === true || /^A turn failed \(/.test(event.text)) && event.data?.room === member.room) continue;
     // A thread that was started over shows nothing from before that moment.
     if (member.clearedAt !== null && event.at < member.clearedAt) continue;
     const jobRoom = event.jobId == null ? undefined : roomOf.get(event.jobId);

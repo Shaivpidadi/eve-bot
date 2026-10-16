@@ -180,12 +180,102 @@ export function tokenLimits(role: keyof typeof TOKEN_LIMITS): {
 }
 
 /** HQ's model: a Gateway model name, or a model on the custom endpoint with its context window. */
+/** What AI Gateway is asked for on every call, beyond the model: JSON, as provider options must be. */
+export type GatewayOptions = { readonly gateway: { readonly [key: string]: boolean | { readonly scope: string; readonly geoRegion: string } } };
+
+/**
+ * AI Gateway's data controls, from the deployment's settings, for every call
+ * that goes through Gateway: HQ and the teammate (eve's own calls), memory,
+ * introductions and roster proposals, embeddings, and Jev.
+ *
+ * - `BOT_ZDR=1` asks for Zero Data Retention: only providers with a no-retention
+ *   agreement serve the call (per request, on Pro and Enterprise teams).
+ * - `BOT_INFERENCE_REGION=us` keeps inference in that region; Gateway fails the
+ *   call rather than run it elsewhere, at a higher price.
+ *
+ * Either one can leave a model with no provider; Gateway then answers 400
+ * `no_providers_available` and `explainGatewayError` says which setting did it.
+ * Null with neither set, or on a custom endpoint, which never sees Gateway.
+ */
+export function gatewayOptions(env: Readonly<Record<string, string | undefined>> = process.env): GatewayOptions | null {
+  if (env.BOT_MODEL_BASE_URL?.trim()) return null;
+  const gateway: Record<string, boolean | { scope: string; geoRegion: string }> = {};
+  if (/^(1|true|on|yes)$/i.test(env.BOT_ZDR?.trim() ?? "")) gateway.zeroDataRetention = true;
+  const region = env.BOT_INFERENCE_REGION?.trim().toLowerCase() ?? "";
+  if (/^[a-z]{2,8}$/.test(region)) gateway.inferenceRegion = { scope: "zone", geoRegion: region };
+  return Object.keys(gateway).length === 0 ? null : { gateway };
+}
+
+/**
+ * Two AI Gateway refusals worth saying plainly, from an error's message:
+ * - `budget`: a Gateway budget (set for the team, project, key or user in the
+ *   dashboard) is used up: HTTP 402 `quota_for_entity_exceeded`.
+ * - `no-providers`: no provider can serve the model under the data controls
+ *   asked for (`BOT_ZDR`, `BOT_INFERENCE_REGION`): a 400 typed
+ *   `no_providers_available`, or for ZDR `no_zdr_providers_available` with the
+ *   message "No ZDR … providers … available for model: <id>", and for a region
+ *   "No provider for <id> supports the requested inference region" (both seen live).
+ * - `no-images`: the model takes text only, and the work sent it a screenshot
+ *   (the browser works from them): "This model does not support image or file
+ *   input" (seen live from free models).
+ * Null for anything else, which keeps its own message.
+ */
+/** A model refusing an image: Gateway's wording, and the usual provider ones. */
+export const NO_IMAGES = /\bdoes not support (?:image|file|vision)\b|\bimage (?:or file )?input is not supported\b/i;
+
+export function explainGatewayError(
+  message: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): { readonly kind: "budget" | "no-providers" | "no-images"; readonly text: string } | null {
+  if (/quota_for_entity_exceeded|\b402\b[^]*\bbudget\b/i.test(message)) {
+    return {
+      kind: "budget",
+      text: "Stopped by an AI Gateway budget: the budget set for this team, project or key in the Vercel dashboard (AI Gateway → Budgets) is used up. Raise it there, or wait for it to reset, then run it again.",
+    };
+  }
+  if (/no_[a-z_]*providers_available|\bno\b[^.]*\bproviders\b[^.]*\bavailable\b|\bno provider for\b.*?\bsupports the requested\b/i.test(message)) {
+    const model = /\bfor (?:model:\s*)?([\w-]+\/[\w./:-]*[\w-])/i.exec(message)?.[1] ?? null;
+    const subject = model === null ? "this model" : model;
+    const asked = [
+      /^(1|true|on|yes)$/i.test(env.BOT_ZDR?.trim() ?? "") ? "Zero Data Retention (BOT_ZDR)" : null,
+      env.BOT_INFERENCE_REGION?.trim() ? `inference in ${env.BOT_INFERENCE_REGION.trim().toUpperCase()} (BOT_INFERENCE_REGION)` : null,
+    ].filter((part): part is string => part !== null);
+    return {
+      kind: "no-providers",
+      text:
+        asked.length > 0
+          ? `No AI Gateway provider can serve ${subject} with ${asked.join(" and ")}. Choose a model that offers it, or turn the setting off.`
+          : `No AI Gateway provider can serve ${subject} right now. Choose another model, or try again later.`,
+    };
+  }
+  if (NO_IMAGES.test(message)) {
+    return {
+      kind: "no-images",
+      text: "This model reads text only, and the browser works from screenshots. Set BOT_TEAMMATE_MODEL (or the Bot's model) to one that takes images, then run it again.",
+    };
+  }
+  return null;
+}
+
+/** `gatewayOptions` as eve wants it next to a model: `{ modelOptions: { providerOptions } }`, or nothing. */
+export function gatewayModelOptions(): { readonly modelOptions?: { readonly providerOptions: GatewayOptions } } {
+  const options = gatewayOptions();
+  return options === null ? {} : { modelOptions: { providerOptions: options } };
+}
+
+/** `gatewayOptions` as the AI SDK takes it on a call, merged into any provider options the call already has. */
+export function withGatewayOptions<T extends Record<string, unknown>>(providerOptions?: T): (T & Partial<GatewayOptions>) | undefined {
+  const options = gatewayOptions();
+  if (options === null) return providerOptions;
+  return { ...(providerOptions ?? ({} as T)), ...options };
+}
+
 export function hqModel():
-  | { readonly model: string }
+  | { readonly model: string; readonly modelOptions?: { readonly providerOptions: GatewayOptions } }
   | { readonly model: LanguageModel; readonly modelContextWindowTokens: number } {
   const endpoint = customEndpoint();
   const named = process.env.BOT_HQ_MODEL?.trim();
-  if (endpoint === null) return { model: named || "anthropic/claude-sonnet-5" };
+  if (endpoint === null) return { model: named || "anthropic/claude-sonnet-5", ...gatewayModelOptions() };
   return { model: endpointModel(endpoint, named || endpointDefaultModel()), modelContextWindowTokens: endpoint.contextWindowTokens };
 }
 

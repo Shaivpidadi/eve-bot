@@ -4,6 +4,7 @@ import { gatewayReachable } from "../jev";
 import { readDoc, updateDoc } from "../store";
 import { chargeUsage, reportedCost } from "../spend";
 import { type MemoryEntry, type MemorySlot, normalize } from "./store";
+import { withGatewayOptions } from "../models";
 
 /**
  * Meaning, not just words, for ranking lessons.
@@ -82,7 +83,7 @@ export type Embedder = (texts: readonly string[]) => Promise<readonly (readonly 
 export function gatewayEmbedder(workspaceId: string, model: string = embeddingModel()): Embedder {
   return async (texts) => {
     if (texts.length === 0) return [];
-    const options = { model, providerOptions: { openai: { dimensions: DIMENSIONS } }, maxRetries: 1, abortSignal: AbortSignal.timeout(15_000) };
+    const options = { model, providerOptions: withGatewayOptions({ openai: { dimensions: DIMENSIONS } }), maxRetries: 1, abortSignal: AbortSignal.timeout(15_000) };
     const result = texts.length === 1 ? await embed({ ...options, value: texts[0]! }).then((one) => ({ embeddings: [one.embedding], usage: one.usage, providerMetadata: one.providerMetadata })) : await embedMany({ ...options, values: [...texts] });
     const cost = reportedCost(result.providerMetadata);
     void chargeUsage(

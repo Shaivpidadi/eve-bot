@@ -191,6 +191,8 @@ describe("sweeping when the budget matters", () => {
   it("never holds up its caller, and sweeps at most once per few minutes per process", async () => {
     vi.stubEnv("VERCEL_OIDC_TOKEN", "test-token");
     vi.stubEnv("BOT_COMPUTER", "");
+    // The machine's name is read from the store first; in memory, so the fake clock below does not outrun it.
+    vi.stubEnv("BOT_STORE", "memory");
     let asked = 0;
     // A Vercel API that never answers.
     vi.doMock("@vercel/sandbox", () => ({

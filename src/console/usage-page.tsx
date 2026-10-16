@@ -19,6 +19,7 @@ interface Line {
 }
 
 interface Report {
+  readonly worker?: { readonly at: string } | null;
   readonly total: UsageLike;
   readonly hq: UsageLike;
   readonly jev: UsageLike;
@@ -391,6 +392,7 @@ export function UsagePage({ onClose, exportable = false }: { onClose: () => void
             )}
           </PageSection>
 
+          {report.worker ? <WorkerNote at={report.worker.at} /> : null}
           <Faint className="max-w-[640px]">
             Counted from every model step eve reports, as the provider counted it, plus Jev's judgements. HQ's own turns count under HQ; a Bot's steps count
             under the Bot and on the job. Not counted: anything before this ledger existed, eve's own housekeeping calls such as compaction, and other
@@ -425,5 +427,22 @@ function WhoRow({ name, note, usage, total }: { name: string; note: string | nul
         <small className={quiet}> · {share(usage.costUsd, total.costUsd)}</small>
       </TableCell>
     </TableRow>
+  );
+}
+
+/**
+ * The background worker (a Vercel Daemon, see agent/lib/worker.ts) passes every
+ * 30 seconds; two minutes without one means it stopped, and the watchdog falls
+ * back to the console and the daily cron.
+ */
+function WorkerNote({ at }: { at: string }) {
+  const seconds = Math.max(0, Math.round((Date.now() - Date.parse(at)) / 1000));
+  const ago = seconds < 90 ? `${seconds} s ago` : `${Math.round(seconds / 60)} min ago`;
+  return (
+    <Faint className="max-w-[640px]">
+      {seconds <= 120
+        ? `Background worker: running, last pass ${ago}. Due work, teammates' notes and idle browsers move without a console open.`
+        : `Background worker: not seen for ${ago}. Due work waits for a console or the daily watchdog until it runs again.`}
+    </Faint>
   );
 }

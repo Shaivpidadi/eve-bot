@@ -751,6 +751,60 @@ cmd_identity() {
   esac
 }
 
+# settle: stop an install that is still running and leave dpkg consistent, so a
+# snapshot taken now (a template) has no half-unpacked package in it. Whatever
+# it did not finish is installed when the computer is first used.
+cmd_settle() {
+  stop_process installer "$INSTALLER_PATTERN"
+  sudo -n pkill -TERM -x apt-get 2>/dev/null
+  sudo -n pkill -TERM -x dpkg 2>/dev/null
+  sleep 1
+  sudo -n env DEBIAN_FRONTEND=noninteractive dpkg --configure -a >/dev/null 2>&1 || true
+  printf '{"ok":true,"settled":true}\n'
+}
+
+# drive MOUNT: keeps the team's work on the Vercel Drive mounted at MOUNT. Each
+# work folder, and the browser profiles, is bound from the drive over its usual
+# place, so every path stays the same. Binds last until the machine stops, so
+# this runs whenever a session gets the machine. Anything written to a folder
+# while it was not bound moves onto the drive first (the drive's copy wins), so
+# a machine from before the drive moves its files over the first time.
+# "fresh": the drive is not claimed yet (MOUNT/.bot-drive, which the backups write
+# once they have restored onto it or found nothing to restore).
+cmd_drive() {
+  local mount=$1 name src dst fresh=false bound=""
+  [ -n "$mount" ] || fail args "expected the drive's mount point"
+  mountpoint -q "$mount" || fail drive "no drive is mounted at $mount"
+  # Only root reaches the drive itself; everyone else goes through the binds, which
+  # keep each folder's own access. Otherwise a Bot's shell could walk into the
+  # browser profiles here, past /workspace/.computer's 0700.
+  sudo -n chown root:root "$mount" && sudo -n chmod 700 "$mount" || fail drive "could not close $mount to everyone but root"
+  sudo -n test -e "$mount/.bot-drive" || fresh=true
+  for name in shared bots downloads chrome; do
+    if [ "$name" = chrome ]; then dst="$PROFILES"; else dst="/workspace/$name"; fi
+    src="$mount/$name"
+    mkdir -p "$dst"
+    # The profiles hold the team's sign-ins: the computer's user only, as the rest of its state.
+    if [ "$name" = chrome ] && sudo -n test -d "$src"; then sudo -n chmod 700 "$src" || fail drive "could not close $src"; fi
+    if mountpoint -q "$dst"; then bound="$bound $name"; continue; fi
+    # A browser already running on these profiles keeps them until the machine restarts.
+    if [ "$name" = chrome ] && pgrep -f -- "--user-data-dir=$PROFILES" >/dev/null 2>&1; then continue; fi
+    if ! sudo -n test -d "$src"; then
+      sudo -n mkdir -p "$src" &&
+        sudo -n chown "$(stat -c %u:%g "$dst")" "$src" &&
+        sudo -n chmod "$(stat -c %a "$dst")" "$src" || fail drive "could not make $src on the drive"
+      if [ "$name" = chrome ]; then sudo -n chmod 700 "$src" || fail drive "could not close $src"; fi
+    fi
+    if [ -n "$(ls -A "$dst" 2>/dev/null)" ]; then
+      sudo -n cp -a -n "$dst/." "$src/" && sudo -n find "$dst" -mindepth 1 -delete ||
+        fail drive "could not move $dst onto the drive"
+    fi
+    sudo -n mount --bind "$src" "$dst" || fail drive "could not bind $src over $dst"
+    bound="$bound $name"
+  done
+  printf '{"ok":true,"fresh":%s,"bound":"%s"}\n' "$fresh" "$(printf '%s' "$bound" | sed 's/^ //')"
+}
+
 cmd_recover() {
   local n
   for n in 1 2 3 4 5 6 7 8 9; do
@@ -786,7 +840,9 @@ case "$1" in
   identity) cmd_identity "$2" "$3" ;;
   isolate) cmd_isolate "$2" ;;
   recover) cmd_recover ;;
-  *) fail args "usage: bot-computer version | install | ensure N | stop N | status | launch browser|files|terminal | raise N | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | isolate PORTS | recover" ;;
+  settle) cmd_settle ;;
+  drive) cmd_drive "$2" ;;
+  *) fail args "usage: bot-computer version | install | ensure N | stop N | status | launch browser|files|terminal | raise N | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | isolate PORTS | recover | settle | drive MOUNT" ;;
 esac
 `;
 

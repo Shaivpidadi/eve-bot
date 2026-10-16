@@ -1,8 +1,8 @@
 import { Sandbox as VercelSandbox } from "@vercel/sandbox";
 
 import { periodOf, recordComputerSessions, type ComputerCharge } from "./budget";
-import { COMPUTER_NAME } from "./computer";
 import { computerMode, vercelCredentialsError } from "./computer-config";
+import { machineName } from "./machine";
 import { computerRates, computerSessionCost } from "./pricing";
 
 /**
@@ -64,7 +64,7 @@ export function chargeFor(session: SessionRecord, rates = computerRates()): Comp
 async function* vercelSessions(): AsyncIterable<SessionRecord> {
   let sandbox: VercelSandbox;
   try {
-    sandbox = await VercelSandbox.get({ name: COMPUTER_NAME });
+    sandbox = await VercelSandbox.get({ name: await machineName() });
   } catch (error) {
     const status = (error as { response?: { status?: number } } | null)?.response?.status;
     if (status === 404 || /\b404\b|not found/i.test(error instanceof Error ? error.message : String(error))) return;

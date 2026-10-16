@@ -6,6 +6,7 @@ import { DockerSandbox } from "eve/sandbox/docker";
 import { MicrosandboxSandbox } from "eve/sandbox/microsandbox";
 import { VercelSandbox } from "eve/sandbox/vercel";
 
+import { attachDrive, bindDrive, driveHeld, driveMounts, driveWanted, ensureDrive } from "./computer-drive";
 import { TeamComputer } from "./team-computer";
 
 /**
@@ -67,32 +68,82 @@ export function vercelCredentialsError(): string | null {
  * snapshot or image every new machine starts from.
  */
 export function computerEnvironment(prepare: (sandbox: SandboxSession) => Promise<void>) {
+  const image = computerImage();
   if (computerMode() === "local") {
-    return localComputer() === "docker"
-      ? TeamComputer.environment({ provider: "docker", environment: DockerSandbox.environment({ prepare }), check: localModeError })
-      : TeamComputer.environment({
-          provider: "microsandbox",
-          environment: MicrosandboxSandbox.environment({ prepare, memoryMiB: 2048 * Number(process.env.BOT_SANDBOX_VCPUS ?? 4) }),
-          check: localModeError,
-        });
+    if (localComputer() === "docker") {
+      const options = { prepare };
+      const environment = image.kind === "dockerfile" ? DockerSandbox.dockerfile(options) : image.kind === "image" ? DockerSandbox.image(image.reference, options) : DockerSandbox.environment(options);
+      return TeamComputer.environment({ provider: "docker", environment, check: localModeError });
+    }
+    const options = { prepare, memoryMiB: 2048 * Number(process.env.BOT_SANDBOX_VCPUS ?? 4) };
+    const environment =
+      image.kind === "dockerfile" ? MicrosandboxSandbox.dockerfile(options) : image.kind === "image" ? MicrosandboxSandbox.image(image.reference, options) : MicrosandboxSandbox.environment(options);
+    return TeamComputer.environment({ provider: "microsandbox", environment, check: localModeError });
   }
   const minutes = Number(process.env.BOT_SANDBOX_TIMEOUT_MINUTES ?? 30);
   return TeamComputer.environment({
     provider: "vercel",
     environment: VercelSandbox.environment({
       prepare,
+      // A prebuilt image in Vercel Container Registry; without one, eve's base image and the first-boot install.
+      ...(image.kind === "image" ? { image: image.reference } : {}),
       networkPolicy,
       resources: { vcpus: Number(process.env.BOT_SANDBOX_VCPUS ?? 4) },
       ports: [COMPUTER_PORT],
       timeout: minutes * 60_000,
     }),
     check: vercelCredentialsError,
+    ...(driveWanted() ? { open: computerOpenOptions(), beforeStart: ensureDrive, onMachine: onDriveMachine, startAgain: driveHeld } : {}),
   });
 }
 
-/** Options the machine is opened with: local providers take their network policy here. */
+/** Machines named here already carry the drive (or were asked to from their next start). */
+const attached = new Set<string>();
+
+/**
+ * Every time a session gets the Vercel computer with a drive: a machine from
+ * before the drive is given it (it mounts from its next start), and the work
+ * folders are bound from it (see `computer-drive.ts`).
+ */
+async function onDriveMachine(sandbox: SandboxSession, state: unknown): Promise<void> {
+  const name = (state as { sandboxName?: unknown } | null)?.sandboxName;
+  if (typeof name === "string" && !attached.has(name)) {
+    if (await attachDrive(name)) console.log(`[computer] ${name} will mount its drive from its next start.`);
+    attached.add(name);
+  }
+  const { sandboxIo } = await import("./computer/runtime");
+  await bindDrive(sandboxIo(sandbox));
+}
+
+/**
+ * Where the computer's software comes from (see agent/sandbox/Dockerfile).
+ *
+ * - Locally, by default, eve builds `agent/sandbox/Dockerfile` for this
+ *   machine: Chrome, the desktop and agent-browser come with the image.
+ * - `BOT_COMPUTER_IMAGE=<reference>` uses an image already built: a Vercel
+ *   Container Registry reference on Vercel (linux/amd64), any OCI image locally.
+ * - `BOT_COMPUTER_IMAGE=default` (and, on Vercel, leaving it unset) starts from
+ *   eve's own base image, and the computer installs its software when it first
+ *   boots, as before.
+ *
+ * Either way the computer's installer checks the software on every machine
+ * and adds whatever is missing, so an image only makes the first start fast.
+ */
+export function computerImage(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): { readonly kind: "dockerfile" } | { readonly kind: "image"; readonly reference: string } | { readonly kind: "default" } {
+  const named = env.BOT_COMPUTER_IMAGE?.trim() ?? "";
+  if (named === "default") return { kind: "default" };
+  if (named !== "") return { kind: "image", reference: named };
+  return env.BOT_COMPUTER === "local" ? { kind: "dockerfile" } : { kind: "default" };
+}
+
+/** Options the machine is opened with: local providers take their network policy here, and a Vercel computer its drive. */
 export function computerOpenOptions(): object | undefined {
-  if (computerMode() !== "local") return undefined;
+  if (computerMode() !== "local") {
+    const mounts = driveMounts();
+    return mounts === undefined ? undefined : { mounts };
+  }
   return localComputer() === "docker" ? { networkPolicy: allow.length > 0 ? "deny-all" : "allow-all" } : { networkPolicy };
 }
 

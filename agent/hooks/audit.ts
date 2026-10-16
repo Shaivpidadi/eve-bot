@@ -106,7 +106,8 @@ export default defineHook({
           kind: "job.failed",
           botId: who.botId,
           text: `A turn failed (${event.data.code}): ${event.data.message.slice(0, 280)}`,
-          data: { room: who.room, sessionId: ctx.session.id },
+          // `turn`: the thread shows this from its own stream; the feed keeps it for the Activity panel.
+          data: { room: who.room, sessionId: ctx.session.id, turn: true },
         }),
       );
     },

@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { confidenceFloor, jevEnabled, judge, type Judgement, spent } from "../jev";
 import { probabilityOf, readVerdict } from "../jev-watch";
-import { customEndpoint, endpointModel, modelForEffort } from "../models";
+import { customEndpoint, endpointModel, modelForEffort, withGatewayOptions } from "../models";
 import { chargeUsage, reportedCost } from "../spend";
 import { nearest } from "./rank";
 import {
@@ -527,6 +527,7 @@ export const modelExtract: Extract = async (input, existing, fields) => {
   const result = await generateText({
     model,
     output: Output.object({ schema: OPERATIONS_SCHEMA }),
+    providerOptions: withGatewayOptions(),
     system: SYSTEM[input.mode],
     prompt: [
       "# Already remembered",

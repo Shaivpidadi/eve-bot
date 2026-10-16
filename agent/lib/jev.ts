@@ -2,6 +2,7 @@ import { experimental_decide as decide, type Experimental_DecisionQuestion as Ev
 
 import { chargeUsage, reportedCost } from "./spend";
 import type { Usage } from "./usage";
+import { withGatewayOptions } from "./models";
 
 /**
  * Jev: small decisions, for a tenth of a cent.
@@ -140,6 +141,7 @@ export async function judge<const QUESTIONS extends Record<string, EvaluationQue
       model: process.env.BOT_JEV_MODEL?.trim() || DEFAULT_MODEL,
       state: state as never,
       questions,
+      providerOptions: withGatewayOptions(),
       maxRetries: 0,
       abortSignal: options.abortSignal ?? AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });

@@ -8,6 +8,7 @@ import {
 } from "eve/sandbox/provider";
 
 import { COMPUTER_NAME } from "./computer";
+import { type ComputerProviderName, readMachineRecord, writeMachineRecord } from "./machine";
 
 /**
  * One computer for the whole team, on eve's per-session sandboxes.
@@ -31,16 +32,8 @@ import { COMPUTER_NAME } from "./computer";
  * The console reaches the machine by the recorded native name (see
  * `computer/control.ts`).
  */
-export type ComputerProviderName = "vercel" | "docker" | "microsandbox";
-
-export interface MachineRecord {
-  readonly provider: ComputerProviderName;
-  /** The built-in provider's own state for the machine: what it needs to reconnect. */
-  readonly state: SandboxPreparedArtifact;
-  readonly at: string;
-}
-
-const RECORD_KEY = `computer/${COMPUTER_NAME}/machine.json`;
+export type { ComputerProviderName, MachineRecord } from "./machine";
+export { machineName, readMachineRecord } from "./machine";
 
 type Inner = SandboxProviderImplementation<object | undefined, SandboxPreparedArtifact, SandboxPreparedArtifact, SandboxSession>;
 
@@ -49,28 +42,6 @@ export function innerImplementation(environment: object): Inner {
   const runtime = Reflect.get(environment, Symbol.for("eve.sandbox-provider-runtime")) as { implementation?: Inner } | undefined;
   if (runtime?.implementation === undefined) throw new Error("This eve version does not expose sandbox provider runtimes.");
   return runtime.implementation;
-}
-
-export async function readMachineRecord(): Promise<MachineRecord | null> {
-  const { readDoc } = await import("./store");
-  return (await readDoc<MachineRecord>(RECORD_KEY))?.value ?? null;
-}
-
-async function writeMachineRecord(record: MachineRecord): Promise<void> {
-  const { writeDoc } = await import("./store");
-  await writeDoc(RECORD_KEY, record);
-}
-
-/**
- * The machine's native name, for code that reaches it without eve: the recorded
- * Vercel Sandbox or Docker container, or the computer's own name for a machine
- * from before this record existed (which the Vercel provider adopts).
- */
-export async function machineName(): Promise<string> {
-  const record = await readMachineRecord().catch(() => null);
-  const state = (record?.state ?? null) as { sandboxName?: unknown; containerName?: unknown; name?: unknown } | null;
-  const name = state?.sandboxName ?? state?.containerName ?? state?.name;
-  return typeof name === "string" && name !== "" ? name : COMPUTER_NAME;
 }
 
 /** The calling session's view of the shared machine. */
@@ -97,7 +68,21 @@ export interface TeamComputerOptions {
   readonly environment: object;
   /** Why the machine cannot start here, if it cannot: checked before every start, as a plain message. */
   readonly check?: () => string | null;
+  /** What a new machine is opened with when the session asking gave nothing, as when a resume finds it gone. */
+  readonly open?: object;
+  /** Runs before a new machine is made, such as making the drive it mounts. */
+  readonly beforeStart?: () => Promise<void>;
+  /**
+   * Runs every time a session gets the machine, new or reconnected, before the
+   * session uses it; with the machine's native state. A failure is logged, not thrown.
+   */
+  readonly onMachine?: (sandbox: SandboxSession, state: SandboxPreparedArtifact) => Promise<void>;
+  /** A failed start that passes on its own, such as a drive the machine being replaced still holds: retried for a while. */
+  readonly startAgain?: (error: unknown) => boolean;
 }
+
+/** How long a start that `startAgain` recognises is retried, and how often. */
+export const START_RETRY = { forMs: 2 * 60_000, everyMs: 5_000 };
 
 /** Where a machine from before this record existed can be found, by provider. */
 function legacyState(provider: ComputerProviderName): SandboxPreparedArtifact | null {
@@ -119,19 +104,45 @@ export const TeamComputer = defineSandboxProvider<TeamComputerOptions, object | 
       const record = await readMachineRecord();
       const known = record !== null && record.provider === options.provider ? record.state : legacyState(options.provider);
       if (known !== null) {
+        let handle: SandboxProviderHandle<SandboxSession> | null = null;
         try {
-          const handle = await inner.resume(ctx, artifact, known);
-          if (record === null) await writeMachineRecord({ provider: options.provider, state: known, at: new Date().toISOString() });
-          return handle;
+          handle = await inner.resume(ctx, artifact, known);
         } catch {
           // Gone, or made for an environment this one cannot resume: make a new one below.
         }
+        if (handle !== null) {
+          if (record === null) await writeMachineRecord({ provider: options.provider, state: known, at: new Date().toISOString() });
+          return await ready(handle, known);
+        }
       }
+      await options.beforeStart?.();
       // As if the computer itself were the session: the built-in provider names the
       // machine from this id, so concurrent first starts converge on one machine.
-      const started = await inner.start({ ...ctx, session: { ...ctx.session, id: COMPUTER_NAME } }, open, artifact);
-      await writeMachineRecord({ provider: options.provider, state: started.state as SandboxPreparedArtifact, at: new Date().toISOString() });
-      return started.handle;
+      const started = await retried(() => inner.start({ ...ctx, session: { ...ctx.session, id: COMPUTER_NAME } }, open ?? options.open, artifact));
+      const state = started.state as SandboxPreparedArtifact;
+      await writeMachineRecord({ provider: options.provider, state, at: new Date().toISOString() });
+      return await ready(started.handle, state);
+    }
+
+    async function retried<T>(start: () => Promise<T>): Promise<T> {
+      const until = Date.now() + START_RETRY.forMs;
+      for (;;) {
+        try {
+          return await start();
+        } catch (error) {
+          if (options.startAgain?.(error) !== true || Date.now() >= until) throw error;
+          await new Promise((resolve) => setTimeout(resolve, START_RETRY.everyMs));
+        }
+      }
+    }
+
+    async function ready(handle: SandboxProviderHandle<SandboxSession>, state: SandboxPreparedArtifact) {
+      if (options.onMachine !== undefined) {
+        await options.onMachine(handle.sandbox, state).catch((error: unknown) => {
+          console.warn("[computer]", error instanceof Error ? error.message : String(error));
+        });
+      }
+      return handle;
     }
 
     return {

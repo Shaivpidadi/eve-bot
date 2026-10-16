@@ -7,7 +7,7 @@
  */
 
 /** How a connector proves who is calling: nothing, a pasted key, or OAuth the server runs itself (one click, no setup). */
-export type ConnectorKeyKind = "none" | "bearer" | "header" | "oauth";
+export type ConnectorKeyKind = "none" | "bearer" | "header" | "oauth" | "connect";
 
 /** When a person is asked before a Bot uses a connector's tools. */
 export type ConnectorGate = "none" | "writes" | "all";

@@ -99,8 +99,13 @@ Prefer your Vercel login to a password? **Settings → Deployment Protection →
 Vercel Authentication → All Deployments**. Standard Protection is not enough;
 it leaves the production address public.
 
-Hobby plans work. On Pro, `BOT_TICK_CRON="* * * * *"` runs the watchdog every
-minute instead of daily.
+Hobby plans work. On Pro, `BOT_WORKER=on` starts a background worker (a
+[Vercel Daemon](https://vercel.com/docs/daemons), already declared in
+`vercel.json`) that does the watchdog's work every 30 seconds, so due work,
+teammates' notes and idle browsers move with no console open; it costs about
+$1–2 a month in Blob operations. Leave it off on Hobby, where it would use up
+Vercel Blob's monthly operations within hours. Without it, `BOT_TICK_CRON="* * * * *"`
+on Pro runs the watchdog every minute instead of daily.
 
 ### Standalone
 
@@ -113,9 +118,9 @@ npm run setup                 # pick Standalone; writes .env
 npm run build && npm start    # http://localhost:3000/bot
 ```
 
-`npm start` runs the agent and the console as one service, provisions the
-computer's Docker image on first run (a few minutes, with Chrome and a small
-desktop), and stops the computer when it stops. Keep `.data/`,
+`npm start` runs the agent and the console as one service, builds the
+computer's Docker image from `agent/sandbox/Dockerfile` on first run (a few
+minutes, with Chrome and a small desktop), and stops the computer when it stops. Keep `.data/`,
 `.eve/.workflow-data/`, and the `bot-computer` Docker volume on storage that
 survives a restart.
 
@@ -180,6 +185,15 @@ client, and the token is kept sealed per workspace so every Bot and every
 routine can use it. GitHub and a documentation source are added by name, and
 any MCP server by address; a custom server that needs OAuth is detected when
 it is added.
+
+On Vercel, a connector can sign in through [Vercel Connect](https://vercel.com/docs/connect)
+instead: make one with `vercel connect create linear --name acme-linear` and
+`vercel connect attach linear/acme-linear`, then add a custom server with
+**Sign in through Vercel Connect** and that UID. Vercel keeps the token (none
+is stored, exported or backed up here), one sign-in serves the workspace, and
+signing out from the connector's page ends the grant at Vercel too. Grants
+belong to one environment: a production sign-in is not seen by previews or
+`vercel dev`.
 
 Each connector has its own page: its account, every tool with a switch and a
 read-or-change tag, when a person is asked first, and the facts about it.

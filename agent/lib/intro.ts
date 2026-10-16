@@ -6,6 +6,7 @@ import { spent } from "./jev";
 import { extractionModel, extractionModelId } from "./memory/capture";
 import { chargeUsage, reportedCost } from "./spend";
 import type { Bot } from "./types";
+import { withGatewayOptions } from "./models";
 
 const INTRO = z.object({
   hello: z.string().min(1).max(240).describe("One or two sentences, first person, in the voice the persona describes: who it is and what to hand it."),
@@ -25,6 +26,7 @@ export async function writeIntro(bot: Bot): Promise<Bot["intro"]> {
   const result = await generateText({
     model: extractionModel(),
     output: Output.object({ schema: INTRO }),
+    providerOptions: withGatewayOptions(),
     system:
       "You write the first thing a new AI teammate says in its empty chat thread, and three jobs to try. Plain words, no emoji, no exclamation marks, nothing it cannot do. It works in a browser and a shell on a shared computer, and asks before anything is sent or changed.",
     prompt: [`Name: ${bot.name}`, `Job: ${bot.role}`, "How it works:", bot.persona.slice(0, 2_000)].join("\n"),

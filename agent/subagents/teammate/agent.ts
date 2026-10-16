@@ -3,7 +3,7 @@ import { defineAgent, defineDynamic } from "eve";
 
 import type { DynamicResolveContext } from "eve";
 
-import { customEndpoint, effortInBrief, endpointModel, modelForEffort, reasoningFor, tokenLimits } from "../../lib/models";
+import { customEndpoint, effortInBrief, endpointModel, gatewayModelOptions, type GatewayOptions, modelForEffort, reasoningFor, tokenLimits } from "../../lib/models";
 
 /** The brief is the first message a teammate receives. */
 function briefText(messages: readonly ModelMessage[]): string {
@@ -57,6 +57,12 @@ async function refuseStoppedRun(event: unknown, ctx: DynamicResolveContext): Pro
  * `BOT_TEAMMATE_REASONING` sets reasoning depth for every model, and the cost
  * limit is the backstop for a runaway loop.
  */
+/** The job's model, with AI Gateway's data controls when any are set (see `gatewayOptions`). */
+function selection(model: string): string | { readonly model: string; readonly modelOptions?: { readonly providerOptions: GatewayOptions } } {
+  const options = gatewayModelOptions();
+  return options.modelOptions === undefined ? model : { model, ...options };
+}
+
 export default defineAgent({
   description:
     "Does the actual work of a job end to end: research, browser sessions, files, and drafts. Give it the full brief; it cannot see this conversation.",
@@ -64,10 +70,10 @@ export default defineAgent({
     events:
       endpoint === null
         ? {
-            "turn.started": (_event, ctx) => modelFor(ctx),
+            "turn.started": (_event, ctx) => selection(modelFor(ctx)),
             "step.started": async (event, ctx) => {
               await refuseStoppedRun(event, ctx);
-              return modelFor(ctx);
+              return selection(modelFor(ctx));
             },
           }
         : {

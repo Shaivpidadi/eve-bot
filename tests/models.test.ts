@@ -70,3 +70,55 @@ describe("models", () => {
     expect(custom.tokenLimits("hq")).toEqual({ maxInputTokensPerSession: false, maxOutputTokensPerSession: 2_000_000 });
   });
 });
+
+describe("AI Gateway data controls", () => {
+  it("asks for nothing unless a control is set, and never on a custom endpoint", async () => {
+    const { gatewayOptions } = await import("../agent/lib/models");
+    expect(gatewayOptions({})).toBeNull();
+    expect(gatewayOptions({ BOT_ZDR: "0", BOT_INFERENCE_REGION: "" })).toBeNull();
+    expect(gatewayOptions({ BOT_ZDR: "1", BOT_MODEL_BASE_URL: "http://localhost:11434/v1" })).toBeNull();
+  });
+
+  it("asks for Zero Data Retention and a region in Gateway's own shape", async () => {
+    const { gatewayOptions } = await import("../agent/lib/models");
+    expect(gatewayOptions({ BOT_ZDR: "1" })).toEqual({ gateway: { zeroDataRetention: true } });
+    expect(gatewayOptions({ BOT_INFERENCE_REGION: "US" })).toEqual({ gateway: { inferenceRegion: { scope: "zone", geoRegion: "us" } } });
+    expect(gatewayOptions({ BOT_ZDR: "true", BOT_INFERENCE_REGION: "us" })).toEqual({
+      gateway: { zeroDataRetention: true, inferenceRegion: { scope: "zone", geoRegion: "us" } },
+    });
+    // Not a region name: left out rather than sent.
+    expect(gatewayOptions({ BOT_INFERENCE_REGION: "us; drop" })).toBeNull();
+  });
+
+  it("merges into a call's own provider options and sits next to eve's model", async () => {
+    vi.stubEnv("BOT_ZDR", "1");
+    vi.stubEnv("BOT_MODEL_BASE_URL", "");
+    const { gatewayModelOptions, withGatewayOptions } = await import("../agent/lib/models");
+    expect(withGatewayOptions({ openai: { dimensions: 512 } })).toEqual({ openai: { dimensions: 512 }, gateway: { zeroDataRetention: true } });
+    expect(gatewayModelOptions()).toEqual({ modelOptions: { providerOptions: { gateway: { zeroDataRetention: true } } } });
+    vi.unstubAllEnvs();
+  });
+});
+
+describe("explainGatewayError", () => {
+  it("says plainly when a Gateway budget ran out, or no provider fits the data controls", async () => {
+    const { explainGatewayError } = await import("../agent/lib/models");
+    expect(explainGatewayError('402 {"error":{"message":"Budget exceeded","type":"quota_for_entity_exceeded"}}')).toMatchObject({ kind: "budget" });
+    const none = explainGatewayError("400 no_providers_available", { BOT_ZDR: "1", BOT_INFERENCE_REGION: "us" });
+    expect(none).toMatchObject({ kind: "no-providers" });
+    expect(none?.text).toContain("Zero Data Retention (BOT_ZDR) and inference in US (BOT_INFERENCE_REGION)");
+    expect(explainGatewayError("400 no_providers_available", {})?.text).toContain("right now");
+    // As Gateway actually answers ZDR with no compliant provider (seen live).
+    const live = explainGatewayError("No ZDR (Zero Data Retention) providers or ZDR-attested BYOK credentials available for model: nvidia/nemotron-3.5-lightning-free. Providers considered: nvidia", { BOT_ZDR: "1" });
+    expect(live?.kind).toBe("no-providers");
+    expect(live?.text).toContain("nvidia/nemotron-3.5-lightning-free with Zero Data Retention (BOT_ZDR)");
+    const region = explainGatewayError("No provider for nvidia/nemotron-3.5-lightning-free supports the requested inference region. Providers considered: nvidia (scope=zone, geoRegion=us).", { BOT_INFERENCE_REGION: "us" });
+    expect(region?.kind).toBe("no-providers");
+    expect(region?.text).toContain("nvidia/nemotron-3.5-lightning-free with inference in US (BOT_INFERENCE_REGION)");
+    // A text-only model handed a screenshot (seen live from stealth/cat-jam in a browser job).
+    const images = explainGatewayError("GatewayInvalidRequestError: This model does not support image or file input. Remove it and retry.");
+    expect(images?.kind).toBe("no-images");
+    expect(images?.text).toContain("BOT_TEAMMATE_MODEL");
+    expect(explainGatewayError("fetch failed")).toBeNull();
+  });
+});

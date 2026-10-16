@@ -13,6 +13,18 @@ of it; these are the ones that matter.
 | `BOT_HQ_MODEL` | pin HQ to one model |
 | `BOT_MODEL_PRICES` | `model=in/out` USD per million tokens, so spend caps hold off Gateway; OpenRouter is read automatically |
 | `BOT_JEV` / `BOT_JEV_MODEL` / `BOT_JEV_CONFIDENCE` | the decision model behind memory and the browser gate; `off` disables it (see [Development](development.md#a-second-opinion-on-small-decisions)) |
+| `BOT_ZDR` | `1` asks AI Gateway for Zero Data Retention on every call: only providers with a no-retention agreement serve it (Pro and Enterprise; see [Safety](safety.md#data-controls)) |
+| `BOT_INFERENCE_REGION` | `us` keeps inference in that region; Gateway fails a call it cannot serve there rather than run it elsewhere |
+
+Free models are fine for trying things, with limits (checked 16 Oct 2026). On AI
+Gateway, `nvidia/nemotron-3.5-lightning-free` and `stealth/cat-jam` cost nothing
+and both run HQ, Bots and the shell. Neither takes images, so the browser fails
+when a step sends it a screenshot (the thread says so). Neither can extract
+memories either: Nemotron's answers do not fit the schema, and Cat Jam refuses
+the structured request. Keep memory on a paid quick model (`BOT_MEMORY_MODEL`)
+or off. Free models offer no Zero Data Retention, and a stealth model can go
+away without notice. Vercel's Token Pass (Pro, early access) is the cheaper
+paid option: $30 buys $80 of usage on the models it covers.
 
 ## Spend
 
@@ -27,6 +39,8 @@ of it; these are the ones that matter.
 | Variable | Does |
 | --- | --- |
 | `BOT_COMPUTER` | `vercel` (default) or `local` |
+| `BOT_COMPUTER_IMAGE` | where the computer's software comes from: unset, local builds `agent/sandbox/Dockerfile` and Vercel installs it on first boot; a Vercel Container Registry image built from that Dockerfile (`vercel vcr build docker agent/sandbox --push`, linux/amd64) or any OCI image locally; `default` for eve's base image and the first-boot install |
+| `BOT_COMPUTER_DRIVE` / `BOT_COMPUTER_DRIVE_GB` | Vercel only: `on` keeps the team's work and browser profiles on a [Vercel Drive](https://vercel.com/docs/vercel-sandbox/drives) named after the computer, so a lost machine loses nothing and its replacement mounts the same drive (sign-ins included); backups then run hourly as a copy kept elsewhere. Size in GB, Vercel's default when unset. A machine from before mounts it from its next start |
 | `BOT_COMPUTER_LOCAL_BIND` | where a local computer's live view is published; `127.0.0.1` by default |
 | `BOT_SEARCH_PROVIDER` / `BOT_SEARCH_URL` / `BOT_SEARCH_API_KEY` | web search on your own endpoint: `searxng`, `brave`, `tavily`, `exa` |
 | `BOT_SANDBOX_ALLOW_DOMAINS` / `BOT_BROWSER_ALLOWED_DOMAINS` | fence the computer and the browser |
@@ -52,6 +66,7 @@ of it; these are the ones that matter.
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
+| `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | Vercel Pro, production: `on` runs the background worker (`daemon/`, a [Vercel Daemon](https://vercel.com/docs/daemons) that `vercel.json` declares and that idles while this is off), which asks the app for the watchdog's work every `30` seconds with its OIDC token, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. About 3 Vercel Blob operations a pass, roughly $1–2 a month; **never on Hobby**, whose 2,000 monthly Blob operations it would use up within hours (Vercel then blocks the store for 30 days). Redeploy after changing it |
 | `BOT_TICK_ON_START` | `off` stops a standalone server sweeping for stranded jobs a minute after it starts |
 | `BOT_WORKFLOW_WORLD` | a shared Workflow world package for a standalone server, such as `@workflow/world-postgres` (with `WORKFLOW_POSTGRES_URL`), so conversations survive rebuilds; experimental, see `docs/decisions/0002-workflow-world.md` |
 | `BOT_BUILD_ID` | overrides the build id leases are stamped with (see `docs/safety.md`, run fencing) |

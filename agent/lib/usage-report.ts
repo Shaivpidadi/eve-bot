@@ -4,6 +4,7 @@ import { listJobs } from "./jobs";
 import type { Job } from "./types";
 import { gatewayAccount, type GatewayAccount } from "./gateway-account";
 import { dayOf, ledgerTotal, NO_USAGE, readLedger, type Usage } from "./usage";
+import { readHeartbeat } from "./worker";
 
 /**
  * The usage page: everything the workspace has spent, cut four ways, plus the
@@ -38,6 +39,8 @@ export interface UsageReport {
     readonly usage: Usage;
   }[];
   readonly updatedAt: string;
+  /** The background worker's last pass (see `worker.ts`), or null where none has ever run. */
+  readonly worker: { readonly at: string } | null;
 }
 
 const byCost = (left: { usage: Usage }, right: { usage: Usage }) =>
@@ -46,11 +49,12 @@ const byCost = (left: { usage: Usage }, right: { usage: Usage }) =>
 export async function usageReport(workspaceId: string, options: { days?: number; jobs?: number; now?: Date } = {}): Promise<UsageReport> {
   const now = options.now ?? new Date();
   const span = options.days ?? 30;
-  const [ledger, jobs, account, budget] = await Promise.all([
+  const [ledger, jobs, account, budget, heartbeat] = await Promise.all([
     readLedger(workspaceId),
     listJobs(workspaceId, { limit: 500 }),
     gatewayAccount(),
     budgetStatus(workspaceId, now),
+    readHeartbeat(),
   ]);
 
   const botIds = new Set([...Object.keys(ledger.bots), ...jobs.filter((job) => job.usage !== undefined).map((job) => job.botId)]);
@@ -96,5 +100,6 @@ export async function usageReport(workspaceId: string, options: { days?: number;
         usage: job.usage,
       })),
     updatedAt: ledger.updatedAt,
+    worker: heartbeat === null ? null : { at: heartbeat.at },
   };
 }

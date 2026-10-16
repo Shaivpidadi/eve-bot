@@ -4,7 +4,7 @@ import { defineSandbox, type SandboxSession } from "eve/sandbox";
 import { COMPUTER_PATHS } from "../lib/computer";
 import { AGENT_BROWSER_INSTALL, computerEnvironment, computerOpenOptions } from "../lib/computer-config";
 import { sandboxHands } from "../lib/hands";
-import { COMPUTER_SOFTWARE_REVISION } from "../lib/computer/script";
+import { COMPUTER_SCRIPT, COMPUTER_SOFTWARE_REVISION } from "../lib/computer/script";
 
 /**
  * The team's computer: one persistent machine that HQ, every Bot's thread, and
@@ -42,6 +42,10 @@ async function prepare(sandbox: SandboxSession): Promise<void> {
     // names its own sessions by it, and we always pass ours.
     await installAgentBrowser(sandbox as never, AGENT_BROWSER_INSTALL);
   } catch (error) {
+    // eve keeps what this machine looks like now as the template every new machine starts from.
+    // An install still running in the background would leave a package half unpacked in it, so
+    // it is stopped and dpkg left consistent; whatever it did not finish installs on first use.
+    await Promise.resolve(sandbox.run({ command: `${COMPUTER_SCRIPT} settle` })).catch(() => undefined);
     console.warn("Could not preinstall the computer's software; it will install on first use.", error instanceof Error ? error.message : error);
   }
 }

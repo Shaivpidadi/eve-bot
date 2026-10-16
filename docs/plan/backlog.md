@@ -329,3 +329,7 @@ what a good persona is.
 ## What's next
 
 Every track above is done or parked. New work goes here.
+
+- **Vercel Ship SF (Oct 2026)**: a prebuilt computer image, the computer on a Vercel Drive,
+  Daemons for background work, Vercel Connect and event-driven Bots, AI Gateway controls.
+  Tracked in [ship-26.md](ship-26.md).

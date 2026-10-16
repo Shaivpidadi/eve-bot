@@ -1,0 +1,46 @@
+# Builds the team computer's image (agent/sandbox/Dockerfile) when it or the
+# computer's installer changes, for linux/amd64 as Vercel Sandbox runs it. It
+# checks the image still builds: Chrome's download, the package names. Nothing
+# is pushed; publishing to Vercel Container Registry is done by hand, see
+# docs/configuration.md (BOT_COMPUTER_IMAGE).
+name: Computer image
+
+on:
+  pull_request:
+    paths:
+      - agent/sandbox/Dockerfile
+      - agent/lib/computer/script.ts
+      - .github/workflows/computer-image.yml
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - agent/sandbox/Dockerfile
+      - agent/lib/computer/script.ts
+      - .github/workflows/computer-image.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: computer-image-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build --platform linux/amd64 -t bot-computer:ci agent/sandbox
+
+      - name: Check the software is there
+        run: |
+          docker run --rm --platform linux/amd64 --entrypoint bash bot-computer:ci -c '
+            for b in google-chrome Xvnc websockify xdotool xdpyinfo openbox tint2 pcmanfm xfce4-terminal dbus-daemon xsetroot xauth iptables nft agent-browser; do
+              command -v "$b" >/dev/null || { echo "missing: $b"; exit 1; }
+            done
+            dpkg -s google-chrome-stable | grep -q "^Status: install ok installed"
+            agent-browser --version'
