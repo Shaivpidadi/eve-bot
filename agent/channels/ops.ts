@@ -28,6 +28,7 @@ import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
+import { isProjectWorker, workerTick } from "../lib/worker";
 import { sessionIsGone } from "../lib/gone";
 import { worldIsLocal } from "../lib/world";
 import { eventsOf, foldUntil } from "../lib/branch";
@@ -374,6 +375,19 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (!(await isInternal(request))) return json({ error: "not found" }, 404);
       waitUntil(deliverNotes(sendInto(from, attachSession)).catch(() => 0));
       return json({ flushing: true }, 202);
+    }),
+
+    /**
+     * The background worker's pass (see lib/worker.ts): the watchdog's work, asked
+     * for every 30 seconds by this project's own Vercel Daemon, or by the server.
+     */
+    POST("/bot/v1/internal/tick", async (request, { attachSession, from }) => {
+      if (!(await isProjectWorker(request)) && !(await isInternal(request))) return json({ error: "not found" }, 404);
+      const outcome = await workerTick(sendInto(from, attachSession));
+      if (outcome.dispatch.due > 0 || outcome.notes > 0) {
+        console.log(`[bot] worker: ${outcome.dispatch.due} due, ${outcome.dispatch.dispatched} dispatched, ${outcome.notes} notes, ${outcome.dispatch.ms}ms`);
+      }
+      return json({ ok: true, ...outcome.dispatch, notes: outcome.notes, slow: outcome.slow });
     }),
 
     POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params, waitUntil }) => {
