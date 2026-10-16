@@ -3,6 +3,7 @@ import type { ToolContext } from "eve/tools";
 import { record } from "./activity";
 import { COMPUTER_NAME, COMPUTER_PATHS } from "./computer";
 import { computerMode, localComputer } from "./computer-config";
+import { bindDrive, claimDrive, driveWanted, type DriveBinding } from "./computer-drive";
 import { currentKind, sandboxHands, type ComputerIo, type HandsKindName } from "./hands";
 import { sessionBinding } from "./computer/screens";
 import { operator } from "./session";
@@ -20,6 +21,11 @@ import { deleteDoc, readBytes, readDoc, writeBytes, writeDoc } from "./store";
  *
  * A marker file on the computer names the backup generation it holds. A machine
  * without the marker is a replacement; a machine with one is the original.
+ *
+ * With a drive (`BOT_COMPUTER_DRIVE`, see `computer-drive.ts`) the drive holds the
+ * work and a replacement machine mounts it, so nothing restores over it: the
+ * latest backup is restored once, onto a drive that is new, and the backups
+ * become an hourly copy kept elsewhere.
  */
 
 type Computer = Awaited<ReturnType<ToolContext["getSandbox"]>>;
@@ -55,7 +61,7 @@ const ARCHIVE_PATH = `${PRIVATE_DIR}/backup.tgz`;
 const RESTORE_PATH = `${PRIVATE_DIR}/restore.tgz`;
 const PRIVATE_DIR_COMMAND = `mkdir -p ${PRIVATE_DIR} && chmod 700 ${PRIVATE_DIR}`;
 
-const BACKUP_EVERY_MS = Number(process.env.BOT_BACKUP_EVERY_MINUTES ?? 10) * 60_000;
+const BACKUP_EVERY_MS = Number(process.env.BOT_BACKUP_EVERY_MINUTES ?? (driveWanted() ? 60 : 10)) * 60_000;
 const MAX_ARCHIVE_BYTES = Number(process.env.BOT_BACKUP_MAX_MB ?? 512) * 1024 * 1024;
 /** How long one process trusts a restore check before looking again. */
 const VERIFIED_FOR_MS = 60_000;
@@ -175,23 +181,42 @@ async function currentGeneration(computer: Computer): Promise<string | null> {
 }
 
 async function restoreIfReplaced(ctx: ToolContext): Promise<void> {
+  let drive: DriveBinding | null = null;
+  if (driveWanted()) {
+    try {
+      drive = await bindDrive(await ctx.getSandbox());
+    } catch (error) {
+      await noteFailure(ctx, `The computer's drive is not in use (${message(error)}), so new work is kept only by the backups.`);
+    }
+    if (drive !== null && !drive.fresh) {
+      verifiedAt = Date.now();
+      return;
+    }
+  }
+  if ((await restoreFromBackup(ctx)) && drive?.fresh === true) {
+    await claimDrive(await ctx.getSandbox()).catch((error: unknown) => noteFailure(ctx, `Could not mark the computer's drive: ${message(error)}`));
+  }
+}
+
+/** Restores the latest backup onto a replacement machine. False when that failed (reported in the feed). */
+async function restoreFromBackup(ctx: ToolContext): Promise<boolean> {
   try {
     const manifest = (await readDoc<Manifest>(MANIFEST_KEY))?.value ?? null;
     if (manifest === null) {
       verifiedAt = Date.now();
-      return;
+      return true;
     }
     const computer = await ctx.getSandbox();
     if ((await currentGeneration(computer)) !== null) {
       verifiedAt = Date.now();
-      return;
+      return true;
     }
     const arch = await architecture(computer);
     const kind = currentKind();
     if (!restoresOnto(manifest, kind.name)) {
       verifiedAt = Date.now();
       await noteFailure(ctx, `Skipped restoring the computer: its backup from ${manifest.at} was taken on ${manifest.kind}, and this computer is ${kind.label}.`);
-      return;
+      return true;
     }
     if (manifest.arch !== undefined && arch !== null && arch !== manifest.arch) {
       // Programs in the archive would not run here; start clean instead of half-broken.
@@ -200,7 +225,7 @@ async function restoreIfReplaced(ctx: ToolContext): Promise<void> {
         ctx,
         `Skipped restoring the computer: its backup from ${manifest.at} was taken on ${manifest.arch}, and this computer is ${arch}.`,
       );
-      return;
+      return true;
     }
 
     const archive = await readBytes(manifest.archiveKey);
@@ -218,8 +243,10 @@ async function restoreIfReplaced(ctx: ToolContext): Promise<void> {
       kind: "computer.restored",
       text: `The computer was replaced, so its files were restored from the backup taken ${manifest.at}.`,
     });
+    return true;
   } catch (error) {
     await noteFailure(ctx, `Could not restore the computer from its backup: ${message(error)}`);
+    return false;
   }
 }
 

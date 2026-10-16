@@ -68,6 +68,15 @@ export interface TeamComputerOptions {
   readonly environment: object;
   /** Why the machine cannot start here, if it cannot: checked before every start, as a plain message. */
   readonly check?: () => string | null;
+  /** What a new machine is opened with when the session asking gave nothing, as when a resume finds it gone. */
+  readonly open?: object;
+  /** Runs before a new machine is made, such as making the drive it mounts. */
+  readonly beforeStart?: () => Promise<void>;
+  /**
+   * Runs every time a session gets the machine, new or reconnected, before the
+   * session uses it; with the machine's native state. A failure is logged, not thrown.
+   */
+  readonly onMachine?: (sandbox: SandboxSession, state: SandboxPreparedArtifact) => Promise<void>;
 }
 
 /** Where a machine from before this record existed can be found, by provider. */
@@ -90,19 +99,33 @@ export const TeamComputer = defineSandboxProvider<TeamComputerOptions, object | 
       const record = await readMachineRecord();
       const known = record !== null && record.provider === options.provider ? record.state : legacyState(options.provider);
       if (known !== null) {
+        let handle: SandboxProviderHandle<SandboxSession> | null = null;
         try {
-          const handle = await inner.resume(ctx, artifact, known);
-          if (record === null) await writeMachineRecord({ provider: options.provider, state: known, at: new Date().toISOString() });
-          return handle;
+          handle = await inner.resume(ctx, artifact, known);
         } catch {
           // Gone, or made for an environment this one cannot resume: make a new one below.
         }
+        if (handle !== null) {
+          if (record === null) await writeMachineRecord({ provider: options.provider, state: known, at: new Date().toISOString() });
+          return await ready(handle, known);
+        }
       }
+      await options.beforeStart?.();
       // As if the computer itself were the session: the built-in provider names the
       // machine from this id, so concurrent first starts converge on one machine.
-      const started = await inner.start({ ...ctx, session: { ...ctx.session, id: COMPUTER_NAME } }, open, artifact);
-      await writeMachineRecord({ provider: options.provider, state: started.state as SandboxPreparedArtifact, at: new Date().toISOString() });
-      return started.handle;
+      const started = await inner.start({ ...ctx, session: { ...ctx.session, id: COMPUTER_NAME } }, open ?? options.open, artifact);
+      const state = started.state as SandboxPreparedArtifact;
+      await writeMachineRecord({ provider: options.provider, state, at: new Date().toISOString() });
+      return await ready(started.handle, state);
+    }
+
+    async function ready(handle: SandboxProviderHandle<SandboxSession>, state: SandboxPreparedArtifact) {
+      if (options.onMachine !== undefined) {
+        await options.onMachine(handle.sandbox, state).catch((error: unknown) => {
+          console.warn("[computer]", error instanceof Error ? error.message : String(error));
+        });
+      }
+      return handle;
     }
 
     return {

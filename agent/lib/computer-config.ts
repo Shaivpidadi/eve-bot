@@ -6,6 +6,7 @@ import { DockerSandbox } from "eve/sandbox/docker";
 import { MicrosandboxSandbox } from "eve/sandbox/microsandbox";
 import { VercelSandbox } from "eve/sandbox/vercel";
 
+import { attachDrive, bindDrive, driveMounts, driveWanted, ensureDrive } from "./computer-drive";
 import { TeamComputer } from "./team-computer";
 
 /**
@@ -92,7 +93,25 @@ export function computerEnvironment(prepare: (sandbox: SandboxSession) => Promis
       timeout: minutes * 60_000,
     }),
     check: vercelCredentialsError,
+    ...(driveWanted() ? { open: computerOpenOptions(), beforeStart: ensureDrive, onMachine: onDriveMachine } : {}),
   });
+}
+
+/** Machines named here already carry the drive (or were asked to from their next start). */
+const attached = new Set<string>();
+
+/**
+ * Every time a session gets the Vercel computer with a drive: a machine from
+ * before the drive is given it (it mounts from its next start), and the work
+ * folders are bound from it (see `computer-drive.ts`).
+ */
+async function onDriveMachine(sandbox: SandboxSession, state: unknown): Promise<void> {
+  const name = (state as { sandboxName?: unknown } | null)?.sandboxName;
+  if (typeof name === "string" && !attached.has(name)) {
+    if (await attachDrive(name)) console.log(`[computer] ${name} will mount its drive from its next start.`);
+    attached.add(name);
+  }
+  await bindDrive(sandbox);
 }
 
 /**
@@ -118,9 +137,12 @@ export function computerImage(
   return env.BOT_COMPUTER === "local" ? { kind: "dockerfile" } : { kind: "default" };
 }
 
-/** Options the machine is opened with: local providers take their network policy here. */
+/** Options the machine is opened with: local providers take their network policy here, and a Vercel computer its drive. */
 export function computerOpenOptions(): object | undefined {
-  if (computerMode() !== "local") return undefined;
+  if (computerMode() !== "local") {
+    const mounts = driveMounts();
+    return mounts === undefined ? undefined : { mounts };
+  }
   return localComputer() === "docker" ? { networkPolicy: allow.length > 0 ? "deny-all" : "allow-all" } : { networkPolicy };
 }
 
