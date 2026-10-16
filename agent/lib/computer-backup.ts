@@ -5,6 +5,7 @@ import { COMPUTER_NAME, COMPUTER_PATHS } from "./computer";
 import { computerMode, localComputer } from "./computer-config";
 import { bindDrive, claimDrive, driveWanted, type DriveBinding } from "./computer-drive";
 import { currentKind, sandboxHands, type ComputerIo, type HandsKindName } from "./hands";
+import { sandboxIo } from "./computer/runtime";
 import { sessionBinding } from "./computer/screens";
 import { operator } from "./session";
 import { deleteDoc, readBytes, readDoc, writeBytes, writeDoc } from "./store";
@@ -184,7 +185,7 @@ async function restoreIfReplaced(ctx: ToolContext): Promise<void> {
   let drive: DriveBinding | null = null;
   if (driveWanted()) {
     try {
-      drive = await bindDrive(await ctx.getSandbox());
+      drive = await bindDrive(sandboxIo(await ctx.getSandbox(), ctx.abortSignal));
     } catch (error) {
       await noteFailure(ctx, `The computer's drive is not in use (${message(error)}), so new work is kept only by the backups.`);
     }
@@ -194,7 +195,7 @@ async function restoreIfReplaced(ctx: ToolContext): Promise<void> {
     }
   }
   if ((await restoreFromBackup(ctx)) && drive?.fresh === true) {
-    await claimDrive(await ctx.getSandbox()).catch((error: unknown) => noteFailure(ctx, `Could not mark the computer's drive: ${message(error)}`));
+    await claimDrive(sandboxIo(await ctx.getSandbox(), ctx.abortSignal)).catch((error: unknown) => noteFailure(ctx, `Could not mark the computer's drive: ${message(error)}`));
   }
 }
 

@@ -111,7 +111,8 @@ async function onDriveMachine(sandbox: SandboxSession, state: unknown): Promise<
     if (await attachDrive(name)) console.log(`[computer] ${name} will mount its drive from its next start.`);
     attached.add(name);
   }
-  await bindDrive(sandbox);
+  const { sandboxIo } = await import("./computer/runtime");
+  await bindDrive(sandboxIo(sandbox));
 }
 
 /**

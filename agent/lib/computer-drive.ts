@@ -2,6 +2,7 @@ import { Drive, Sandbox as VercelSandbox } from "@vercel/sandbox";
 
 import { COMPUTER_NAME } from "./computer";
 import { COMPUTER_SCRIPT } from "./computer/script";
+import type { ComputerIo } from "./hands";
 
 /**
  * The team computer's work on a Vercel Drive (`BOT_COMPUTER_DRIVE=on`).
@@ -75,16 +76,21 @@ export interface DriveBinding {
   readonly bound: readonly string[];
 }
 
-interface Runs {
-  run(input: { command: string }): PromiseLike<{ exitCode: number; stdout: string; stderr: string }>;
+type Runs = Pick<ComputerIo, "run">;
+
+/** Brings the computer's own scripts up to date before using one (see `computer/runtime.ts`). */
+async function currentScripts(io: ComputerIo): Promise<void> {
+  const { ensureRuntime } = await import("./computer/runtime");
+  await ensureRuntime(io);
 }
 
 /**
  * Binds the work folders from the drive, idempotently; null on a machine that
  * has not mounted the drive yet (one made before it, until its next start).
  */
-export async function bindDrive(sandbox: Runs): Promise<DriveBinding | null> {
-  const result = await sandbox.run({ command: `${COMPUTER_SCRIPT} drive ${DRIVE_MOUNT}` });
+export async function bindDrive(io: ComputerIo, options: { ensure?: (io: ComputerIo) => Promise<void> } = {}): Promise<DriveBinding | null> {
+  await (options.ensure ?? currentScripts)(io);
+  const result = await io.run(`${COMPUTER_SCRIPT} drive ${DRIVE_MOUNT}`, { timeoutMs: 5 * 60_000 });
   const line = result.stdout.trim().split("\n").pop() ?? "";
   const answer = parseAnswer(line);
   if (answer?.ok === true) return { fresh: answer.fresh === true, bound: (answer.bound ?? "").split(" ").filter((name) => name !== "") };
@@ -101,7 +107,7 @@ function parseAnswer(line: string): { ok?: boolean; fresh?: boolean; bound?: str
 }
 
 /** Marks the drive as the team's copy of the work, so no backup restores over it again. */
-export async function claimDrive(sandbox: Runs): Promise<void> {
-  const result = await sandbox.run({ command: `sudo -n touch ${DRIVE_MOUNT}/.bot-drive` });
+export async function claimDrive(io: Runs): Promise<void> {
+  const result = await io.run(`sudo -n touch ${DRIVE_MOUNT}/.bot-drive`);
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || "could not mark the computer's drive");
 }
