@@ -804,6 +804,8 @@ export function buildTimeline(
   const fixtures = qaFixtureBots(activity);
   for (const event of activity) {
     if (event.botId != null && fixtures.has(event.botId)) continue;
+    // A failed turn of this thread is already on it, from its own stream (see agent/hooks/audit.ts).
+    if (event.data?.turn === true && event.data?.room === member.room) continue;
     // A thread that was started over shows nothing from before that moment.
     if (member.clearedAt !== null && event.at < member.clearedAt) continue;
     const jobRoom = event.jobId == null ? undefined : roomOf.get(event.jobId);
