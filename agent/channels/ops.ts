@@ -29,6 +29,7 @@ import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
 import { isProjectWorker, workerTick } from "../lib/worker";
+import { acceptTrigger, recentTriggers, TRIGGER_PATH, verifiedTrigger } from "../lib/triggers";
 import { sessionIsGone } from "../lib/gone";
 import { worldIsLocal } from "../lib/world";
 import { eventsOf, foldUntil } from "../lib/branch";
@@ -388,6 +389,34 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         console.log(`[bot] worker: ${outcome.dispatch.due} due, ${outcome.dispatch.dispatched} dispatched, ${outcome.notes} notes, ${outcome.dispatch.ms}ms`);
       }
       return json({ ok: true, ...outcome.dispatch, notes: outcome.notes, slow: outcome.slow });
+    }),
+
+    /**
+     * Events from connected apps, forwarded by Vercel Connect (see lib/triggers.ts).
+     * Only Connect's token for this project and environment gets in; each delivery
+     * is kept once before the answer, since Connect does not send it again.
+     */
+    POST(TRIGGER_PATH, async (request) => {
+      const body = await request.text();
+      if (!(await verifiedTrigger(request, body))) return new Response(null, { status: 401 });
+      try {
+        const { fresh, receipt } = await acceptTrigger(request.headers, body);
+        console.log(`[bot] trigger: ${receipt.provider} ${receipt.headers["linear-event"] ?? ""} ${receipt.id}${fresh ? "" : " (repeat)"}`);
+        return new Response(null, { status: 204 });
+      } catch {
+        return new Response(null, { status: 503 });
+      }
+    }),
+
+    /**
+     * The latest events connected apps sent, as received: deployment-wide, not
+     * per workspace, so only on a QA deployment until events are routed.
+     */
+    GET("/bot/v1/hooks/recent", async (request) => {
+      if (!qaEnabled()) return json({ error: "not found" }, 404);
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return json({ events: await recentTriggers() });
     }),
 
     POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params, waitUntil }) => {
