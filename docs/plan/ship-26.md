@@ -96,7 +96,7 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
 
 - `[done]` V0.4 **Connect spike**: one Connect connector (Linear) through `@vercel/connect/eve` in the teammate's
   connection set; confirm our `approval.request` / `approval.response` hooks still fire with Connect auth.
-  **Findings (16 Oct, `linear/eve-bot-linear` made with `vercel connect create linear` (MCP) + `attach`):** Linear's
+  **Findings (16 Oct, a Linear connector made with `vercel connect create linear` (MCP) + `attach`):** Linear's
   MCP connector has no app credential (`{type:"app"}` → `unresolved_token`), only per-subject grants, and a grant
   belongs to one environment (a production grant is invisible to a development OIDC token). Built as V4 rather than
   through `@vercel/connect/eve`'s `connect()` helper: our own `getToken` hook asks Connect for the workspace's grant
@@ -150,7 +150,7 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   Before: the last fresh Docker computer took about 3.5 min to appear, then failed its install. Docker reused layers
   from an earlier build of the same Dockerfile; a machine that never built it adds about 2.5 min once.
   (Free Nemotron stalled on a Gateway 500 before the job reached the computer; Cat Jam ran it.)
-- **Checked live, Vercel (16 Oct 2026, free `stealth/cat-jam`):** a brand-new computer (`bot-ship-img`) from the VCR
+- **Checked live, Vercel (16 Oct 2026, free `stealth/cat-jam`):** a brand-new computer (a fresh `BOT_COMPUTER_NAME`) from the VCR
   image was prepared and ran the shell step 26 s after asking, template included; on the warm machine Chrome was up
   8 s after a browser request. The page loaded (agent-browser on the machine reads the title "Example Domain").
   Before: first boot ran the apt and Chrome install, several minutes. The browser *job* did not finish on free
@@ -259,7 +259,7 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
 ### V7. Free models and Token Pass (F7) `[done]` (small)
 - `[done]` V7.1 Try `stealth/cat-jam` as `BOT_MEMORY_MODEL` locally with the existing capture eval; keep Nemotron for
   HQ and teammate (user preference). Record pass rate here.
-  **Result (16 Oct, the real extractor on 6 fixed exchanges, `scratchpad` eval):** Cat Jam 0/6, refusing every
+  **Result (16 Oct, the real extractor on 6 fixed exchanges, a one-off eval):** Cat Jam 0/6, refusing every
   structured request at once ("The stealth model could not complete the request"), though it answers plain text and
   tool calls; Nemotron 0/6 ("response did not match schema", no `responseFormat` support). Neither can run memory;
   memory stays on a paid quick model or off locally. Nemotron stays for HQ and teammate locally.
