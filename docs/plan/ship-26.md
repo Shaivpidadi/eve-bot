@@ -174,19 +174,19 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   the Bot's shell (now 0700, test added), and a replacement started inside the ~11 s release window failed with 409
   (retry, unit-tested; the window could not be hit on purpose again). Unit: `tests/computer-drive.test.ts`.
 
-### V3. Background work on Vercel Daemons (F3) `[to-do]` (production only; depends on V0.3)
-- `[to-do]` V3.1 `daemon/` entry + Dockerfile: a loop every 30 s doing `dispatchDue`, `deliverOutbox`, `reapIdleScreens`,
-  `chargeComputerRuntime`, `repairAllReservations` (the tick's work), with its own throttles and a graceful SIGTERM.
-- `[to-do]` V3.2 Delivery from a daemon: the outbox needs a channel `from()`; add an internal route the daemon calls with
-  the store-held internal secret (reuse `isInternal` from `lib/self.ts`) instead of importing eve channels.
-- `[to-do]` V3.3 `vercel.json` `daemons` block, opt-in via a documented switch; when no daemon runs, today's paths
-  (console polls, self-POST, tick cron, boot sweep) stay exactly as they are.
-- `[to-do]` V3.4 Health: the daemon writes a heartbeat doc; the console's Usage page shows "background worker: running /
-  last seen"; the tick logs a warning if the daemon is configured but silent.
-- `[to-do]` V3.5 Docs: configuration, README deploy section (production only, Hobby quota).
-- **Tests:** unit for the loop's step function with fakes; live: a job scheduled 2 minutes out on production with the
-  console closed wakes within 60 s.
-- **Done when:** with the daemon on, nothing depends on a console being open; with it off, behaviour is unchanged.
+### V3. Background work on Vercel Daemons (F3) `[done]` (production only, Pro only, `BOT_WORKER=on`)
+- `[done]` V3.1 `daemon/worker.mjs` + `Dockerfile`: a zero-dependency loop every 30 s (`BOT_WORKER_EVERY_SECONDS`),
+  backing off on failures, stopping on SIGTERM. The work itself stays in the app (`lib/worker.ts` `workerTick`: due
+  jobs, outbox, idle screens; budget repair and computer charges at most every 5 min), so the daemon never bundles
+  app code.
+- `[done]` V3.2 `POST /bot/v1/internal/tick`: open to the internal secret or a Vercel OIDC token for this project's
+  production environment (`isProjectWorker`, signature checked against Vercel's JWKS; tests sign real tokens).
+- `[done]` V3.3 Opt-in, as decided 16 Oct (option B): `vercel.json` always declares the daemon; it idles (stays up,
+  asleep) unless `BOT_WORKER=on`. Off, nothing calls in (checked on production: 0 ticks in 3 min).
+- `[done]` V3.4 Heartbeat `runtime/worker.json`, written at most once a minute or when work moved; the Usage page
+  says "running, last pass …" or "not seen for …". `[parked]` the tick warning when configured but silent.
+- `[done]` V3.5 Docs: configuration, `.env.example`, README deploy section (Pro only, ~$1–2/month, never Hobby).
+- **Checked live:** see V0.3 (a crashed job picked up 21 s later with no console; clean handover between deploys).
 
 ### V4. Vercel Connect as a connector auth kind (F4) `[to-do]` (depends on V0.4)
 - `[to-do]` V4.1 `connectors.ts`: auth kind `connect` (`{ connector: 'linear/<name>' }`), stored without secrets.
