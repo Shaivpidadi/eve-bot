@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { bindDrive, claimDrive, driveMounts, driveSize, driveWanted } from "../agent/lib/computer-drive";
@@ -140,5 +143,14 @@ describe("the team computer's hooks", () => {
     ]);
     expect(warn).toHaveBeenCalledWith("[computer]", "bind failed");
     expect((await readMachineRecord())?.state).toEqual({ sandboxName: "eve-sbx-vercel-1" });
+  });
+});
+
+describe("bot-computer drive", () => {
+  it("keeps the drive itself and the browser profiles on it away from a Bot's shell", async () => {
+    const source = readFileSync(path.resolve(import.meta.dirname, "../agent/lib/computer/script.ts"), "utf8");
+    const drive = /cmd_drive\(\) \{[^]*?\n\}/.exec(source)?.[0] ?? "";
+    expect(drive).toContain('sudo -n chown root:root "$mount" && sudo -n chmod 700 "$mount"');
+    expect(drive).toMatch(/\[ "\$name" = chrome \]; then sudo -n chmod 700 "\$src"/);
   });
 });

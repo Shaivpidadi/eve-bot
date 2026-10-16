@@ -775,7 +775,11 @@ cmd_drive() {
   local mount=$1 name src dst fresh=false bound=""
   [ -n "$mount" ] || fail args "expected the drive's mount point"
   mountpoint -q "$mount" || fail drive "no drive is mounted at $mount"
-  [ -e "$mount/.bot-drive" ] || fresh=true
+  # Only root reaches the drive itself; everyone else goes through the binds, which
+  # keep each folder's own access. Otherwise a Bot's shell could walk into the
+  # browser profiles here, past /workspace/.computer's 0700.
+  sudo -n chown root:root "$mount" && sudo -n chmod 700 "$mount" || fail drive "could not close $mount to everyone but root"
+  sudo -n test -e "$mount/.bot-drive" || fresh=true
   for name in shared bots downloads chrome; do
     if [ "$name" = chrome ]; then dst="$PROFILES"; else dst="/workspace/$name"; fi
     src="$mount/$name"
@@ -783,11 +787,13 @@ cmd_drive() {
     if mountpoint -q "$dst"; then bound="$bound $name"; continue; fi
     # A browser already running on these profiles keeps them until the machine restarts.
     if [ "$name" = chrome ] && pgrep -f -- "--user-data-dir=$PROFILES" >/dev/null 2>&1; then continue; fi
-    if [ ! -d "$src" ]; then
+    if ! sudo -n test -d "$src"; then
       sudo -n mkdir -p "$src" &&
         sudo -n chown "$(stat -c %u:%g "$dst")" "$src" &&
         sudo -n chmod "$(stat -c %a "$dst")" "$src" || fail drive "could not make $src on the drive"
     fi
+    # The profiles hold the team's sign-ins: the computer's user only, as the rest of its state.
+    if [ "$name" = chrome ]; then sudo -n chmod 700 "$src" || fail drive "could not close $src"; fi
     if [ -n "$(ls -A "$dst" 2>/dev/null)" ]; then
       sudo -n cp -a -n "$dst/." "$src/" && sudo -n find "$dst" -mindepth 1 -delete ||
         fail drive "could not move $dst onto the drive"
