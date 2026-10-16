@@ -113,9 +113,9 @@ npm run setup                 # pick Standalone; writes .env
 npm run build && npm start    # http://localhost:3000/bot
 ```
 
-`npm start` runs the agent and the console as one service, provisions the
-computer's Docker image on first run (a few minutes, with Chrome and a small
-desktop), and stops the computer when it stops. Keep `.data/`,
+`npm start` runs the agent and the console as one service, builds the
+computer's Docker image from `agent/sandbox/Dockerfile` on first run (a few
+minutes, with Chrome and a small desktop), and stops the computer when it stops. Keep `.data/`,
 `.eve/.workflow-data/`, and the `bot-computer` Docker volume on storage that
 survives a restart.
 

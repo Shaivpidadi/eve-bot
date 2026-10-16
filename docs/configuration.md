@@ -29,6 +29,7 @@ of it; these are the ones that matter.
 | Variable | Does |
 | --- | --- |
 | `BOT_COMPUTER` | `vercel` (default) or `local` |
+| `BOT_COMPUTER_IMAGE` | where the computer's software comes from: unset, local builds `agent/sandbox/Dockerfile` and Vercel installs it on first boot; a Vercel Container Registry image built from that Dockerfile (`vercel vcr build docker agent/sandbox --push`, linux/amd64) or any OCI image locally; `default` for eve's base image and the first-boot install |
 | `BOT_COMPUTER_LOCAL_BIND` | where a local computer's live view is published; `127.0.0.1` by default |
 | `BOT_SEARCH_PROVIDER` / `BOT_SEARCH_URL` / `BOT_SEARCH_API_KEY` | web search on your own endpoint: `searxng`, `brave`, `tavily`, `exa` |
 | `BOT_SANDBOX_ALLOW_DOMAINS` / `BOT_BROWSER_ALLOWED_DOMAINS` | fence the computer and the browser |

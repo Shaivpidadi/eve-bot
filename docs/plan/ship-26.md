@@ -99,7 +99,7 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
 - `[done]` V1.5 CI: build the computer image on PRs (no push); a release workflow pushes to VCR and records the digest.
   As built: `.github/workflows/computer-image.yml` builds it for linux/amd64 and checks the software when the Dockerfile
   or the installer changes. Publishing stays by hand (it needs a Vercel token in GitHub, which this repo does not hold).
-- `[to-do]` V1.6 Docs: `docs/configuration.md` (`BOT_COMPUTER_IMAGE`), `.env.example`, README "computer" section.
+- `[done]` V1.6 Docs: `docs/configuration.md` (`BOT_COMPUTER_IMAGE`), `.env.example`, README "computer" section.
 - **Tests:** unit for the config branch (image vs fallback); `tests/hands.test.ts` still green; build test of the Dockerfile in CI.
 - **Done when:** a fresh Docker computer and a fresh Vercel computer run a browser + shell job with no apt step, and the
   first job's start time is recorded here (before/after).
