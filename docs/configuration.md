@@ -16,6 +16,16 @@ of it; these are the ones that matter.
 | `BOT_ZDR` | `1` asks AI Gateway for Zero Data Retention on every call: only providers with a no-retention agreement serve it (Pro and Enterprise; see [Safety](safety.md#data-controls)) |
 | `BOT_INFERENCE_REGION` | `us` keeps inference in that region; Gateway fails a call it cannot serve there rather than run it elsewhere |
 
+Free models are fine for trying things, with limits (checked 16 Oct 2026). On AI
+Gateway, `nvidia/nemotron-3.5-lightning-free` and `stealth/cat-jam` cost nothing
+and both run HQ, Bots and the shell. Neither takes images, so the browser fails
+when a step sends it a screenshot (the thread says so). Neither can extract
+memories either: Nemotron's answers do not fit the schema, and Cat Jam refuses
+the structured request. Keep memory on a paid quick model (`BOT_MEMORY_MODEL`)
+or off. Free models offer no Zero Data Retention, and a stealth model can go
+away without notice. Vercel's Token Pass (Pro, early access) is the cheaper
+paid option: $30 buys $80 of usage on the models it covers.
+
 ## Spend
 
 | Variable | Does |

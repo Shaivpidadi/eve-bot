@@ -217,12 +217,16 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   recognised. Each failed turn now shows once in its thread (it showed twice before, from the stream and the feed).
   **Not checked live:** a Gateway budget running out (402), which needs a budget set in the dashboard.
 
-### V7. Free models and Token Pass (F7) `[to-do]` (small)
-- `[to-do]` V7.1 Try `stealth/cat-jam` as `BOT_MEMORY_MODEL` locally with the existing capture eval; keep Nemotron for
+### V7. Free models and Token Pass (F7) `[done]` (small)
+- `[done]` V7.1 Try `stealth/cat-jam` as `BOT_MEMORY_MODEL` locally with the existing capture eval; keep Nemotron for
   HQ and teammate (user preference). Record pass rate here.
+  **Result (16 Oct, the real extractor on 6 fixed exchanges, `scratchpad` eval):** Cat Jam 0/6, refusing every
+  structured request at once ("The stealth model could not complete the request"), though it answers plain text and
+  tool calls; Nemotron 0/6 ("response did not match schema", no `responseFormat` support). Neither can run memory;
+  memory stays on a paid quick model or off locally. Nemotron stays for HQ and teammate locally.
 - `[done]` V7.3 Name the problem when a text-only model meets the browser: map Gateway's "does not support image or
   file input" to "<model> can't see screenshots; the browser needs a vision model" (`explainGatewayError`).
-- `[to-do]` V7.2 Docs: free/cheap model options (Nemotron, Cat Jam: free, no ZDR, may disappear; Token Pass).
+- `[done]` V7.2 Docs: free/cheap model options (Nemotron, Cat Jam: free, no ZDR, may disappear; Token Pass).
 
 ### V8. Passport sign-in (F8) `[parked]` until someone on Enterprise asks
 - `[parked]` V8.1 `access.ts`: verified identity from `@vercel/passport` `getIdentity()` when present, replacing the
