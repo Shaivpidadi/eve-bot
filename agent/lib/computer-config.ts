@@ -6,7 +6,7 @@ import { DockerSandbox } from "eve/sandbox/docker";
 import { MicrosandboxSandbox } from "eve/sandbox/microsandbox";
 import { VercelSandbox } from "eve/sandbox/vercel";
 
-import { attachDrive, bindDrive, driveMounts, driveWanted, ensureDrive } from "./computer-drive";
+import { attachDrive, bindDrive, driveHeld, driveMounts, driveWanted, ensureDrive } from "./computer-drive";
 import { TeamComputer } from "./team-computer";
 
 /**
@@ -93,7 +93,7 @@ export function computerEnvironment(prepare: (sandbox: SandboxSession) => Promis
       timeout: minutes * 60_000,
     }),
     check: vercelCredentialsError,
-    ...(driveWanted() ? { open: computerOpenOptions(), beforeStart: ensureDrive, onMachine: onDriveMachine } : {}),
+    ...(driveWanted() ? { open: computerOpenOptions(), beforeStart: ensureDrive, onMachine: onDriveMachine, startAgain: driveHeld } : {}),
   });
 }
 

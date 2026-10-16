@@ -77,7 +77,12 @@ export interface TeamComputerOptions {
    * session uses it; with the machine's native state. A failure is logged, not thrown.
    */
   readonly onMachine?: (sandbox: SandboxSession, state: SandboxPreparedArtifact) => Promise<void>;
+  /** A failed start that passes on its own, such as a drive the machine being replaced still holds: retried for a while. */
+  readonly startAgain?: (error: unknown) => boolean;
 }
+
+/** How long a start that `startAgain` recognises is retried, and how often. */
+export const START_RETRY = { forMs: 2 * 60_000, everyMs: 5_000 };
 
 /** Where a machine from before this record existed can be found, by provider. */
 function legacyState(provider: ComputerProviderName): SandboxPreparedArtifact | null {
@@ -113,10 +118,22 @@ export const TeamComputer = defineSandboxProvider<TeamComputerOptions, object | 
       await options.beforeStart?.();
       // As if the computer itself were the session: the built-in provider names the
       // machine from this id, so concurrent first starts converge on one machine.
-      const started = await inner.start({ ...ctx, session: { ...ctx.session, id: COMPUTER_NAME } }, open ?? options.open, artifact);
+      const started = await retried(() => inner.start({ ...ctx, session: { ...ctx.session, id: COMPUTER_NAME } }, open ?? options.open, artifact));
       const state = started.state as SandboxPreparedArtifact;
       await writeMachineRecord({ provider: options.provider, state, at: new Date().toISOString() });
       return await ready(started.handle, state);
+    }
+
+    async function retried<T>(start: () => Promise<T>): Promise<T> {
+      const until = Date.now() + START_RETRY.forMs;
+      for (;;) {
+        try {
+          return await start();
+        } catch (error) {
+          if (options.startAgain?.(error) !== true || Date.now() >= until) throw error;
+          await new Promise((resolve) => setTimeout(resolve, START_RETRY.everyMs));
+        }
+      }
     }
 
     async function ready(handle: SandboxProviderHandle<SandboxSession>, state: SandboxPreparedArtifact) {

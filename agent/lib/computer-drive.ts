@@ -34,6 +34,14 @@ export function driveMounts(env: Readonly<Record<string, string | undefined>> = 
   return driveWanted(env) ? { [DRIVE_MOUNT]: { drive: DRIVE_NAME, mode: "read-write" as const } } : undefined;
 }
 
+/**
+ * A drive still attached to the machine being replaced: Vercel lets it go about
+ * ten seconds after that machine is deleted, so a start that meets it tries again.
+ */
+export function driveHeld(error: unknown): boolean {
+  return /already attached as read-write/i.test(error instanceof Error ? error.message : String(error));
+}
+
 /** `BOT_COMPUTER_DRIVE_GB`, in bytes, or undefined for Vercel's default size. */
 export function driveSize(env: Readonly<Record<string, string | undefined>> = process.env): number | undefined {
   const gb = Number(env.BOT_COMPUTER_DRIVE_GB);

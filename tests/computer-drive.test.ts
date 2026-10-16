@@ -154,3 +154,29 @@ describe("bot-computer drive", () => {
     expect(drive).toMatch(/\[ "\$name" = chrome \]; then sudo -n chmod 700 "\$src"/);
   });
 });
+
+describe("starting while the drive is still held", () => {
+  it("tries again until the machine being replaced lets the drive go", async () => {
+    vi.stubEnv("BOT_STORE", "memory");
+    const { TeamComputer, innerImplementation, START_RETRY } = await import("../agent/lib/team-computer");
+    const { driveHeld } = await import("../agent/lib/computer-drive");
+    Object.assign(START_RETRY, { everyMs: 1 });
+    let tries = 0;
+    const inner = {
+      prepare: async () => ({}),
+      resume: async () => {
+        throw new Error("gone");
+      },
+      start: async () => {
+        tries += 1;
+        if (tries < 3) throw new Error('Failed to open Vercel sandbox session "bot-computer": Status code 409 is not ok: Drive `bot-computer` is already attached as read-write to sandbox old.');
+        return { handle: { sandbox: {}, onRuntimeShutdown: async () => undefined }, state: { sandboxName: "eve-sbx-vercel-2" } };
+      },
+    };
+    const environment = { [Symbol.for("eve.sandbox-provider-runtime")]: { implementation: inner } };
+    const team = innerImplementation(TeamComputer.environment({ provider: "vercel", environment, startAgain: driveHeld }));
+    await team.resume({ session: { id: "s1" } } as never, {} as never, { team: true } as never);
+    expect(tries).toBe(3);
+    expect(driveHeld(new Error("Status code 500"))).toBe(false);
+  });
+});
