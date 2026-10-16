@@ -1,5 +1,5 @@
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWTVerifyGetKey } from "jose";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { isProjectWorker } from "../agent/lib/worker";
 
@@ -42,5 +42,27 @@ describe("isProjectWorker", () => {
   it("is never true off Vercel", async () => {
     const sign = await signer();
     expect(await isProjectWorker(asked(await sign({ project_id: "prj_mine", environment: "production" })), {}, keysFor)).toBe(false);
+  });
+});
+
+describe("workerTick", () => {
+  it("writes its heartbeat at most once a minute when nothing moved", async () => {
+    vi.stubEnv("BOT_STORE", "memory");
+    vi.resetModules();
+    const { store } = await import("../agent/lib/store");
+    const kv = store();
+    const put = kv.put.bind(kv);
+    let heartbeats = 0;
+    kv.put = (key, ...rest) => {
+      if (String(key).includes("runtime/worker.json")) heartbeats += 1;
+      return put(key, ...rest);
+    };
+    const { workerTick, readHeartbeat } = await import("../agent/lib/worker");
+    await workerTick(async () => undefined);
+    await workerTick(async () => undefined);
+    await workerTick(async () => undefined);
+    expect(heartbeats).toBe(1);
+    expect((await readHeartbeat())?.at).toBeTruthy();
+    vi.unstubAllEnvs();
   });
 });

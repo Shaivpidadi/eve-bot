@@ -21,6 +21,11 @@ import { deliverNotes } from "./teammail";
 const HEARTBEAT_KEY = "runtime/worker.json";
 /** The tick's slower work (a Vercel API call, a pass over every budget) runs at most this often. */
 const SLOW_EVERY_MS = 5 * 60_000;
+/**
+ * The heartbeat is written at most this often, or when the pass moved work: each
+ * write is a billed store operation, and "last seen" needs no finer grain.
+ */
+const HEARTBEAT_EVERY_MS = 60_000;
 
 export interface WorkerHeartbeat {
   /** The last tick the worker asked for. */
@@ -82,6 +87,8 @@ export async function workerTick(send: Send): Promise<{ readonly dispatch: Dispa
     await chargeComputerRuntime().catch(() => 0);
   }
   const now = new Date().toISOString();
+  const moved = dispatch.due > 0 || notes > 0;
+  if (!slow && !moved && previous !== null && Date.now() - Date.parse(previous.at) < HEARTBEAT_EVERY_MS) return { dispatch, notes, slow };
   await writeDoc(HEARTBEAT_KEY, {
     at: now,
     slowAt: slow ? now : (previous?.slowAt ?? null),
