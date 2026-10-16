@@ -6,6 +6,8 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
+import { LOGIN_CARD } from "./styles";
+
 interface Setup {
   readonly platform: "vercel" | "local";
   readonly protected: boolean | null;
@@ -20,9 +22,6 @@ const ENV_SETTINGS =
   "https://vercel.com/d?to=%2F%5Bteam%5D%2F%5Bproject%5D%2Fsettings%2Fenvironment-variables&title=Environment+Variables";
 const STORAGE_SETTINGS = "https://vercel.com/d?to=%2F%5Bteam%5D%2F%5Bproject%5D%2Fstores&title=Storage";
 
-/** The sign-in screen: one card centred on the page. */
-export const LOGIN = "grid min-h-dvh place-items-center px-4 py-6";
-export const LOGIN_CARD = "w-full gap-3 rounded-[14px] p-[22px] text-[13px] ring-input";
 /** The setup steps; their links and code stay legible in the faint text. */
 const STEPS =
   "m-0 grid list-none gap-2.5 p-0 [&_a]:text-inherit [&_a]:underline [&_code]:rounded [&_code]:bg-foreground/15 [&_code]:px-1 [&_code]:font-mono [&_code]:text-[11px]";

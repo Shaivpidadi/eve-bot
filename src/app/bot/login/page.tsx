@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
-import { LOGIN, LOGIN_CARD, SetupCheck } from "./setup-check";
+import { SetupCheck } from "./setup-check";
+import { LOGIN, LOGIN_CARD } from "./styles";
 
 export const metadata: Metadata = {
   title: "Bot — sign in",
