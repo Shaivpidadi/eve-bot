@@ -108,6 +108,10 @@ describe("explainGatewayError", () => {
     expect(none).toMatchObject({ kind: "no-providers" });
     expect(none?.text).toContain("Zero Data Retention (BOT_ZDR) and inference in US (BOT_INFERENCE_REGION)");
     expect(explainGatewayError("400 no_providers_available", {})?.text).toContain("right now");
+    // As Gateway actually answers ZDR with no compliant provider (seen live).
+    const live = explainGatewayError("No ZDR (Zero Data Retention) providers or ZDR-attested BYOK credentials available for model: nvidia/nemotron-3.5-lightning-free. Providers considered: nvidia", { BOT_ZDR: "1" });
+    expect(live?.kind).toBe("no-providers");
+    expect(live?.text).toContain("nvidia/nemotron-3.5-lightning-free with Zero Data Retention (BOT_ZDR)");
     expect(explainGatewayError("fetch failed")).toBeNull();
   });
 });
