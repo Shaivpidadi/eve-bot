@@ -3,6 +3,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { catalogEntry, guessedReads, isReviewedRead, mergePolicy, type CatalogEntry, type ConnectorGate, type ConnectorKeyKind, type ToolEffect, type ToolPolicy } from "./catalog";
 import { authorizeUrl, beginPkce, discover, exchangeCode, needsRefresh, type OAuthClient, type OAuthMetadata, refreshTokens, registerClient, type TokenSet } from "./connector-oauth";
 import { computerKey } from "./computer/keys";
+import { CONNECT_ID, connectSignIn, connectSignOut, connectToken } from "./connector-connect";
 import { newId } from "./ids";
 import { watchToolPolicy } from "./jev-watch";
 import { deleteDoc, listDocs, readDoc, updateDoc, writeDoc } from "./store";
@@ -31,6 +32,14 @@ type SealedAuth =
       readonly client: OAuthClient | null;
       /** The token set, sealed; null until the person has signed in, or after they disconnect. */
       readonly sealed: string | null;
+      readonly connectedAt: string | null;
+    }
+  | {
+      /** Signed in through Vercel Connect (see `connector-connect.ts`): the token lives there, never here. */
+      readonly kind: "connect";
+      /** Connect's connector UID or key, such as `linear/acme-linear`. */
+      readonly connector: string;
+      /** When the workspace's grant was last seen working; null until someone signs in. */
       readonly connectedAt: string | null;
     };
 
@@ -86,7 +95,15 @@ export interface Connector {
 
 /** What the console sees: which kind of key, never the key; for OAuth, whether someone has signed in. */
 export type PublicConnector = Omit<Connector, "auth"> & {
-  readonly auth: { readonly kind: ConnectorKeyKind; readonly header?: string; readonly connected?: boolean; readonly connectedAt?: string | null; readonly issuer?: string };
+  readonly auth: {
+    readonly kind: ConnectorKeyKind;
+    readonly header?: string;
+    readonly connected?: boolean;
+    readonly connectedAt?: string | null;
+    readonly issuer?: string;
+    /** For a Vercel Connect connector, which one. */
+    readonly connector?: string;
+  };
 };
 
 export interface ConnectorInput {
@@ -96,6 +113,8 @@ export interface ConnectorInput {
   readonly url?: string;
   readonly description?: string;
   readonly key?: { readonly kind?: ConnectorKeyKind; readonly header?: string; readonly secret?: string };
+  /** A Vercel Connect connector to sign in through instead (`linear/acme-linear`); the address is still the server's. */
+  readonly connect?: string;
   readonly gate?: ConnectorGate;
 }
 
@@ -122,7 +141,9 @@ export function publicConnector(connector: Connector): PublicConnector {
       ? { kind: "header" as const, header: connector.auth.header }
       : connector.auth.kind === "oauth"
         ? { kind: "oauth" as const, connected: connector.auth.sealed !== null, connectedAt: connector.auth.connectedAt, issuer: connector.auth.metadata.issuer }
-        : { kind: connector.auth.kind };
+        : connector.auth.kind === "connect"
+          ? { kind: "connect" as const, connected: connector.auth.connectedAt !== null, connectedAt: connector.auth.connectedAt, connector: connector.auth.connector }
+          : { kind: connector.auth.kind };
   return { ...connector, auth };
 }
 
@@ -137,8 +158,9 @@ export const permissionVersion = (connector: Pick<Connector, "permissionVersion"
  */
 const bump = (connector: Pick<Connector, "permissionVersion">) => ({ permissionVersion: permissionVersion(connector) + 1 });
 
-/** A connector that signs in through the server's own OAuth and has not yet. */
-export const needsConnect = (connector: Connector): boolean => connector.auth.kind === "oauth" && connector.auth.sealed === null;
+/** A connector that signs in (through the server's own OAuth, or Vercel Connect) and has not yet. */
+export const needsConnect = (connector: Connector): boolean =>
+  (connector.auth.kind === "oauth" && connector.auth.sealed === null) || (connector.auth.kind === "connect" && connector.auth.connectedAt === null);
 
 const GATES: readonly ConnectorGate[] = ["none", "writes", "all"];
 
@@ -159,10 +181,13 @@ export async function addConnector(
   if (label === "") return { ok: false, error: "Give the connector a name." };
   const url = checkUrl(entry?.url ?? input.url ?? "");
   if (typeof url !== "string") return { ok: false, error: url.error };
-  let kind: ConnectorKeyKind = entry?.key.kind ?? input.key?.kind ?? "none";
+  const via = input.connect?.trim() ?? "";
+  if (via !== "" && !CONNECT_ID.test(via)) return { ok: false, error: "That is not a Vercel Connect connector. Use its UID, such as linear/acme-linear (vercel connect list)." };
+  let kind: ConnectorKeyKind = via !== "" ? "connect" : (entry?.key.kind ?? input.key?.kind ?? "none");
   const header = entry?.key.header ?? input.key?.header ?? "";
   const secret = input.key?.secret?.trim() ?? "";
-  if (kind !== "none" && kind !== "oauth" && (secret === "" || secret.length > SECRET_MAX)) {
+  if (kind === "connect" && via === "") return { ok: false, error: "Name the Vercel Connect connector to sign in through." };
+  if (kind !== "none" && kind !== "oauth" && kind !== "connect" && (secret === "" || secret.length > SECRET_MAX)) {
     return { ok: false, error: entry === undefined ? "Paste the key the server expects." : `Paste a ${entry.label} key.` };
   }
   if (kind === "header" && !HEADER_NAME.test(header)) {
@@ -183,8 +208,22 @@ export async function addConnector(
     }
   }
 
-  const probe: ConnectorCheck = oauth !== null ? { ok: false, at: new Date().toISOString(), tools: [], error: "Connect to finish setting it up." } : await probeMcp(url, headersFor(kind, header, secret));
-  if (oauth === null && !probe.ok) return { ok: false, error: probe.error ?? "The server did not answer like an MCP server." };
+  // Through Vercel Connect, the workspace may have signed in already (a connector added again).
+  let connectedAt: string | null = null;
+  let probe: ConnectorCheck;
+  if (kind === "connect") {
+    let token: { readonly token: string } | null;
+    try {
+      token = await connectToken(via, workspaceId);
+    } catch (error) {
+      return { ok: false, error: `Vercel Connect did not answer for ${via}: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    if (token !== null) connectedAt = new Date().toISOString();
+    probe = token === null ? { ok: false, at: new Date().toISOString(), tools: [], error: "Connect to finish setting it up." } : await probeMcp(url, { authorization: `Bearer ${token.token}` });
+  } else {
+    probe = oauth !== null ? { ok: false, at: new Date().toISOString(), tools: [], error: "Connect to finish setting it up." } : await probeMcp(url, headersFor(kind, header, secret));
+    if (oauth === null && !probe.ok) return { ok: false, error: probe.error ?? "The server did not answer like an MCP server." };
+  }
 
   const existing = await listConnectors(workspaceId);
   if (entry !== undefined && existing.some((current) => current.catalog === entry.id)) {
@@ -202,7 +241,12 @@ export async function addConnector(
       input.description?.trim().slice(0, DESCRIPTION_MAX) ||
       entry?.description ||
       `${label}: tools from ${new URL(url).host}. ${probe.tools.slice(0, 8).join(", ")}`.slice(0, DESCRIPTION_MAX),
-    auth: oauth !== null ? { kind: "oauth", metadata: oauth, client: null, sealed: null, connectedAt: null } : await seal(kind, header, secret),
+    auth:
+      kind === "connect"
+        ? { kind: "connect", connector: via, connectedAt }
+        : oauth !== null
+          ? { kind: "oauth", metadata: oauth, client: null, sealed: null, connectedAt: null }
+          : await seal(kind, header, secret),
     enabled: true,
     gate,
     policy: mergePolicy(undefined, probe.tools),
@@ -324,7 +368,7 @@ export async function replaceKey(
 ): Promise<{ ok: true; connector: Connector } | { ok: false; error: string }> {
   const current = await getConnector(workspaceId, id);
   if (current === null) return { ok: false, error: "no such connector" };
-  if (current.auth.kind === "oauth") return { ok: false, error: "This connector signs in through the server; reconnect it instead of pasting a key." };
+  if (current.auth.kind === "oauth" || current.auth.kind === "connect") return { ok: false, error: "This connector signs in; reconnect it instead of pasting a key." };
   const kind: ConnectorKeyKind = input.kind ?? current.auth.kind;
   const header = input.header ?? (current.auth.kind === "header" ? current.auth.header : "");
   const secret = input.secret.trim();
@@ -363,7 +407,7 @@ export async function recheckConnector(connector: Connector): Promise<Connector 
 /** The connector's request headers with its key unsealed. Only for server-side calls. */
 export async function connectorHeaders(connector: Connector): Promise<Record<string, string>> {
   if (connector.auth.kind === "none") return {};
-  if (connector.auth.kind === "oauth") {
+  if (connector.auth.kind === "oauth" || connector.auth.kind === "connect") {
     const token = await connectorToken(connector);
     return token === null ? {} : { authorization: `Bearer ${token.token}` };
   }
@@ -385,8 +429,10 @@ const PENDING_MAX_AGE_MS = 15 * 60 * 1000;
 interface Pending {
   readonly workspaceId: string;
   readonly connectorId: string;
+  /** Empty for a sign-in through Vercel Connect, which keeps its own. */
   readonly verifier: string;
   readonly at: string;
+  readonly via?: "connect";
 }
 
 /** Where a signing-in browser is sent back to. The same path everywhere, so the registered client stays valid. */
@@ -400,6 +446,16 @@ export const OAUTH_CALLBACK_PATH = "/bot/v1/oauth/callback";
 export async function startOAuth(workspaceId: string, id: string, origin: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   const connector = await getConnector(workspaceId, id);
   if (connector === null) return { ok: false, error: "no such connector" };
+  if (connector.auth.kind === "connect") {
+    const state = randomBytes(24).toString("base64url");
+    await writeDoc<Pending>(pendingKey(state), { workspaceId, connectorId: id, verifier: "", at: new Date().toISOString(), via: "connect" });
+    try {
+      const callback = `${origin.replace(/\/$/, "")}${OAUTH_CALLBACK_PATH}?state=${encodeURIComponent(state)}`;
+      return { ok: true, url: await connectSignIn(connector.auth.connector, workspaceId, callback) };
+    } catch (error) {
+      return { ok: false, error: `Vercel Connect could not start the sign-in: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
   if (connector.auth.kind !== "oauth") return { ok: false, error: "This connector uses a key, not a sign-in." };
   const redirectUri = `${origin.replace(/\/$/, "")}${OAUTH_CALLBACK_PATH}`;
   let client = connector.auth.client;
@@ -433,6 +489,17 @@ export async function completeOAuth(state: string, code: string | null, failure:
   };
   if (Date.now() - Date.parse(pending.at) > PENDING_MAX_AGE_MS) return fail("The sign-in took too long; try again.");
   if (failure !== null) return fail(`The server said no: ${failure}.`);
+  if (pending.via === "connect") {
+    // Connect kept the grant; the sign-in worked if it now hands out a token.
+    const current = await getConnector(workspaceId, connectorId);
+    if (current === null || current.auth.kind !== "connect") return fail("The connector changed while you were signing in.");
+    const token = await connectToken(current.auth.connector, workspaceId).catch(() => null);
+    if (token === null) return fail("Vercel Connect has no sign-in for this workspace yet; try again.");
+    const auth = { ...current.auth, connectedAt: new Date().toISOString() };
+    const connected = await updateDoc<Connector>(key(workspaceId, connectorId), (live) => (live === null ? null : { ...live, auth, ...bump(live) }));
+    if (connected !== null) await recheckConnector(connected);
+    return { workspaceId, connectorId, error: null };
+  }
   if (code === null) return fail("The server sent no code back.");
   const connector = await getConnector(workspaceId, connectorId);
   if (connector === null || connector.auth.kind !== "oauth" || connector.auth.client === null) return fail("The connector changed while you were signing in.");
@@ -450,6 +517,22 @@ export async function completeOAuth(state: string, code: string | null, failure:
 
 /** Forgets the sign-in but keeps the connector, so it can be connected again. */
 export async function disconnectOAuth(workspaceId: string, id: string): Promise<boolean> {
+  const connector = await getConnector(workspaceId, id);
+  if (connector?.auth.kind === "connect") {
+    // Ends the grant at Connect too, so no Bot can use it; the connector stays to sign in again.
+    await connectSignOut(connector.auth.connector, workspaceId).catch(() => undefined);
+    const signedOut = await updateDoc<Connector>(key(workspaceId, id), (current) =>
+      current === null || current.auth.kind !== "connect"
+        ? null
+        : {
+            ...current,
+            auth: { ...current.auth, connectedAt: null },
+            check: { ok: false, at: new Date().toISOString(), tools: current.check.tools, error: "Connect to finish setting it up." },
+            ...bump(current),
+          },
+    );
+    return signedOut !== null;
+  }
   const updated = await updateDoc<Connector>(key(workspaceId, id), (current) =>
     current === null || current.auth.kind !== "oauth"
       ? null
@@ -469,6 +552,7 @@ export async function disconnectOAuth(workspaceId: string, id: string): Promise<
  * the refresh failed, which is when a Bot should ask the person to connect.
  */
 export async function connectorToken(connector: Connector): Promise<{ readonly token: string; readonly expiresAt?: number } | null> {
+  if (connector.auth.kind === "connect") return connector.auth.connectedAt === null ? null : connectToken(connector.auth.connector, connector.workspaceId);
   if (connector.auth.kind !== "oauth" || connector.auth.sealed === null || connector.auth.client === null) return null;
   let tokens: TokenSet;
   try {
@@ -534,7 +618,7 @@ async function sealText(text: string): Promise<string> {
 
 async function seal(kind: ConnectorKeyKind, header: string, secret: string): Promise<SealedAuth> {
   if (kind === "none") return { kind };
-  if (kind === "oauth") throw new Error("OAuth connectors are sealed from their token set, not a pasted key.");
+  if (kind === "oauth" || kind === "connect") throw new Error("Connectors that sign in keep no pasted key.");
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", await sealingKey(), iv);
   const body = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);

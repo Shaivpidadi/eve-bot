@@ -1267,6 +1267,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           ...(typeof keyInput.secret === "string" ? { secret: keyInput.secret } : {}),
         },
         ...(body?.gate === "none" || body?.gate === "writes" || body?.gate === "all" ? { gate: body.gate } : {}),
+        ...(typeof body?.connect === "string" ? { connect: body.connect } : {}),
       });
       if (!added.ok) return json({ error: added.error }, 422);
       return json({ connector: publicConnector(added.connector), needsConnect: needsConnect(added.connector) }, 201);

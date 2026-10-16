@@ -248,8 +248,8 @@ export function connectorConnection(
     url: connector.url,
     description: audience === "hq" ? `${connector.description} (read-only for HQ)` : connector.description,
     instanceKey: connector.id,
-    // An OAuth connector's token is read and refreshed per connection; without a sign-in, eve is told to ask for one.
-    ...(connector.auth.kind === "oauth"
+    // An OAuth connector's token is read and refreshed per connection (through Vercel Connect, fetched from it); without a sign-in, eve is told to ask for one.
+    ...(connector.auth.kind === "oauth" || connector.auth.kind === "connect"
       ? {
           // eve 0.58 accepts only getToken here; any other key fails the connection, and the session, at start.
           auth: {
@@ -265,7 +265,7 @@ export function connectorConnection(
     // Read from the live record each time eve connects: a rotated key is the one sent; a removed connector sends nothing.
     headers: async () => {
       const live = await usable();
-      return live.auth.kind === "oauth" ? {} : connectorHeaders(live);
+      return live.auth.kind === "oauth" || live.auth.kind === "connect" ? {} : connectorHeaders(live);
     },
     tools: { allow },
     approval: {
