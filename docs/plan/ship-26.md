@@ -54,7 +54,7 @@ Already in use: eve, AI SDK 7.
 Tags: `[to-do]`, `[in-progress]`, `[done]`, `[parked]`. One commit per task, Conventional Commits,
 no co-author line. Each task names files, tests, and "done when". Statuses below are all `[to-do]`.
 
-### V0. Ground truth spikes `[in-progress]` (do first; each ends in a short findings note in this file)
+### V0. Ground truth spikes `[done]` (do first; each ends in a short findings note in this file)
 - `[done]` V0.1 **Image spike**: build the computer Dockerfile, push with `vercel vcr build docker . --push`, start a
   sandbox from it via eve `VercelSandbox.environment({ image })` on a scratch preview; confirm eve's `prepare` snapshot
   still layers on top, `image_not_ready` handling, cold-start time vs today.
@@ -94,8 +94,18 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   **Go for Pro (opt-in, documented), no-go on Hobby.** Open: how to opt in, since `vercel.json` cannot be
   conditional (ship the block commented in docs, or ship it with a worker that idles unless `BOT_WORKER=on`).
 
-- `[to-do]` V0.4 **Connect spike**: one Connect connector (Linear) through `@vercel/connect/eve` in the teammate's
+- `[done]` V0.4 **Connect spike**: one Connect connector (Linear) through `@vercel/connect/eve` in the teammate's
   connection set; confirm our `approval.request` / `approval.response` hooks still fire with Connect auth.
+  **Findings (16 Oct, `linear/eve-bot-linear` made with `vercel connect create linear` (MCP) + `attach`):** Linear's
+  MCP connector has no app credential (`{type:"app"}` → `unresolved_token`), only per-subject grants, and a grant
+  belongs to one environment (a production grant is invisible to a development OIDC token). Built as V4 rather than
+  through `@vercel/connect/eve`'s `connect()` helper: our own `getToken` hook asks Connect for the workspace's grant
+  (subject `{type:"user", id:"workspace:<id>", issuer:"urn:eve-bot"}`), so scheduled work and notes (the runtime
+  principal) use it too, exactly like an OAuth connector's sign-in today. Live on production: the connector was added,
+  the app's Connect button link (`startAuthorization` with our OAuth callback + state) was approved, Connect sent the
+  browser back, the callback found the grant, marked it connected and read 68 tools; a Bot's job read the Linear team
+  through it, then stopped at "Waiting on a human: Approve Linear: Save issue?" under gate `writes` (cancelled, nothing
+  created). **Go.**
 - `[done]` V0.5 Check `vercelControl()` in `agent/lib/computer/control.ts`: it uses `COMPUTER_NAME`, not
   `machineName()` (the Docker bug we just fixed). Fix if eve can name a Vercel sandbox differently.
   **Finding:** it can, and does: eve names every sandbox it creates `eve-sbx-vercel-<identity>` (`vercelSessionName`).
@@ -188,16 +198,18 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
 - `[done]` V3.5 Docs: configuration, `.env.example`, README deploy section (Pro only, ~$1–2/month, never Hobby).
 - **Checked live:** see V0.3 (a crashed job picked up 21 s later with no console; clean handover between deploys).
 
-### V4. Vercel Connect as a connector auth kind (F4) `[to-do]` (depends on V0.4)
-- `[to-do]` V4.1 `connectors.ts`: auth kind `connect` (`{ connector: 'linear/<name>' }`), stored without secrets.
-- `[to-do]` V4.2 `connector-connection.ts`: build the MCP connection with `@vercel/connect/eve`'s `connect()` auth when the
-  kind is `connect`; gates, `decideCall`, approvals, reviewed reads unchanged.
-- `[to-do]` V4.3 Console `connectors-page.tsx`: "Add from Vercel Connect" lists the team's Connect connectors (via
-  `vercel connect` API) on Vercel deployments; hidden locally.
-- `[to-do]` V4.4 Per-person grants: map the operator principal to Connect's `subject`; first use opens Connect's consent.
-- `[to-do]` V4.5 Docs: connectors doc; local mode keeps our own OAuth.
-- **Tests:** unit for the connection shape (`tests/connection-shape.test.ts`) and gates with a `connect` connector;
-  live: a Linear read through Connect on a preview, held for approval under gate `all`.
+### V4. Vercel Connect as a connector auth kind (F4) `[done]`
+- `[done]` V4.1 `connectors.ts`: auth kind `connect` (`{ connector, connectedAt }`), no secret stored.
+- `[done]` V4.2 `connector-connection.ts`: the `getToken` hook fetches from Connect (`connector-connect.ts`); headers
+  empty; gates, `decideCall`, approvals and reviewed reads unchanged (unit + live).
+- `[done]` V4.3 Console: a custom server's key can be "Sign in through Vercel Connect" with the connector's UID; the
+  connector page's Connect / Sign in again / Disconnect work as for OAuth. `[parked]` listing the team's Connect
+  connectors in the console (no public SDK call for it yet; `vercel connect list` shows them).
+- `[done]` V4.4 Grants per workspace, not per person (decided 16 Oct: routines and notes run as the runtime, which a
+  per-person grant cannot serve; matches today's OAuth and the shared computer). Disconnect revokes at Connect.
+- `[done]` V4.5 Docs: README connectors section. Local mode keeps the app's own OAuth.
+- **Tests:** `tests/connector-connect.test.ts` (add, sign in through the callback, wrong grant, sign out, token per
+  connection, gate). Live: see V0.4.
 
 ### V5. Event-driven Bots via MCP Events (F5) `[to-do]` (depends on V4)
 - `[to-do]` V5.1 Event subscriptions as a new routine kind: "when <event> on <connector>, <brief>", stored with the Bot.

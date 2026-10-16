@@ -186,6 +186,15 @@ routine can use it. GitHub and a documentation source are added by name, and
 any MCP server by address; a custom server that needs OAuth is detected when
 it is added.
 
+On Vercel, a connector can sign in through [Vercel Connect](https://vercel.com/docs/connect)
+instead: make one with `vercel connect create linear --name acme-linear` and
+`vercel connect attach linear/acme-linear`, then add a custom server with
+**Sign in through Vercel Connect** and that UID. Vercel keeps the token (none
+is stored, exported or backed up here), one sign-in serves the workspace, and
+signing out from the connector's page ends the grant at Vercel too. Grants
+belong to one environment: a production sign-in is not seen by previews or
+`vercel dev`.
+
 Each connector has its own page: its account, every tool with a switch and a
 read-or-change tag, when a person is asked first, and the facts about it.
 Tools that change something ask first, and HQ only uses the reads a person
