@@ -103,6 +103,13 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
 - **Tests:** unit for the config branch (image vs fallback); `tests/hands.test.ts` still green; build test of the Dockerfile in CI.
 - **Done when:** a fresh Docker computer and a fresh Vercel computer run a browser + shell job with no apt step, and the
   first job's start time is recorded here (before/after).
+- **Checked live, Docker (16 Oct 2026, free `stealth/cat-jam`):** a brand-new computer built from the Dockerfile ran
+  "open example.com in the browser, write its title with the shell, read it back" in 48 s from asking to done; the
+  machine existed 27 s after the job started, with no install step (no install log; Chrome `install ok installed`).
+  Before: the last fresh Docker computer took about 3.5 min to appear, then failed its install. Docker reused layers
+  from an earlier build of the same Dockerfile; a machine that never built it adds about 2.5 min once.
+  (Free Nemotron stalled on a Gateway 500 before the job reached the computer; Cat Jam ran it.)
+  **Vercel half:** waits on V0.1 (push the image to Vercel Container Registry, start a computer from it).
 
 ### V2. Team computer on a Vercel Drive (F2) `[to-do]` (Vercel only; depends on V0.2)
 - `[to-do]` V2.1 Decide the layout from V0.2: drive at `/team` with `/workspace/{shared,bots,downloads,.computer}` as
