@@ -122,3 +122,11 @@ describe("explainGatewayError", () => {
     expect(explainGatewayError("fetch failed")).toBeNull();
   });
 });
+
+describe("gateway-errors", () => {
+  it("imports nothing, since run_job's workflow body calls it and a workflow can't bundle the store or Node's built-ins", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("../agent/lib/gateway-errors.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/^\s*import\b|\bimport\(/m);
+  });
+});
