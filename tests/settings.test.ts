@@ -152,3 +152,17 @@ describe("the browser uses what Settings say", () => {
     expect(guardGraceMs(await effectiveEnv())).toBe(2500);
   });
 });
+
+describe("the team computer uses what Settings say", () => {
+  it("reads its screens and live-link lifetime from Settings over the environment, within their limits", async () => {
+    vi.stubEnv("BOT_COMPUTER_MAX_SCREENS", "2");
+    const { effectiveEnv, saveSettings } = await load();
+    const { maxScreens } = await import("../agent/lib/computer/screens");
+    const { tokenTtlSeconds } = await import("../agent/lib/computer/tokens");
+    expect(maxScreens(await effectiveEnv())).toBe(2);
+    await saveSettings(owner, { BOT_COMPUTER_MAX_SCREENS: 6, BOT_COMPUTER_TOKEN_TTL_SECONDS: 90 });
+    expect(maxScreens(await effectiveEnv())).toBe(6);
+    expect(tokenTtlSeconds(await effectiveEnv())).toBe(90);
+    expect(maxScreens({ BOT_COMPUTER_MAX_SCREENS: "40" })).toBe(9);
+  });
+});

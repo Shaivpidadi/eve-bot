@@ -23,12 +23,16 @@ export interface TokenClaims {
   readonly nonce: string;
 }
 
-export const TOKEN_TTL_SECONDS = Number(process.env.BOT_COMPUTER_TOKEN_TTL_SECONDS ?? 60);
+/** How long a live connection's token lasts (Settings over the environment). */
+export const tokenTtlSeconds = (env: Readonly<Record<string, string | undefined>> = process.env): number => {
+  const value = Number(env.BOT_COMPUTER_TOKEN_TTL_SECONDS);
+  return Number.isFinite(value) && value > 0 ? value : 60;
+};
 
 export function mintToken(
   key: string,
   claims: { n: number; target: ComputerTarget; access: ComputerAccess },
-  ttlSeconds = TOKEN_TTL_SECONDS,
+  ttlSeconds = tokenTtlSeconds(),
 ): string {
   const payload: TokenClaims = {
     ...claims,

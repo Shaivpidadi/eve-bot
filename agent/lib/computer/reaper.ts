@@ -1,6 +1,7 @@
 import { computerControl } from "./control";
 import { handsFor } from "../hands";
 import { liveControl, readScreens, setBrowserState } from "./screens";
+import { effectiveEnv } from "../settings/store";
 
 /**
  * Stops browsers nobody has used for a while, so an idle computer is not
@@ -10,7 +11,11 @@ import { liveControl, readScreens, setBrowserState } from "./screens";
  * Only a computer that is already running is touched: stopping screens is never
  * a reason to wake it.
  */
-const IDLE_MS = Number(process.env.BOT_COMPUTER_IDLE_MINUTES ?? 15) * 60_000;
+/** How long a browser may sit unused before it is stopped (Settings over the environment). */
+const idleMs = (env: Readonly<Record<string, string | undefined>>): number => {
+  const minutes = Number(env.BOT_COMPUTER_IDLE_MINUTES);
+  return (Number.isFinite(minutes) && minutes > 0 ? minutes : 15) * 60_000;
+};
 const EVERY_MS = 5 * 60_000;
 
 let lastRun = 0;
@@ -18,12 +23,13 @@ let lastRun = 0;
 export async function reapIdleScreens(): Promise<number> {
   if (Date.now() - lastRun < EVERY_MS) return 0;
   lastRun = Date.now();
+  const limit = idleMs(await effectiveEnv());
 
   const idle = (await readScreens()).screens.filter(
     (screen) =>
       screen.browser.state !== "off" &&
       liveControl(screen) === null &&
-      Date.now() - Date.parse(screen.lastUsedAt) > IDLE_MS,
+      Date.now() - Date.parse(screen.lastUsedAt) > limit,
   );
   if (idle.length === 0) return 0;
 
