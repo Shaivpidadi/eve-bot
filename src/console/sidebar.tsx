@@ -833,6 +833,17 @@ function UpdateNote() {
     return () => clearInterval(timer);
   }, [stage, update]);
 
+  async function start() {
+    setStage({ step: "starting" });
+    try {
+      const response = await api("/bot/v1/update", { method: "POST" });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setStage(response.ok ? { step: "syncing", since: Date.now() } : { step: "failed", error: body?.error ?? "Could not start the update.", url: null });
+    } catch (caught) {
+      if (!(caught instanceof SignedOutError)) setStage({ step: "failed", error: "Could not start the update.", url: null });
+    }
+  }
+
   if (update === null) return null;
   const row = "flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-[12.5px] text-brand no-underline hover:bg-sidebar-accent";
   const icon = <ArrowUpIcon className="size-[15px] flex-none" />;
@@ -857,11 +868,22 @@ function UpdateNote() {
   }
 
   if (stage.step === "failed") {
+    // Pressing it tries again (a token fixed in Settings needs nothing more); the run on GitHub, if any, is a link beside it.
     return (
-      <a className={cn(row, "text-destructive")} href={stage.url ?? update.howToUpdate} target="_blank" rel="noopener noreferrer" title={stage.error}>
-        <TriangleAlertIcon className="size-[15px] flex-none" />
-        <span className="min-w-0 truncate">{stage.error}</span>
-      </a>
+      <div className="flex w-full flex-col">
+        <div className="flex w-full items-center gap-1">
+          <button type="button" className={cn(row, "min-w-0 flex-1 cursor-pointer text-destructive")} title="Try the update again" onClick={() => void start()}>
+            <TriangleAlertIcon className="size-[15px] flex-none" />
+            <span className="min-w-0 truncate">Update failed · Try again</span>
+          </button>
+          {stage.url === null ? null : (
+            <a className="flex-none px-1 text-[11.5px] text-faint hover:text-foreground" href={stage.url} target="_blank" rel="noopener noreferrer" title="The run on GitHub">
+              Why?
+            </a>
+          )}
+        </div>
+        <p className="m-0 px-2 pb-1 text-[11px] leading-snug text-faint">{stage.error}</p>
+      </div>
     );
   }
   if (stage.step === "done") {
@@ -881,16 +903,7 @@ function UpdateNote() {
       className={cn(row, "cursor-pointer disabled:cursor-default")}
       disabled={busy}
       title={busy ? "Your repository merges the release and Vercel deploys it; this takes a few minutes." : `You run ${update.version}; ${update.latest} is out. Updates this deployment.`}
-      onClick={async () => {
-        setStage({ step: "starting" });
-        try {
-          const response = await api("/bot/v1/update", { method: "POST" });
-          const body = (await response.json().catch(() => null)) as { error?: string } | null;
-          setStage(response.ok ? { step: "syncing", since: Date.now() } : { step: "failed", error: body?.error ?? "Could not start the update.", url: null });
-        } catch (caught) {
-          if (!(caught instanceof SignedOutError)) setStage({ step: "failed", error: "Could not start the update.", url: null });
-        }
-      }}
+      onClick={() => void start()}
     >
       {icon}
       {label}

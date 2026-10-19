@@ -6,7 +6,7 @@ import { liveEnv } from "./settings/store";
  *
  * A deployment made with the Vercel button is a copy of the repository, so it
  * does not learn about new releases on its own. The console asks here, this
- * asks GitHub for the original's `package.json` at most every six hours, and
+ * asks GitHub for the original's `package.json` at most every half hour, and
  * a newer version shows as a note in the sidebar with the way to update.
  */
 export interface Version {
@@ -44,7 +44,12 @@ export function updateLink(env: NodeJS.ProcessEnv = process.env): { readonly url
 
 const UPSTREAM_PACKAGE = "https://raw.githubusercontent.com/Shaivpidadi/eve-bot/main/package.json";
 const HOW_TO_UPDATE = "https://github.com/Shaivpidadi/eve-bot#keeping-it-up-to-date";
-const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+/**
+ * How long a server instance trusts its last answer. Vercel runs several, and
+ * each asks on its own, so a long wait left some saying no update was out
+ * long after one was; GitHub's raw files are cheap to ask for.
+ */
+const CHECK_EVERY_MS = 30 * 60 * 1000;
 
 let own: string | undefined;
 let upstream: { readonly latest: string | null; readonly until: number } | undefined;
