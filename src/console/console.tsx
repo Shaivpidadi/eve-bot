@@ -19,6 +19,7 @@ import { ConnectorsPage } from "./connectors-page";
 import { Sidebar } from "./sidebar";
 import { UsagePage } from "./usage-page";
 import { ModelsPage } from "./models-page";
+import { SettingsPage } from "./settings-page";
 import type { Hover, Member } from "./types";
 import { useBoard } from "./use-board";
 
@@ -60,7 +61,7 @@ function computerFor(member: Member, members: readonly Member[]): Member {
  * Bots on the left, the selected thread in the middle, and the team's computer
  * with that Bot's routines and files on the right.
  */
-type Page = "usage" | "memory" | "connectors" | "models";
+type Page = "usage" | "memory" | "connectors" | "models" | "settings";
 
 /**
  * Usage, Memory, Models and Connectors open in a sheet over the console rather than
@@ -86,7 +87,7 @@ function PageSheet({ label, open, onClose, children }: { label: string; open: bo
 /** Which full-page screen the address bar names, if any, and the item within it. */
 function pageInHash(): { readonly page: Page; readonly item: string | null } | null {
   const [page, ...rest] = window.location.hash.replace(/^#/, "").split("/");
-  if (page !== "usage" && page !== "memory" && page !== "connectors" && page !== "models") return null;
+  if (page !== "usage" && page !== "memory" && page !== "connectors" && page !== "models" && page !== "settings") return null;
   return { page, item: rest.length === 0 ? null : decodeURIComponent(rest.join("/")) };
 }
 
@@ -229,7 +230,7 @@ export function Console() {
           onConnectors={() => openPage("connectors")}
           onMemory={() => openPage("memory")}
           onUsage={() => openPage("usage")}
-          onModels={() => openPage("models")}
+          onSettings={() => openPage("settings")}
           onHover={setHover}
           unread={unread}
           onUnread={markUnread}
@@ -343,11 +344,12 @@ export function Console() {
       <PageSheet
         open={page !== null}
         onClose={closePage}
-        label={page?.page === "usage" ? "Usage" : page?.page === "memory" ? "Memory" : page?.page === "models" ? "Models" : "Connectors"}
+        label={page?.page === "usage" ? "Usage" : page?.page === "memory" ? "Memory" : page?.page === "models" ? "Models" : page?.page === "settings" ? "Settings" : "Connectors"}
       >
         {page?.page === "usage" ? <UsagePage onClose={closePage} exportable={board.exportable === true} /> : null}
         {page?.page === "memory" ? <MemoryPage onClose={closePage} /> : null}
         {page?.page === "models" ? <ModelsPage onClose={closePage} /> : null}
+        {page?.page === "settings" ? <SettingsPage area={page.item} onArea={(area) => openPage("settings", area)} onClose={closePage} /> : null}
         {page?.page === "connectors" ? <ConnectorsPage selectedId={page.item} onSelect={(id) => openPage("connectors", id)} onClose={closePage} /> : null}
       </PageSheet>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpIcon, BrainIcon, ChartColumnIcon, CopyIcon, CpuIcon, EllipsisIcon, EraserIcon, EyeOffIcon, FolderIcon, FolderMinusIcon, FolderPlusIcon, LogOutIcon, MailIcon, MailOpenIcon, MoonIcon, PencilIcon, PinIcon, PlusIcon, SearchIcon, SunIcon, Trash2Icon, TriangleAlertIcon, UserIcon } from "lucide-react";
+import { ArrowUpIcon, BrainIcon, ChartColumnIcon, CopyIcon, EllipsisIcon, EraserIcon, EyeOffIcon, FolderIcon, FolderMinusIcon, FolderPlusIcon, LogOutIcon, MailIcon, MailOpenIcon, MoonIcon, PencilIcon, PinIcon, PlusIcon, SearchIcon, SettingsIcon, SunIcon, Trash2Icon, TriangleAlertIcon, UserIcon } from "lucide-react";
 import { type ComponentType, type ReactNode, useEffect, useRef, useState } from "react";
 
 import { Avatar as UserAvatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -113,7 +113,7 @@ export function Sidebar({
   onConnectors,
   onMemory,
   onUsage,
-  onModels,
+  onSettings,
   onHover,
   onUnread,
   onChanged,
@@ -132,7 +132,7 @@ export function Sidebar({
   onConnectors: () => void;
   onMemory: () => void;
   onUsage: () => void;
-  onModels: () => void;
+  onSettings: () => void;
   onHover: (hover: Hover | null) => void;
   onUnread: (id: string, unread: boolean) => void;
   /** The roster changed on the server; re-read it. */
@@ -563,8 +563,8 @@ export function Sidebar({
           <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="Memory" title="Memory" onClick={onMemory}>
             <BrainIcon />
           </Button>
-          <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="Models" title="Models" onClick={onModels}>
-            <CpuIcon />
+          <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="Settings" title="Settings" onClick={onSettings}>
+            <SettingsIcon />
           </Button>
           <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label="Usage" title="Usage" onClick={onUsage}>
             <ChartColumnIcon />

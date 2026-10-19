@@ -90,6 +90,15 @@ function price(model: CatalogModel | undefined): string {
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
 export function ModelsPage({ onClose }: { onClose: () => void }) {
+  return (
+    <PageFrame title="Models" label="Models" onBack={onClose}>
+      <ModelsSection />
+    </PageFrame>
+  );
+}
+
+/** The Models page's contents, also the Models tab of Settings. */
+export function ModelsSection() {
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -135,7 +144,7 @@ export function ModelsPage({ onClose }: { onClose: () => void }) {
   const byId = useMemo(() => new Map((report?.catalog.models ?? []).map((model) => [model.id, model])), [report]);
 
   return (
-    <PageFrame title="Models" label="Models" onBack={onClose}>
+    <>
       {report === null ? (
         error === null ? <PageLoading /> : <PageError>{error}</PageError>
       ) : report.endpoint !== null ? (
@@ -242,7 +251,7 @@ export function ModelsPage({ onClose }: { onClose: () => void }) {
           }}
         />
       ) : null}
-    </PageFrame>
+    </>
   );
 }
 
