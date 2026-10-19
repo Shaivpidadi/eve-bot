@@ -118,7 +118,7 @@ in the console, switch the whole team to free models with one toggle, and name a
   `BOT_MODELS_EDITABLE=off`.
 - **Tests:** route validation and the free-only refusal.
 
-### M5. Console Models page `[to-do]`
+### M5. Console Models page `[done]`
 - Add AI Elements `model-selector` (D6).
 - `src/console/models-page.tsx`, a sheet like Usage, Memory and Connectors, opened from a sidebar icon and `#models`:
   - The "Free models only" switch, with its trade-offs in one line.
@@ -128,7 +128,7 @@ in the console, switch the whole team to free models with one toggle, and name a
 - Custom endpoint: a read-only list of the endpoint's models.
 - **Check:** in the browser, change HQ to a free model, switch free-only on and off, type an unlisted id.
 
-### M6. Docs `[to-do]`
+### M6. Docs `[done]`
 - `docs/configuration.md` (the Models page; env vars as defaults), README models line, `.env.example` comment.
 
 ## Review (19 Oct), and what changed
@@ -155,6 +155,22 @@ Checked by hand since:
 - It calls tools.
 - It extracts memories: 3 of 4 answers well-formed, all 3 facts found.
 - The other free models fail one or more of those.
+
+## Checked live (19 Oct 2026, a worktree on :3200, free models, local Docker computer)
+- **The page:**
+  - The Gateway list loads, with 255 tool-capable models once batch-only variants are left out.
+  - The picker searches, lists free models first, prices paid ones, and offers "Use `<typed id>`" for an unlisted id.
+  - Picking MiniMax for Bots (standard) cleared that row's screenshot warning.
+  - "Free models only" puts every role on MiniMax, as the free default.
+- **A job under free-only** ran on `minimax/minimax-m3.1-flash` (14 steps, $0): it opened example.com, read it, and
+  ran the shell. Memory saved two lessons through the free helper; only embeddings billed (about $0.00002).
+- **Found and fixed live:**
+  - The dev server crashed. `run_job` pulled the store into the workflow bundle through a plain helper; the model is
+    now resolved inside the claim step.
+  - A teammate read its effort and model from the *first* user message, but eve puts memory instructions first, so
+    every job had been running at the standard effort's model (masked by `BOT_TEAMMATE_MODEL`). It now reads the
+    message with the job's section.
+  - Batch-only Gateway models were listed; they are now left out (they can still be named).
 
 ## Verification
 - Every task: `npm run typecheck`, `npx vitest run`, `BOT_SKIP_SANDBOX_PREWARM=1 npm run build`.
