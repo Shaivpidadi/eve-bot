@@ -40,6 +40,7 @@ describe("toCatalogModel", () => {
     expect(toCatalogModel(entry({ type: "image" }))).toBeNull();
     expect(toCatalogModel(entry({ tags: ["reasoning"] }))).toBeNull();
     expect(toCatalogModel(entry({ id: "no slash" }))).toBeNull();
+    expect(toCatalogModel(entry({ id: "acme/model-batch" }))).toBeNull();
   });
 
   it("calls a model free only when it costs nothing at every provider", () => {

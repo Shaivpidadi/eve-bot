@@ -59,6 +59,8 @@ export function toCatalogModel(raw: unknown): CatalogModel | null {
   if (entry.type !== "language" || !/^[\w.-]+\/[\w.:-]+$/.test(id)) return null;
   const tags = Array.isArray(entry.tags) ? entry.tags.filter((tag): tag is string => typeof tag === "string") : [];
   if (!tags.includes("tool-use")) return null;
+  // Batch variants answer later through Gateway's batch API, not within a turn; they can still be named outright.
+  if (/-batch$/.test(id)) return null;
   const pricing = record(entry.pricing);
   const inputPerM = perMillion(pricing.input);
   const outputPerM = perMillion(pricing.output);
