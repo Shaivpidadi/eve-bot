@@ -4,17 +4,57 @@
 
 A deployment made with the Deploy button is a copy of this repository in your
 GitHub account, not a fork, so nothing pulls new releases in by itself. The
-copy carries a workflow, **Sync with upstream**, that does: once a week, and
-whenever you run it from your repository's Actions tab, it merges this
-repository's `main` into yours and pushes, and Vercel deploys the result. If
-you changed code in your copy and the two conflict, it leaves the merge on an
-`upstream-sync` branch with the conflicts marked and fails, so you can finish
-it by hand. Set a repository variable `BOT_SYNC_UPSTREAM=off` to stop it.
+copy carries a workflow, **Sync with upstream**, that does.
 
-The console says when a newer version is out: **Update now** in the sidebar's
-footer opens your copy's sync workflow, where **Run workflow** does it and
-Vercel redeploys. It asks GitHub for this repository's version at most every
-six hours; `BOT_UPDATE_CHECK=off` stops it asking.
+- **On its own, once a day,** it looks for a new release (a `v*` tag here).
+  Once a release is six hours old, so a bad one can be pulled first, it merges
+  it into your default branch and pushes, and Vercel deploys it. It only ever
+  takes releases, never work in progress on `main`.
+- **From the console,** **Update now** in the sidebar's footer appears when a
+  newer version is out. With a GitHub token saved in Settings (Updates), it
+  updates on the spot: it brings your copy's workflows up to the release,
+  runs the sync, and follows it through Vercel's deploy until the new version
+  answers. Without a token it opens the workflow, where **Run workflow** does
+  the same.
+- **What it follows** is set by a repository variable, `BOT_SYNC_UPSTREAM`:
+  `releases` (the default), `main` (every change as it lands), a tag such as
+  `v0.5.0` (stay on that release), or `off`.
+
+If you changed code in your copy and the two conflict, the sync leaves the
+merge on an `upstream-sync` branch with the conflicts marked and fails, so you
+can finish it by hand.
+
+### The GitHub token
+
+GitHub does not let a workflow's own token change files in
+`.github/workflows`, so the daily sync keeps your copy's versions of those and
+takes everything else. The console's **Update now** brings them up to date
+too, with a token of yours:
+
+1. On GitHub, **Settings → Developer settings → Fine-grained tokens →
+   Generate new token**.
+2. Repository access: **Only select repositories**, your copy alone.
+3. Permissions: **Actions**, **Contents** and **Workflows**, each **Read and
+   write**.
+4. In the console, **Settings → Updates → GitHub token for updates**, paste it
+   and save. It is stored sealed and never shown again; only the owner sees it.
+
+### A copy whose sync fails since 11 October 2026
+
+Releases from 11 October on changed the workflows, which a copy's sync could
+not push, so its runs fail with *refusing to allow a GitHub App to create or
+update workflow*. Once a copy runs a version with this fix, it never happens
+again; getting there takes one push that may change workflows:
+
+```bash
+git clone https://github.com/<you>/<your-copy> && cd <your-copy>
+git remote add upstream https://github.com/Shaivpidadi/eve-bot.git && git fetch upstream --tags
+git merge v0.5.1 -m "chore: sync with upstream eve-bot v0.5.1" && git push
+```
+
+Vercel deploys the push, and from then on the copy updates itself. If the merge
+says the histories are unrelated, the copy predates the sync workflow: see the
+next section first.
 
 ### A copy made before the sync workflow existed
 
@@ -24,10 +64,10 @@ files it matches, then merge:
 
 ```bash
 git clone https://github.com/<you>/<your-copy> && cd <your-copy>
-git remote add upstream https://github.com/Shaivpidadi/eve-bot.git && git fetch upstream main
+git remote add upstream https://github.com/Shaivpidadi/eve-bot.git && git fetch upstream main --tags
 root=$(git rev-list --max-parents=0 HEAD | tail -1)
 git replace --graft "$root" "$(git log --format='%H %T' upstream/main | awk -v t="$(git rev-parse "$root^{tree}")" '$2==t{print $1; exit}')"
-git merge upstream/main -m "chore: sync with upstream eve-bot" && git push
+git merge v0.5.1 -m "chore: sync with upstream eve-bot" && git push
 ```
 
 Vercel deploys the push. From then on the workflow keeps the copy current.

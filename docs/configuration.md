@@ -127,6 +127,7 @@ paid option: $30 buys $80 of usage on the models it covers.
 | `BOT_PUBLIC_URL` | the address the world reaches this deployment at, for OAuth redirect URIs and the sitemap; Vercel supplies its own |
 | `BOT_EXPORT` | `on` lets the console download the signed-in workspace as an export file (`GET /bot/v1/export`; add `?secrets=1` for connectors) |
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
+| `BOT_UPDATE_TOKEN` | a fine-grained GitHub token for a Deploy-button copy (Actions, Contents and Workflows, read and write), so **Update now** updates it from the console; best saved in Settings (Updates), sealed. See [updating.md](updating.md) |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
 | `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | Vercel Pro, production: `on` runs the background worker (`daemon/`, a [Vercel Daemon](https://vercel.com/docs/daemons) that `vercel.json` declares and that idles while this is off), which asks the app for the watchdog's work every `30` seconds with its OIDC token, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. About 3 Vercel Blob operations a pass, roughly $1–2 a month; **never on Hobby**, whose 2,000 monthly Blob operations it would use up within hours (Vercel then blocks the store for 30 days). Redeploy after turning it on or off; Settings can pause it or change its pace without one |

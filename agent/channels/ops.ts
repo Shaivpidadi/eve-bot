@@ -48,7 +48,8 @@ import { version as appVersion } from "../../package.json";
 import { handsFor } from "../lib/hands";
 import { store } from "../lib/store";
 import { usageReport } from "../lib/usage-report";
-import { versionReport } from "../lib/version";
+import { latestRun, startUpdate, UpdateError } from "../lib/updater";
+import { builtFrom, updateLink, versionReport } from "../lib/version";
 
 /**
  * The ops channel: how people and machines reach the team.
@@ -208,7 +209,18 @@ async function hireFromForm(
 }
 
 /** Whether a setting means anything here: the computer it is about, or the worker this deployment runs. */
+/** Whether "Update now" may run here: the owner of a copy Vercel builds from GitHub, with a token in Settings. */
+async function updateReady(owner: boolean): Promise<{ ok: true; token: string; repo: { owner: string; slug: string } } | { ok: false; status: 400 | 403; error: string }> {
+  if (!owner) return { ok: false, status: 403, error: "Only this deployment's owner can update it." };
+  const repo = builtFrom();
+  if (repo === null || !updateLink().runsItself) return { ok: false, status: 400, error: "This deployment does not update itself from the console; see docs/updating.md." };
+  const token = (await effectiveEnv()).BOT_UPDATE_TOKEN?.trim();
+  if (!token) return { ok: false, status: 400, error: "Add a GitHub token in Settings (Updates) to update from here." };
+  return { ok: true, token, repo };
+}
+
 function settingApplies(def: SettingDef): boolean {
+  if (def.where === "copy") return updateLink().runsItself;
   if (def.where === "vercel-computer") return computerMode() === "vercel";
   if (def.where === "local-computer") return computerMode() === "local";
   if (def.where === "worker") return /^(1|true|on|yes)$/i.test(process.env.BOT_WORKER?.trim() ?? "");
@@ -978,7 +990,39 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     GET("/bot/v1/version", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      return json(await versionReport());
+      const report = await versionReport();
+      // Whether "Update now" can run the update from here: a copy, its owner, and a GitHub token in Settings.
+      const token = (await effectiveEnv()).BOT_UPDATE_TOKEN?.trim();
+      return json({ ...report, canUpdate: report.runsItself && gate.access.owner && Boolean(token) });
+    }),
+
+    /** "Update now": brings this copy's workflows up to the newest release and runs its sync (see lib/updater.ts). Owner only. */
+    POST("/bot/v1/update", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const ready = await updateReady(gate.access.owner);
+      if (!ready.ok) return json({ error: ready.error }, ready.status);
+      const report = await versionReport();
+      try {
+        return json(await startUpdate(ready.token, ready.repo, report.latest));
+      } catch (error) {
+        if (error instanceof UpdateError) return json({ error: error.message }, error.status === 401 || error.status === 403 || error.status === 404 ? 409 : 502);
+        throw error;
+      }
+    }),
+
+    /** How the update started from here is going: the latest run of the copy's sync workflow. Owner only. */
+    GET("/bot/v1/update", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const ready = await updateReady(gate.access.owner);
+      if (!ready.ok) return json({ error: ready.error }, ready.status);
+      try {
+        return json({ run: await latestRun(ready.token, ready.repo), version: (await versionReport()).version });
+      } catch (error) {
+        if (error instanceof UpdateError) return json({ error: error.message }, 409);
+        throw error;
+      }
     }),
 
     /** What the console calls the person in this workspace, when nothing signs them in by name. */

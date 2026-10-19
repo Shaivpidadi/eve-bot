@@ -766,9 +766,17 @@ function HealthNote({ health, members }: { health: Board["health"] | undefined; 
  * A line in the footer when the original EVE Bot is newer than this one. A
  * deployment made with the Vercel button is a copy of the repository and
  * learns about releases only by asking; the answer is cached on the server.
+ * With a GitHub token in Settings, its owner updates from here: the line
+ * follows the copy's sync run, then the deploy, until the new version answers.
  */
+type UpdateReport = { latest: string; version: string; howToUpdate: string; runsItself: boolean; canUpdate: boolean };
+type UpdateStage = { step: "idle" } | { step: "starting" } | { step: "syncing"; since: number } | { step: "deploying" } | { step: "done" } | { step: "failed"; error: string; url: string | null };
+
+const UPDATE_POLL_MS = 10_000;
+
 function UpdateNote() {
-  const [update, setUpdate] = useState<{ latest: string; version: string; howToUpdate: string; runsItself: boolean } | null>(null);
+  const [update, setUpdate] = useState<UpdateReport | null>(null);
+  const [stage, setStage] = useState<UpdateStage>({ step: "idle" });
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -783,8 +791,8 @@ function UpdateNote() {
           (body as { updateAvailable?: unknown }).updateAvailable === true &&
           typeof (body as { latest?: unknown }).latest === "string"
         ) {
-          const report = body as { latest: string; version: string; howToUpdate: string; runsItself?: boolean };
-          setUpdate({ latest: report.latest, version: report.version, howToUpdate: report.howToUpdate, runsItself: report.runsItself === true });
+          const report = body as { latest: string; version: string; howToUpdate: string; runsItself?: boolean; canUpdate?: boolean };
+          setUpdate({ latest: report.latest, version: report.version, howToUpdate: report.howToUpdate, runsItself: report.runsItself === true, canUpdate: report.canUpdate === true });
         }
       } catch {
         // No note is the right answer when the check cannot run.
@@ -794,21 +802,93 @@ function UpdateNote() {
       cancelled = true;
     };
   }, []);
-  if (update === null) return null;
-  return (
-    <a
-      className="flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-[12.5px] text-brand no-underline hover:bg-sidebar-accent"
-      href={update.howToUpdate}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={
-        update.runsItself
-          ? `You run ${update.version}; ${update.latest} is out. Opens your repository's sync workflow: press "Run workflow" and Vercel redeploys.`
-          : `You run ${update.version}; ${update.latest} is out. How to update.`
+
+  // Follows the copy's sync run, then waits for the deploy to answer with the new version.
+  useEffect(() => {
+    if (update === null || (stage.step !== "syncing" && stage.step !== "deploying")) return;
+    const timer = setInterval(async () => {
+      try {
+        if (stage.step === "syncing") {
+          const response = await api("/bot/v1/update");
+          const body = (await response.json().catch(() => null)) as { run?: { status: string; conclusion: string | null; url: string; at: string } | null; error?: string } | null;
+          if (!response.ok) return setStage({ step: "failed", error: body?.error ?? "Could not follow the update.", url: null });
+          const run = body?.run;
+          // Only the run started from here (or after it) counts.
+          if (run == null || Date.parse(run.at) < stage.since - 60_000 || run.status !== "completed") return;
+          setStage(run.conclusion === "success" ? { step: "deploying" } : { step: "failed", error: "The update did not finish.", url: run.url });
+        } else {
+          const response = await api("/bot/v1/version");
+          const body = (await response.json().catch(() => null)) as { version?: string } | null;
+          if (body?.version === update.latest) setStage({ step: "done" });
+        }
+      } catch {
+        // Try again on the next tick; a deploy in progress can fail a request or two.
       }
+    }, UPDATE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [stage, update]);
+
+  if (update === null) return null;
+  const row = "flex w-full items-center gap-[9px] rounded-lg px-2 py-[7px] text-[12.5px] text-brand no-underline hover:bg-sidebar-accent";
+  const icon = <ArrowUpIcon className="size-[15px] flex-none" />;
+
+  if (!update.canUpdate) {
+    return (
+      <a
+        className={row}
+        href={update.howToUpdate}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={
+          update.runsItself
+            ? `You run ${update.version}; ${update.latest} is out. Opens your repository's sync workflow: press "Run workflow" and Vercel redeploys. To update from here instead, add a GitHub token in Settings (Updates).`
+            : `You run ${update.version}; ${update.latest} is out. How to update.`
+        }
+      >
+        {icon}
+        {update.runsItself ? `Update now to ${update.latest}` : `Update to ${update.latest}`}
+      </a>
+    );
+  }
+
+  if (stage.step === "failed") {
+    return (
+      <a className={cn(row, "text-destructive")} href={stage.url ?? update.howToUpdate} target="_blank" rel="noopener noreferrer" title={stage.error}>
+        <TriangleAlertIcon className="size-[15px] flex-none" />
+        <span className="min-w-0 truncate">{stage.error}</span>
+      </a>
+    );
+  }
+  if (stage.step === "done") {
+    return (
+      <button type="button" className={cn(row, "cursor-pointer")} onClick={() => window.location.reload()} title={`${update.latest} is live. Reload to use it.`}>
+        {icon}
+        Updated to {update.latest} · Reload
+      </button>
+    );
+  }
+  const busy = stage.step !== "idle";
+  const label =
+    stage.step === "starting" ? "Starting the update…" : stage.step === "syncing" ? `Updating to ${update.latest}…` : stage.step === "deploying" ? `Deploying ${update.latest}…` : `Update now to ${update.latest}`;
+  return (
+    <button
+      type="button"
+      className={cn(row, "cursor-pointer disabled:cursor-default")}
+      disabled={busy}
+      title={busy ? "Your repository merges the release and Vercel deploys it; this takes a few minutes." : `You run ${update.version}; ${update.latest} is out. Updates this deployment.`}
+      onClick={async () => {
+        setStage({ step: "starting" });
+        try {
+          const response = await api("/bot/v1/update", { method: "POST" });
+          const body = (await response.json().catch(() => null)) as { error?: string } | null;
+          setStage(response.ok ? { step: "syncing", since: Date.now() } : { step: "failed", error: body?.error ?? "Could not start the update.", url: null });
+        } catch (caught) {
+          if (!(caught instanceof SignedOutError)) setStage({ step: "failed", error: "Could not start the update.", url: null });
+        }
+      }}
     >
-      <ArrowUpIcon className="size-[15px] flex-none" />
-      {update.runsItself ? `Update now to ${update.latest}` : `Update to ${update.latest}`}
-    </a>
+      {icon}
+      {label}
+    </button>
   );
 }

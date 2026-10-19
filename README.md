@@ -257,11 +257,13 @@ The full model, with what it does not catch, is in [docs/safety.md](docs/safety.
 
 ## Keeping it up to date
 
-A deployment made with the Deploy button carries a **Sync with upstream**
-workflow that merges this repository's `main` into your copy once a week, or
-whenever you run it. The console says when a newer version is out, and
-**Update now** in the sidebar's footer takes you to it. Standalone, update the
-way you installed:
+A deployment made with the Deploy button updates itself: its **Sync with
+upstream** workflow checks once a day for a new release and, once a release is
+six hours old, merges it into your copy, and Vercel deploys it. The console
+says when a newer version is out. With a GitHub token saved in Settings
+(Updates), **Update now** in the sidebar's footer updates it on the spot;
+without one it opens the workflow to run. Standalone, update the way you
+installed:
 
 ```bash
 git pull && npm install && npm run build && npm start     # or: docker compose up -d --build
