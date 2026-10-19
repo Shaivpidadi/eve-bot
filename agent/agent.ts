@@ -1,6 +1,6 @@
 import { defineAgent, defineDynamic } from "eve";
 
-import { customEndpoint, defaultModelFor, gatewaySelection, hqModel, reasoningFor, tokenLimits, UNLISTED_CONTEXT_TOKENS } from "./lib/models";
+import { customEndpoint, defaultModelFor, gatewaySelection, hqModel, levelOf, reasoningFor, tokenLimits, UNLISTED_CONTEXT_TOKENS } from "./lib/models";
 
 /**
  * HQ's model on AI Gateway: the workspace's choice in the console (see
@@ -12,10 +12,13 @@ import { customEndpoint, defaultModelFor, gatewaySelection, hqModel, reasoningFo
 const hqOnGateway = defineDynamic({
   events: {
     "turn.started": async (_event, ctx) => {
-      const [{ resolveModel }, { operator }] = await Promise.all([import("./lib/model-settings"), import("./lib/session")]);
-      const resolved = await resolveModel(operator(ctx).workspaceId, "hq").catch(() => null);
-      if (resolved === null || resolved.source === "default") return gatewaySelection({ id: defaultModelFor("hq") });
-      return gatewaySelection({ id: resolved.id, context: resolved.context ?? UNLISTED_CONTEXT_TOKENS, reasoning: resolved.reasoning });
+      const [{ resolveModel }, { operator }, { effectiveEnv }] = await Promise.all([import("./lib/model-settings"), import("./lib/session"), import("./lib/settings/store")]);
+      const workspaceId = operator(ctx).workspaceId;
+      const [resolved, env] = await Promise.all([resolveModel(workspaceId, "hq").catch(() => null), effectiveEnv(workspaceId).catch(() => process.env)]);
+      // How hard HQ reasons, from Settings; the agent's own setting when none is chosen.
+      const level = levelOf(env.BOT_HQ_REASONING);
+      if (resolved === null || resolved.source === "default") return gatewaySelection({ id: defaultModelFor("hq"), level });
+      return gatewaySelection({ id: resolved.id, context: resolved.context ?? UNLISTED_CONTEXT_TOKENS, reasoning: resolved.reasoning, level });
     },
   },
 });

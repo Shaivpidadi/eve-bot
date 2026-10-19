@@ -3,7 +3,7 @@ import { defineAgent, defineDynamic } from "eve";
 
 import type { DynamicResolveContext } from "eve";
 
-import { customEndpoint, effortInBrief, endpointModel, gatewaySelection, modelForEffort, modelInBrief, reasoningFor, tokenLimits } from "../../lib/models";
+import { customEndpoint, effortInBrief, endpointModel, gatewaySelection, modelForEffort, modelInBrief, type ReasoningLevel, reasoningFor, tokenLimits } from "../../lib/models";
 
 const textOf = (message: ModelMessage): string =>
   typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.map((part) => (part.type === "text" ? part.text : "")).join("\n") : "";
@@ -18,7 +18,7 @@ export function briefText(messages: readonly ModelMessage[]): string {
   return users.find((text) => /^## Job$/m.test(text)) ?? users.at(-1) ?? "";
 }
 
-type Chosen = { readonly id: string; readonly context: number | null; readonly reasoning: boolean | null };
+type Chosen = { readonly id: string; readonly context: number | null; readonly reasoning: boolean | null; readonly level?: ReasoningLevel | null };
 
 /**
  * A job keeps the model it started with: prompt caches are per model, and a

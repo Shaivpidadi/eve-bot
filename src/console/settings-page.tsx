@@ -117,11 +117,10 @@ export function SettingsPage({ area, onArea, onClose }: { area: string | null; o
           </div>
           {areas.map((name) => (
             <TabsContent key={name} value={name}>
-              {name === "Models" ? (
-                <ModelsSection />
-              ) : (
+              {name === "Models" ? <ModelsSection /> : null}
+              {name === "Models" && !report.settings.some((setting) => setting.area === name) ? null : (
                 <PageBody className="max-w-[760px]">
-                  {report.owner ? null : (
+                  {report.owner || name === "Models" ? null : (
                     <PageNote>These are your workspace&apos;s settings. The rest of the deployment&apos;s are set by its owner.</PageNote>
                   )}
                   {report.editable ? null : <PageNote>This deployment sets everything with its environment (BOT_SETTINGS_EDITABLE=off), so settings are shown here, not changed.</PageNote>}

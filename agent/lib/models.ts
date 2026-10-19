@@ -3,6 +3,7 @@ import type { LanguageModel } from "ai";
 
 import { pricedModel } from "./pricing";
 import { steadyModel } from "./steady";
+import { liveEnv } from "./settings/store";
 
 /**
  * Which model does a job.
@@ -86,32 +87,44 @@ export function defaultModelFor(role: ModelRole): string {
 export const UNLISTED_CONTEXT_TOKENS = 128_000;
 
 /** A Gateway model chosen for a turn or a job, as eve takes it: the data controls, and what eve cannot look up itself. */
-export function gatewaySelection(model: { readonly id: string; readonly context?: number | null; readonly reasoning?: boolean | null }): {
+export function gatewaySelection(model: {
+  readonly id: string;
+  readonly context?: number | null;
+  /** Whether the model reasons at all; false sends no reasoning setting. */
+  readonly reasoning?: boolean | null;
+  /** How hard it should reason, from Settings; the agent's own setting otherwise. */
+  readonly level?: ReasoningLevel | null;
+}): {
   readonly model: string;
   readonly modelOptions?: { readonly providerOptions: GatewayOptions };
   readonly modelContextWindowTokens?: number;
-  readonly reasoning?: "provider-default";
+  readonly reasoning?: "provider-default" | ReasoningLevel;
 } {
   return {
     model: model.id,
     ...gatewayModelOptions(),
     ...(model.context ? { modelContextWindowTokens: model.context } : {}),
     // A model that does not reason gets no reasoning setting rather than one it may reject.
-    ...(model.reasoning === false ? { reasoning: "provider-default" as const } : {}),
+    ...(model.reasoning === false ? { reasoning: "provider-default" as const } : model.level ? { reasoning: model.level } : {}),
   };
 }
 
-const MODEL_LINE = /^model: (\S+)(?: context=(\d+))?(?: reasoning=(yes|no))?$/m;
+/** A reasoning level from Settings, or null for anything else. */
+export const levelOf = (value: string | undefined): ReasoningLevel | null =>
+  (REASONING_LEVELS as readonly string[]).includes(value?.trim() ?? "") ? (value!.trim() as ReasoningLevel) : null;
+
+const MODEL_LINE = /^model: (\S+)(?: context=(\d+))?(?: reasoning=(no|low|medium|high|xhigh))?$/m;
 
 /** The `model:` line `run_job` writes into a brief (see `renderBrief`), so every step of a run uses the model it started on. */
-export function modelLine(model: { readonly id: string; readonly context?: number | null; readonly reasoning?: boolean | null }): string {
-  return `model: ${model.id}${model.context ? ` context=${model.context}` : ""}${model.reasoning === false ? " reasoning=no" : ""}`;
+export function modelLine(model: { readonly id: string; readonly context?: number | null; readonly reasoning?: boolean | null; readonly level?: ReasoningLevel | null }): string {
+  const reasoning = model.reasoning === false ? " reasoning=no" : model.level ? ` reasoning=${model.level}` : "";
+  return `model: ${model.id}${model.context ? ` context=${model.context}` : ""}${reasoning}`;
 }
 
-export function modelInBrief(brief: string): { readonly id: string; readonly context: number | null; readonly reasoning: boolean | null } | null {
+export function modelInBrief(brief: string): { readonly id: string; readonly context: number | null; readonly reasoning: boolean | null; readonly level: ReasoningLevel | null } | null {
   const match = MODEL_LINE.exec(brief);
   if (match === null) return null;
-  return { id: match[1]!, context: match[2] === undefined ? null : Number(match[2]), reasoning: match[3] === "no" ? false : null };
+  return { id: match[1]!, context: match[2] === undefined ? null : Number(match[2]), reasoning: match[3] === "no" ? false : null, level: levelOf(match[3]) };
 }
 
 /** One level up, for a job whose last run failed. */
@@ -264,13 +277,14 @@ export { explainGatewayError, NO_IMAGES } from "./gateway-errors";
 
 /** `gatewayOptions` as eve wants it next to a model: `{ modelOptions: { providerOptions } }`, or nothing. */
 export function gatewayModelOptions(): { readonly modelOptions?: { readonly providerOptions: GatewayOptions } } {
-  const options = gatewayOptions();
+  // The data controls as set in Settings over the environment (see settings/store.ts).
+  const options = gatewayOptions(liveEnv());
   return options === null ? {} : { modelOptions: { providerOptions: options } };
 }
 
 /** `gatewayOptions` as the AI SDK takes it on a call, merged into any provider options the call already has. */
 export function withGatewayOptions<T extends Record<string, unknown>>(providerOptions?: T): (T & Partial<GatewayOptions>) | undefined {
-  const options = gatewayOptions();
+  const options = gatewayOptions(liveEnv());
   if (options === null) return providerOptions;
   return { ...(providerOptions ?? ({} as T)), ...options };
 }

@@ -31,7 +31,7 @@ import { isInternal, noteOrigin } from "../lib/self";
 import { isProjectWorker, workerTick } from "../lib/worker";
 import { gatewayCatalog } from "../lib/gateway-models";
 import { modelsEditable, modelsReport, saveModelSettings, settingsInput } from "../lib/model-settings";
-import { saveSettings, settingsReport } from "../lib/settings/store";
+import { effectiveEnv, saveSettings, settingsReport } from "../lib/settings/store";
 import type { SettingDef } from "../lib/settings/registry";
 import { acceptTrigger, recentTriggers, TRIGGER_PATH, verifiedTrigger } from "../lib/triggers";
 import { sessionIsGone } from "../lib/gone";
@@ -1137,7 +1137,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * they are sealed with are left out unless `?secrets=1` is asked for.
      */
     GET("/bot/v1/export", async (request) => {
-      if (!exportEnabled()) return json({ error: "Exporting is off on this deployment. Set BOT_EXPORT=on to allow it." }, 404);
+      if (!exportEnabled(await effectiveEnv())) return json({ error: "Exporting is off on this deployment. Its owner can turn it on in Settings, Data controls." }, 404);
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const secrets = new URL(request.url).searchParams.get("secrets") === "1";

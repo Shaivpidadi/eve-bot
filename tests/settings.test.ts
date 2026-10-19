@@ -183,3 +183,30 @@ describe("memory and decisions use what Settings say", () => {
     expect(memoryFloor(await effectiveEnv("other"))).not.toBe(0.9);
   });
 });
+
+describe("data controls and reasoning use what Settings say", () => {
+  it("sends Zero Data Retention and the reasoning level from Settings with each model call", async () => {
+    vi.stubEnv("BOT_ZDR", "");
+    vi.stubEnv("BOT_INFERENCE_REGION", "");
+    const { saveSettings } = await load();
+    const { gatewaySelection, gatewayModelOptions, modelInBrief, modelLine } = await import("../agent/lib/models");
+    expect(gatewayModelOptions().modelOptions).toBeUndefined();
+    await saveSettings(owner, { BOT_ZDR: true });
+    expect(JSON.stringify(gatewayModelOptions())).toContain("zeroDataRetention");
+    expect(gatewaySelection({ id: "a/b", level: "high" }).reasoning).toBe("high");
+    // A model that does not reason gets none, whatever Settings ask.
+    expect(gatewaySelection({ id: "a/b", reasoning: false, level: "high" }).reasoning).toBe("provider-default");
+    // The level rides in the brief with the model, so the run keeps it.
+    expect(modelInBrief(modelLine({ id: "a/b", context: 1000, level: "xhigh" }))).toMatchObject({ id: "a/b", context: 1000, level: "xhigh", reasoning: null });
+    expect(modelInBrief(modelLine({ id: "a/b", reasoning: false }))).toMatchObject({ reasoning: false, level: null });
+  });
+
+  it("turns exporting on from Settings", async () => {
+    vi.stubEnv("BOT_EXPORT", "");
+    const { effectiveEnv, saveSettings } = await load();
+    const { exportEnabled } = await import("../agent/lib/store/transfer");
+    expect(exportEnabled(await effectiveEnv())).toBe(false);
+    await saveSettings(owner, { BOT_EXPORT: true });
+    expect(exportEnabled(await effectiveEnv())).toBe(true);
+  });
+});

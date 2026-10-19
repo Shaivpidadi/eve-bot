@@ -1,5 +1,6 @@
 import { type Catalog, type CatalogModel, FREE_FALLBACK, freeDefault, gatewayCatalog } from "./gateway-models";
-import { customEndpoint, defaultModelFor, effortRole, isModelRole, type JobEffort, MODEL_ROLES, type ModelRole, nextEffort, UNLISTED_CONTEXT_TOKENS } from "./models";
+import { customEndpoint, defaultModelFor, effortRole, isModelRole, type JobEffort, levelOf, MODEL_ROLES, type ModelRole, nextEffort, UNLISTED_CONTEXT_TOKENS } from "./models";
+import { effectiveEnv, liveEnv } from "./settings/store";
 
 /**
  * Which AI Gateway model each role runs on, chosen in the console's Models page.
@@ -96,7 +97,7 @@ export async function saveModelSettings(
   input: ModelSettingsInput,
   by: string,
   catalog: Pick<Catalog, "models">,
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  env: Readonly<Record<string, string | undefined>> = liveEnv(),
 ): Promise<{ ok: true; settings: ModelSettings } | { ok: false; error: string }> {
   if (!modelsEditable(env)) return { ok: false, error: "Models are set by this deployment and cannot be changed here." };
   const current = await readModelSettings(workspaceId);
@@ -191,7 +192,7 @@ export interface ModelsReport {
 }
 
 /** Everything the Models page shows for a workspace. */
-export async function modelsReport(workspaceId: string, env: Readonly<Record<string, string | undefined>> = process.env): Promise<ModelsReport> {
+export async function modelsReport(workspaceId: string, env: Readonly<Record<string, string | undefined>> = liveEnv()): Promise<ModelsReport> {
   const endpoint = customEndpoint();
   const settings = endpoint === null ? await readModelSettings(workspaceId) : EMPTY;
   const catalog: Catalog = endpoint === null ? await gatewayCatalog() : { models: [], at: null, error: null };
@@ -237,12 +238,17 @@ export function settingsInput(body: unknown): ModelSettingsInput | null {
  * the brief: null on a custom endpoint, whose model the teammate picks from
  * the brief's effort as before.
  */
-export async function runModel(workspaceId: string, effort: JobEffort): Promise<{ id: string; context: number | null; reasoning: boolean | null; free: boolean } | null> {
+export async function runModel(
+  workspaceId: string,
+  effort: JobEffort,
+): Promise<{ id: string; context: number | null; reasoning: boolean | null; level: ReturnType<typeof levelOf>; free: boolean } | null> {
   if (customEndpoint() !== null) return null;
-  const resolved = await resolveModel(workspaceId, effortRole(effort)).catch(() => null);
+  const [resolved, env] = await Promise.all([resolveModel(workspaceId, effortRole(effort)).catch(() => null), effectiveEnv(workspaceId).catch(() => process.env)]);
   if (resolved === null) return null;
-  if (resolved.source === "default") return { id: resolved.id, context: null, reasoning: null, free: false };
-  return { id: resolved.id, context: resolved.context ?? UNLISTED_CONTEXT_TOKENS, reasoning: resolved.reasoning, free: resolved.free };
+  // How hard a Bot reasons, from Settings; written into the brief with the model, so the run keeps both.
+  const level = levelOf(env.BOT_TEAMMATE_REASONING);
+  if (resolved.source === "default") return { id: resolved.id, context: null, reasoning: null, level, free: false };
+  return { id: resolved.id, context: resolved.context ?? UNLISTED_CONTEXT_TOKENS, reasoning: resolved.reasoning, level, free: resolved.free };
 }
 
 /** Whether the next effort up would run on the model this one already does (a retry would gain nothing). */

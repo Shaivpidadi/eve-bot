@@ -43,8 +43,8 @@ beforeEach(() => {
 describe("the brief's model line", () => {
   it("reads back what it wrote, and nothing when there is none", async () => {
     const { modelInBrief, modelLine } = await import("../agent/lib/models");
-    expect(modelInBrief(`effort: quick\n${modelLine({ id: "free/eyes", context: 1_000_000, reasoning: false })}\n`)).toEqual({ id: "free/eyes", context: 1_000_000, reasoning: false });
-    expect(modelInBrief(`effort: quick\n${modelLine({ id: "acme/plain" })}`)).toEqual({ id: "acme/plain", context: null, reasoning: null });
+    expect(modelInBrief(`effort: quick\n${modelLine({ id: "free/eyes", context: 1_000_000, reasoning: false })}\n`)).toEqual({ id: "free/eyes", context: 1_000_000, reasoning: false, level: null });
+    expect(modelInBrief(`effort: quick\n${modelLine({ id: "acme/plain" })}`)).toEqual({ id: "acme/plain", context: null, reasoning: null, level: null });
     expect(modelInBrief("effort: quick")).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 import { version as packageVersion } from "../../package.json";
+import { liveEnv } from "./settings/store";
 
 /**
  * Which EVE Bot this is, and whether the original has moved on.
@@ -90,7 +91,7 @@ async function latestVersion(fetcher: typeof fetch): Promise<string | null> {
 
 export async function versionReport(fetcher: typeof fetch = fetch): Promise<Version> {
   const version = ownVersion();
-  const latest = process.env.BOT_UPDATE_CHECK === "off" ? null : await latestVersion(fetcher);
+  const latest = liveEnv().BOT_UPDATE_CHECK === "off" ? null : await latestVersion(fetcher);
   const link = updateLink();
   return {
     version,
