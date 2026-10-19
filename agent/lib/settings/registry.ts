@@ -134,7 +134,7 @@ export const SETTINGS: readonly SettingDef[] = [
   // ─── Email ───────────────────────────────────────────────────────────────
   { env: "BOT_EMAIL_WEBHOOK", area: "Email", label: "Email webhook", help: "Where a Bot's send_email posts (Zapier, Make, n8n, your own). Empty: Bots can't send email.", scope: "deployment", tier: "live", kind: { type: "text", placeholder: "https://hooks.example.com/…" }, fallback: "Not set", sensitive: true },
   { env: "BOT_EMAIL_WEBHOOK_TOKEN", area: "Email", label: "Webhook token", help: "Sent as a bearer token. Stored sealed; never shown again.", scope: "deployment", tier: "live", kind: { type: "secret" }, fallback: "None", sensitive: true },
-  { env: "BOT_EMAIL_WEBHOOK_TIMEOUT_MS", area: "Email", label: "Webhook timeout", help: "", scope: "deployment", tier: "live", kind: ms(60_000), fallback: "The default" },
+  { env: "BOT_EMAIL_WEBHOOK_TIMEOUT_MS", area: "Email", label: "Webhook timeout", help: "How long to wait for the sender to answer.", scope: "deployment", tier: "live", kind: { type: "number", min: 1000, max: 120_000, integer: true, unit: "ms" }, fallback: "30,000 ms" },
 
   // ─── Background work ─────────────────────────────────────────────────────
   { env: "BOT_WORKER", area: "Background work", label: "Background worker", help: "Does the watchdog's work every few seconds, so nothing waits for a console. Turned on for the deployment with BOT_WORKER=on; here it can be paused.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "On", where: "worker" },

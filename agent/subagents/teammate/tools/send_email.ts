@@ -18,9 +18,13 @@ import { record } from "../../../lib/activity";
 import { guardSideEffect } from "../../../lib/run-guard";
 import { markPoint } from "../lib/journal";
 import { operator } from "../../../lib/session";
+import { effectiveEnv } from "../../../lib/settings/store";
 
 /** How long one relay request may take before its outcome counts as unknown. */
-const timeoutMs = () => Number(process.env.BOT_EMAIL_WEBHOOK_TIMEOUT_MS ?? 30_000);
+const timeoutMs = (env: Readonly<Record<string, string | undefined>> = process.env): number => {
+  const value = Number(env.BOT_EMAIL_WEBHOOK_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 30_000;
+};
 /** An attempt still `executing` this long after it began died mid-send. */
 const staleAfterMs = () => timeoutMs() + 60_000;
 
@@ -77,7 +81,9 @@ export default defineTool({
   },
   async execute(input, ctx) {
     const who = operator(ctx);
-    const endpoint = process.env.BOT_EMAIL_WEBHOOK;
+    // The webhook and its token come from Settings over the environment (the token sealed there).
+    const settings = await effectiveEnv();
+    const endpoint = settings.BOT_EMAIL_WEBHOOK?.trim() || undefined;
     // Exactly what the relay receives, apart from the action id itself.
     const payload = {
       to: input.to,
@@ -92,7 +98,7 @@ export default defineTool({
         sent: false as const,
         status: "draft" as const,
         reason:
-          "No BOT_EMAIL_WEBHOOK configured, so nothing was sent. This draft is the deliverable: report it as unsent. Do not send it any other way (a mail website, another tool, or the computer).",
+          "No email webhook is set (Settings, Email), so nothing was sent. This draft is the deliverable: report it as unsent. Do not send it any other way (a mail website, another tool, or the computer).",
         draft: { to: input.to, cc: payload.cc, subject: input.subject, body: input.body },
       };
     }
@@ -152,7 +158,7 @@ export default defineTool({
       return begun.action === null ? notAdmitted(action.actionId) : report(begun.action, true);
     }
 
-    const outcome = await post(endpoint, { ...payload, actionId: action.actionId }, action.actionId, ctx.abortSignal);
+    const outcome = await post(endpoint, { ...payload, actionId: action.actionId }, action.actionId, ctx.abortSignal, settings);
     let settled: Action;
     try {
       const written = await apply(
@@ -203,7 +209,7 @@ const stateOf = (outcome: Outcome): Action["state"] =>
  * 408 or a 409 (the relay still working on the same key) leave it possible
  * that the relay accepted, so they are `lose`: delivery unknown, never resent.
  */
-async function post(endpoint: string, body: Record<string, unknown>, actionId: string, abort: AbortSignal): Promise<Outcome> {
+async function post(endpoint: string, body: Record<string, unknown>, actionId: string, abort: AbortSignal, settings: Readonly<Record<string, string | undefined>>): Promise<Outcome> {
   const at = () => new Date().toISOString();
   let response: Response;
   try {
@@ -212,10 +218,10 @@ async function post(endpoint: string, body: Record<string, unknown>, actionId: s
       headers: {
         "content-type": "application/json",
         "idempotency-key": actionId,
-        ...(process.env.BOT_EMAIL_WEBHOOK_TOKEN ? { authorization: `Bearer ${process.env.BOT_EMAIL_WEBHOOK_TOKEN}` } : {}),
+        ...(settings.BOT_EMAIL_WEBHOOK_TOKEN ? { authorization: `Bearer ${settings.BOT_EMAIL_WEBHOOK_TOKEN}` } : {}),
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.any([abort, AbortSignal.timeout(timeoutMs())]),
+      signal: AbortSignal.any([abort, AbortSignal.timeout(timeoutMs(settings))]),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
