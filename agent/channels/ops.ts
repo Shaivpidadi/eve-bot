@@ -1,4 +1,4 @@
-import { DELETE, GET, PATCH, POST, SessionStrandedError, defineChannel } from "eve/channels";
+import { DELETE, GET, PATCH, POST, PUT, SessionStrandedError, defineChannel } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
 
@@ -28,7 +28,11 @@ import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
-import { isProjectWorker, workerTick } from "../lib/worker";
+import { isProjectWorker, workerEverySeconds, workerTick } from "../lib/worker";
+import { gatewayCatalog } from "../lib/gateway-models";
+import { modelsEditable, modelsReport, saveModelSettings, settingsInput } from "../lib/model-settings";
+import { effectiveEnv, saveSettings, settingsReport, workerPaused } from "../lib/settings/store";
+import type { SettingDef } from "../lib/settings/registry";
 import { acceptTrigger, recentTriggers, TRIGGER_PATH, verifiedTrigger } from "../lib/triggers";
 import { sessionIsGone } from "../lib/gone";
 import { worldIsLocal } from "../lib/world";
@@ -201,6 +205,14 @@ async function hireFromForm(
   });
   if (template === null) waitUntil(writeIntro(bot).catch(() => null));
   return { bot: { id: bot.id, name: bot.name, room: roomForBot(bot.id) } };
+}
+
+/** Whether a setting means anything here: the computer it is about, or the worker this deployment runs. */
+function settingApplies(def: SettingDef): boolean {
+  if (def.where === "vercel-computer") return computerMode() === "vercel";
+  if (def.where === "local-computer") return computerMode() === "local";
+  if (def.where === "worker") return /^(1|true|on|yes)$/i.test(process.env.BOT_WORKER?.trim() ?? "");
+  return true;
 }
 
 /** This deployment's public address, for redirect URIs: the configured one, else what the request came in on. */
@@ -384,11 +396,14 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      */
     POST("/bot/v1/internal/tick", async (request, { attachSession, from }) => {
       if (!(await isProjectWorker(request)) && !(await isInternal(request))) return json({ error: "not found" }, 404);
+      // The daemon takes its pace from the answer, so Settings change it without a redeploy.
+      const everySeconds = workerEverySeconds(await effectiveEnv());
+      if (await workerPaused()) return json({ ok: true, paused: true, due: 0, dispatched: 0, notes: 0, everySeconds });
       const outcome = await workerTick(sendInto(from, attachSession));
       if (outcome.dispatch.due > 0 || outcome.notes > 0) {
         console.log(`[bot] worker: ${outcome.dispatch.due} due, ${outcome.dispatch.dispatched} dispatched, ${outcome.notes} notes, ${outcome.dispatch.ms}ms`);
       }
-      return json({ ok: true, ...outcome.dispatch, notes: outcome.notes, slow: outcome.slow });
+      return json({ ok: true, ...outcome.dispatch, notes: outcome.notes, slow: outcome.slow, everySeconds });
     }),
 
     /**
@@ -406,6 +421,47 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       } catch {
         return new Response(null, { status: 503 });
       }
+    }),
+
+    /**
+     * Every setting the caller may see, with its value and where it comes from
+     * (see lib/settings). Tenants see only their own workspace's.
+     */
+    GET("/bot/v1/settings", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return json(await settingsReport(gate.access, process.env, settingApplies));
+    }),
+
+    /** Saves changes ({ "BOT_…": value or null }); deployment settings need the owner. */
+    PUT("/bot/v1/settings", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const changes = body?.changes;
+      if (typeof changes !== "object" || changes === null || Array.isArray(changes)) return json({ error: 'Send { "changes": { "BOT_…": value or null } }.' }, 400);
+      const saved = await saveSettings({ workspaceId: gate.access.workspaceId, owner: gate.access.owner, by: gate.access.user }, changes as Record<string, unknown>);
+      if (!saved.ok) return json({ error: saved.error }, saved.status);
+      return json(await settingsReport(gate.access, process.env, settingApplies));
+    }),
+
+    /** The models each role runs on, AI Gateway's list, and the free-only switch (see lib/model-settings.ts). */
+    GET("/bot/v1/models", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return json(await modelsReport(gate.access.workspaceId));
+    }),
+
+    /** Saves the workspace's model choices; a change applies from the next turn and the next run, within about 30 seconds. */
+    PUT("/bot/v1/models", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!modelsEditable()) return json({ error: "Models are set by this deployment and cannot be changed here." }, 403);
+      const input = settingsInput(await readJson(request));
+      if (input === null) return json({ error: "Send { freeOnly?: boolean, roles?: { hq|standard|quick|deep|helper: model id or null } }." }, 400);
+      const saved = await saveModelSettings(gate.access.workspaceId, input, gate.access.user, await gatewayCatalog());
+      if (!saved.ok) return json({ error: saved.error }, 422);
+      return json(await modelsReport(gate.access.workspaceId));
     }),
 
     /**
@@ -1084,10 +1140,12 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * they are sealed with are left out unless `?secrets=1` is asked for.
      */
     GET("/bot/v1/export", async (request) => {
-      if (!exportEnabled()) return json({ error: "Exporting is off on this deployment. Set BOT_EXPORT=on to allow it." }, 404);
+      if (!exportEnabled(await effectiveEnv())) return json({ error: "Exporting is off on this deployment. Its owner can turn it on in Settings, Data controls." }, 404);
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const secrets = new URL(request.url).searchParams.get("secrets") === "1";
+      // The key secrets are sealed with opens the whole deployment's, so only its owner takes it.
+      if (secrets && !gate.access.owner) return json({ error: "Only this deployment's owner can export secrets." }, 403);
       const out = new PassThrough();
       const chunks: Buffer[] = [];
       out.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -1149,7 +1207,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           hour: Number(hour),
           minute: Number(minute),
           ...(days.length === 0 ? {} : { days }),
-          timezone: typeof body.timezone === "string" && body.timezone.trim() !== "" ? body.timezone.trim() : defaultTimezone(),
+          timezone: typeof body.timezone === "string" && body.timezone.trim() !== "" ? body.timezone.trim() : defaultTimezone(await effectiveEnv(gate.access.workspaceId)),
         };
         if (!isSchedule(candidate)) {
           return json({ error: "That is not a time and timezone I know. Use HH:MM and an IANA name such as America/New_York." }, 422);

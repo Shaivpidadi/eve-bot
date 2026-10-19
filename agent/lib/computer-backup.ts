@@ -9,6 +9,7 @@ import { sandboxIo } from "./computer/runtime";
 import { sessionBinding } from "./computer/screens";
 import { operator } from "./session";
 import { deleteDoc, readBytes, readDoc, writeBytes, writeDoc } from "./store";
+import { effectiveEnv } from "./settings/store";
 
 /**
  * Keeps the team's computer recoverable.
@@ -62,8 +63,15 @@ const ARCHIVE_PATH = `${PRIVATE_DIR}/backup.tgz`;
 const RESTORE_PATH = `${PRIVATE_DIR}/restore.tgz`;
 const PRIVATE_DIR_COMMAND = `mkdir -p ${PRIVATE_DIR} && chmod 700 ${PRIVATE_DIR}`;
 
-const BACKUP_EVERY_MS = Number(process.env.BOT_BACKUP_EVERY_MINUTES ?? (driveWanted() ? 60 : 10)) * 60_000;
-const MAX_ARCHIVE_BYTES = Number(process.env.BOT_BACKUP_MAX_MB ?? 512) * 1024 * 1024;
+/** How often the computer is backed up, and the largest backup (Settings over the environment). */
+const backupEveryMs = (env: Readonly<Record<string, string | undefined>>): number => {
+  const minutes = Number(env.BOT_BACKUP_EVERY_MINUTES);
+  return (Number.isFinite(minutes) && minutes > 0 ? minutes : driveWanted(env) ? 60 : 10) * 60_000;
+};
+const maxArchiveBytes = (env: Readonly<Record<string, string | undefined>>): number => {
+  const megabytes = Number(env.BOT_BACKUP_MAX_MB);
+  return (Number.isFinite(megabytes) && megabytes > 0 ? megabytes : 512) * 1024 * 1024;
+};
 /** How long one process trusts a restore check before looking again. */
 const VERIFIED_FOR_MS = 60_000;
 /** Failures are worth one line in the feed, not one per progress note. */
@@ -166,7 +174,7 @@ export async function checkpointComputer(
   ctx: ToolContext,
   options: { minIntervalMs?: number } = {},
 ): Promise<void> {
-  const minIntervalMs = options.minIntervalMs ?? BACKUP_EVERY_MS;
+  const minIntervalMs = options.minIntervalMs ?? backupEveryMs(await effectiveEnv());
   // A backup already running covers this moment.
   if (checkpointing !== null || Date.now() - lastCheckpointAt < minIntervalMs) return;
   checkpointing = checkpoint(ctx, minIntervalMs).finally(() => {
@@ -276,9 +284,10 @@ async function checkpoint(ctx: ToolContext, minIntervalMs: number): Promise<void
       throw new Error(archived.stderr.trim() || `tar exited ${archived.exitCode}`);
     }
     const size = Number(archived.stdout.trim().split("\n").pop());
-    if (Number.isFinite(size) && size > MAX_ARCHIVE_BYTES) {
+    const maxBytes = maxArchiveBytes(await effectiveEnv());
+    if (Number.isFinite(size) && size > maxBytes) {
       throw new Error(
-        `the computer's files are ${Math.round(size / 1_048_576)} MB compressed, over the ${Math.round(MAX_ARCHIVE_BYTES / 1_048_576)} MB backup limit (BOT_BACKUP_MAX_MB)`,
+        `the computer's files are ${Math.round(size / 1_048_576)} MB compressed, over the ${Math.round(maxBytes / 1_048_576)} MB backup limit (Settings, Team computer)`,
       );
     }
 

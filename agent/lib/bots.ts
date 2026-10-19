@@ -1,8 +1,9 @@
 import { record } from "./activity";
-import { DEFAULT_BOT } from "./default-bot";
+import { DEFAULT_BOT, defaultBotName } from "./default-bot";
 import { newId } from "./ids";
 import { createDoc, deleteDoc, isConflict, listDocs, readDoc, updateDoc, writeDoc } from "./store";
 import type { Bot } from "./types";
+import { effectiveEnv } from "./settings/store";
 
 /**
  * HQ is a teammate too: work no Bot fits is done by HQ, on the team's computer,
@@ -147,8 +148,9 @@ async function seedDefaultBot(workspaceId: string): Promise<void> {
   }
 
   const bots = await listDocs<Bot>(`bots/${workspaceId}/`);
-  const named = bots.find((bot) => bot.name.toLowerCase() === DEFAULT_BOT.name.toLowerCase());
-  const bot = named ?? (await hireBot({ workspaceId, hiredBy: "system", ...DEFAULT_BOT }));
+  const name = defaultBotName(await effectiveEnv(workspaceId).catch(() => process.env));
+  const named = bots.find((bot) => bot.name.toLowerCase() === name.toLowerCase());
+  const bot = named ?? (await hireBot({ workspaceId, hiredBy: "system", ...DEFAULT_BOT, name }));
   const seeded: SeedRecord = { state: "seeded", at: new Date().toISOString(), botId: bot.id };
   await writeDoc(seedKey(workspaceId), seeded);
 }

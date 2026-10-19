@@ -6,7 +6,10 @@ import { DockerSandbox } from "eve/sandbox/docker";
 import { MicrosandboxSandbox } from "eve/sandbox/microsandbox";
 import { VercelSandbox } from "eve/sandbox/vercel";
 
-import { attachDrive, bindDrive, driveHeld, driveMounts, driveWanted, ensureDrive } from "./computer-drive";
+import { Sandbox as VercelMachine } from "@vercel/sandbox";
+
+import { attachDrive, bindDrive, DRIVE_MOUNT, driveHeld, driveMounts, driveWanted, ensureDrive } from "./computer-drive";
+import { effectiveEnv, liveEnv } from "./settings/store";
 import { TeamComputer } from "./team-computer";
 
 /**
@@ -39,17 +42,36 @@ export const COMPUTER_PORT = 6080;
  */
 export const AGENT_BROWSER_INSTALL = { installBrowser: false, installSystemDependencies: false } as const;
 
-const allow = (process.env.BOT_SANDBOX_ALLOW_DOMAINS ?? "")
-  .split(",")
-  .map((entry) => entry.trim())
-  .filter((entry) => entry.length > 0);
+type Env = Readonly<Record<string, string | undefined>>;
+
+/** The hosts the computer may reach, from Settings over `BOT_SANDBOX_ALLOW_DOMAINS`; empty is everything. */
+export const allowedDomains = (env: Env = liveEnv()): string[] =>
+  (env.BOT_SANDBOX_ALLOW_DOMAINS ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 
 /**
  * Egress is open by default because the browser and packages download on first
- * use. Set BOT_SANDBOX_ALLOW_DOMAINS in production to fence the computer to the
- * hosts it needs — applied at the firewall, outside the sandbox.
+ * use. Set the allowed sites in production to fence the computer to the hosts
+ * it needs — applied at the firewall, outside the sandbox.
  */
-const networkPolicy: SandboxNetworkPolicy = allow.length > 0 ? { allow } : "allow-all";
+export function networkPolicy(env: Env = liveEnv()): SandboxNetworkPolicy {
+  const allow = allowedDomains(env);
+  return allow.length > 0 ? { allow } : "allow-all";
+}
+
+/** The computer's CPUs (2 GB of memory each), 1 to 8, 4 otherwise. */
+export function computerVcpus(env: Env = liveEnv()): number {
+  const vcpus = Number(env.BOT_SANDBOX_VCPUS?.trim() || 4);
+  return Number.isInteger(vcpus) && vcpus >= 1 && vcpus <= 8 ? vcpus : 4;
+}
+
+/** How long the Vercel computer runs between uses before it idles out, in ms. */
+export function computerTimeoutMs(env: Env = liveEnv()): number {
+  const minutes = Number(env.BOT_SANDBOX_TIMEOUT_MINUTES?.trim() || 30);
+  return (Number.isFinite(minutes) && minutes > 0 ? Math.min(minutes, 5 * 60) : 30) * 60_000;
+}
 
 /** Why the Vercel computer cannot start here, or null when it can. */
 export function vercelCredentialsError(): string | null {
@@ -75,42 +97,79 @@ export function computerEnvironment(prepare: (sandbox: SandboxSession) => Promis
       const environment = image.kind === "dockerfile" ? DockerSandbox.dockerfile(options) : image.kind === "image" ? DockerSandbox.image(image.reference, options) : DockerSandbox.environment(options);
       return TeamComputer.environment({ provider: "docker", environment, check: localModeError });
     }
-    const options = { prepare, memoryMiB: 2048 * Number(process.env.BOT_SANDBOX_VCPUS ?? 4) };
+    const options = { prepare, memoryMiB: 2048 * computerVcpus(process.env) };
     const environment =
       image.kind === "dockerfile" ? MicrosandboxSandbox.dockerfile(options) : image.kind === "image" ? MicrosandboxSandbox.image(image.reference, options) : MicrosandboxSandbox.environment(options);
     return TeamComputer.environment({ provider: "microsandbox", environment, check: localModeError });
   }
-  const minutes = Number(process.env.BOT_SANDBOX_TIMEOUT_MINUTES ?? 30);
+  // What a new machine is made with; Settings changed since are pushed to it by `reconcile`.
   return TeamComputer.environment({
     provider: "vercel",
     environment: VercelSandbox.environment({
       prepare,
       // A prebuilt image in Vercel Container Registry; without one, eve's base image and the first-boot install.
       ...(image.kind === "image" ? { image: image.reference } : {}),
-      networkPolicy,
-      resources: { vcpus: Number(process.env.BOT_SANDBOX_VCPUS ?? 4) },
+      networkPolicy: networkPolicy(process.env),
+      resources: { vcpus: computerVcpus(process.env) },
       ports: [COMPUTER_PORT],
-      timeout: minutes * 60_000,
+      timeout: computerTimeoutMs(process.env),
     }),
     check: vercelCredentialsError,
-    ...(driveWanted() ? { open: computerOpenOptions(), beforeStart: ensureDrive, onMachine: onDriveMachine, startAgain: driveHeld } : {}),
+    open: computerOpenOptions(process.env),
+    beforeStart: async () => {
+      const env = await effectiveEnv().catch(() => process.env);
+      if (driveWanted(env)) await ensureDrive(env);
+    },
+    onMachine: reconcile,
+    startAgain: driveHeld,
   });
 }
 
-/** Machines named here already carry the drive (or were asked to from their next start). */
-const attached = new Set<string>();
+/** Whether two network policies allow the same hosts; Vercel may read a list back as a map of hosts to rules. */
+export function sameNetwork(current: unknown, wanted: SandboxNetworkPolicy): boolean {
+  const hosts = (policy: unknown): string => {
+    if (policy === undefined || policy === null) return "allow-all";
+    if (typeof policy === "string") return policy;
+    const allow = (policy as { allow?: unknown }).allow;
+    const list = Array.isArray(allow) ? allow.map(String) : typeof allow === "object" && allow !== null ? Object.keys(allow) : [];
+    return [...list].sort().join(",");
+  };
+  return hosts(current) === hosts(wanted);
+}
+
+/** What was last pushed to each machine, by name, so an unchanged machine costs no call to Vercel. */
+const reconciled = new Map<string, { readonly wanted: string; readonly mounted: boolean }>();
 
 /**
- * Every time a session gets the Vercel computer with a drive: a machine from
- * before the drive is given it (it mounts from its next start), and the work
- * folders are bound from it (see `computer-drive.ts`).
+ * Every time a session gets the Vercel computer: Settings changed since the
+ * machine was made are pushed to it (the allowed sites and how long it stays
+ * up apply at once, CPUs and a new drive from its next session), and the work
+ * folders are bound from its drive (see `computer-drive.ts`).
  */
-async function onDriveMachine(sandbox: SandboxSession, state: unknown): Promise<void> {
+export async function reconcile(sandbox: SandboxSession, state: unknown): Promise<void> {
   const name = (state as { sandboxName?: unknown } | null)?.sandboxName;
-  if (typeof name === "string" && !attached.has(name)) {
-    if (await attachDrive(name)) console.log(`[computer] ${name} will mount its drive from its next start.`);
-    attached.add(name);
+  if (typeof name !== "string") return;
+  const env = await effectiveEnv().catch(() => process.env);
+  const wanted = { networkPolicy: networkPolicy(env), vcpus: computerVcpus(env), timeout: computerTimeoutMs(env), drive: driveWanted(env) };
+  const key = JSON.stringify(wanted);
+  let known = reconciled.get(name);
+  if (known?.wanted !== key) {
+    const machine = await VercelMachine.get({ name });
+    const update: Parameters<typeof machine.update>[0] = {
+      ...(sameNetwork(machine.networkPolicy, wanted.networkPolicy) ? {} : { networkPolicy: wanted.networkPolicy }),
+      ...(machine.vcpus === wanted.vcpus ? {} : { resources: { vcpus: wanted.vcpus } }),
+      ...(machine.timeout === wanted.timeout ? {} : { timeout: wanted.timeout }),
+    };
+    if (Object.keys(update).length > 0) {
+      await machine.update(update);
+      console.log(`[computer] ${name}: applied ${Object.keys(update).join(", ")} from Settings.`);
+    }
+    // A drive is only ever added here: the work on it stays mounted until someone removes it by hand.
+    if (wanted.drive && (await attachDrive(name, env))) console.log(`[computer] ${name} will mount its drive from its next start.`);
+    known = { wanted: key, mounted: wanted.drive || machine.mounts?.[DRIVE_MOUNT] !== undefined };
+    reconciled.set(name, known);
   }
+  if (!known.mounted) return;
   const { sandboxIo } = await import("./computer/runtime");
   await bindDrive(sandboxIo(sandbox));
 }
@@ -139,12 +198,12 @@ export function computerImage(
 }
 
 /** Options the machine is opened with: local providers take their network policy here, and a Vercel computer its drive. */
-export function computerOpenOptions(): object | undefined {
+export function computerOpenOptions(env: Env = liveEnv()): object | undefined {
   if (computerMode() !== "local") {
-    const mounts = driveMounts();
+    const mounts = driveMounts(env);
     return mounts === undefined ? undefined : { mounts };
   }
-  return localComputer() === "docker" ? { networkPolicy: allow.length > 0 ? "deny-all" : "allow-all" } : { networkPolicy };
+  return localComputer() === "docker" ? { networkPolicy: allowedDomains(env).length > 0 ? "deny-all" : "allow-all" } : { networkPolicy: networkPolicy(env) };
 }
 
 /**

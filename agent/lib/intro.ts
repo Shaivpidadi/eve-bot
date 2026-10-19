@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { patchBot } from "./bots";
 import { spent } from "./jev";
-import { extractionModel, extractionModelId } from "./memory/capture";
+import { helperModel } from "./memory/capture";
 import { chargeUsage, reportedCost } from "./spend";
 import type { Bot } from "./types";
 import { withGatewayOptions } from "./models";
@@ -23,8 +23,9 @@ const INTRO = z.object({
  * on the Bot's own bill.
  */
 export async function writeIntro(bot: Bot): Promise<Bot["intro"]> {
+  const { model, id: modelId } = await helperModel(bot.workspaceId);
   const result = await generateText({
-    model: extractionModel(),
+    model,
     output: Output.object({ schema: INTRO }),
     providerOptions: withGatewayOptions(),
     system:
@@ -33,7 +34,7 @@ export async function writeIntro(bot: Bot): Promise<Bot["intro"]> {
     maxRetries: 0,
     abortSignal: AbortSignal.timeout(30_000),
   });
-  void chargeUsage(bot.workspaceId, { botId: bot.id }, spent(result.usage, result.providerMetadata, extractionModelId()), {
+  void chargeUsage(bot.workspaceId, { botId: bot.id }, spent(result.usage, result.providerMetadata, modelId), {
     costReported: reportedCost(result.providerMetadata) !== null,
   }).catch(() => undefined);
   const intro = { hello: result.output.hello.trim(), starters: result.output.starters.map((starter) => starter.trim()) };

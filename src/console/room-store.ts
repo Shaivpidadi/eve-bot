@@ -13,7 +13,7 @@ const NO_REPLY_MS = 50_000;
 const HQ_ROOM_NAME = "desk";
 
 /** The glyph a notice wears; the transcript draws each with its lucide icon. */
-export type NoticeIcon = "alert" | "branch" | "brain" | "check" | "clock" | "dot" | "folder" | "mail" | "monitor" | "person" | "plug" | "x";
+export type NoticeIcon = "alert" | "branch" | "check" | "clock" | "dot" | "folder" | "mail" | "monitor" | "person" | "plug" | "x";
 
 export interface Notice {
   readonly icon: NoticeIcon;
@@ -26,6 +26,8 @@ export interface Notice {
   readonly face?: string;
   /** The job it is about, when it is about one. */
   readonly jobId?: string;
+  /** A small line rather than a notice, such as what was just remembered. */
+  readonly quiet?: true;
 }
 
 /**
@@ -61,7 +63,7 @@ export function failureNotice(message: string): Omit<Notice, "icon"> {
   if (/\bdoes not support (?:image|file|vision)\b|\bimage (?:or file )?input is not supported\b/i.test(message)) {
     return {
       label: "This model can't see the screen",
-      detail: "It reads text only, and the browser works from screenshots. Choose a model that takes images for this Bot (BOT_TEAMMATE_MODEL), then try again.",
+      detail: "It reads text only, and the browser works from screenshots. Choose a model that takes images for Bots on the Models page, then try again.",
       tone: "error",
     };
   }
@@ -248,6 +250,12 @@ export class RoomStore {
         body: JSON.stringify({ message }),
       });
       if (!response.ok) throw new Error(await errorMessage(response, "Could not send"));
+      const sent: unknown = await response.json().catch(() => null);
+      const sessionId = typeof sent === "object" && sent !== null && typeof (sent as { sessionId?: unknown }).sessionId === "string" ? (sent as { sessionId: string }).sessionId : null;
+      // The message went into a different session than the one being read (after a
+      // branch, or once the server moved a stranded thread on): the open stream will
+      // never carry the reply, so read the room again from its start.
+      if (sessionId !== null && this.sessionId !== null && sessionId !== this.sessionId) this.switchSession();
       void this.follow();
       this.poke();
       this.expectReply(message);
@@ -426,6 +434,19 @@ export class RoomStore {
     }
     this.poke();
     return true;
+  }
+
+  /**
+   * The room moved to another session while this reader follows the old one.
+   * The stream reads the room's earlier sessions first, so starting over from
+   * its first event rebuilds the whole thread and then follows the new session.
+   */
+  private switchSession(): void {
+    this.controller?.abort();
+    this.controller = null;
+    this.following = false;
+    this.reset();
+    this.sessionId = null;
   }
 
   /** The thread was started over on the server: show it empty and follow whatever comes next. */
@@ -847,7 +868,7 @@ export function buildTimeline(
       const remembered = event.kind === "memory.saved";
       const cut = event.text.indexOf(": ");
       if (remembered) {
-        out.push({ kind: "notice", key: event.id, at: event.at, icon: "brain", label: "Memory", detail: event.text });
+        out.push({ kind: "notice", key: event.id, at: event.at, icon: "dot", label: "Memory", detail: event.text, quiet: true });
         continue;
       }
       out.push({

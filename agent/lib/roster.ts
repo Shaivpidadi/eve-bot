@@ -2,7 +2,7 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 
 import { spent } from "./jev";
-import { extractionModel, extractionModelId } from "./memory/capture";
+import { helperModel } from "./memory/capture";
 import { chargeUsage, reportedCost } from "./spend";
 import { TEMPLATES } from "./templates";
 import { withGatewayOptions } from "./models";
@@ -36,8 +36,9 @@ export type ProposedBot = z.infer<typeof PROPOSAL>["bots"][number];
  * Nothing is created here; the person picks which to hire.
  */
 export async function proposeRoster(workspaceId: string, need: string, team: readonly { name: string; role: string }[]): Promise<ProposedBot[]> {
+  const { model, id: modelId } = await helperModel(workspaceId);
   const result = await generateText({
-    model: extractionModel(),
+    model,
     output: Output.object({ schema: PROPOSAL }),
     providerOptions: withGatewayOptions(),
     system: [
@@ -55,7 +56,7 @@ export async function proposeRoster(workspaceId: string, need: string, team: rea
     maxRetries: 0,
     abortSignal: AbortSignal.timeout(45_000),
   });
-  void chargeUsage(workspaceId, "hq", spent(result.usage, result.providerMetadata, extractionModelId()), {
+  void chargeUsage(workspaceId, "hq", spent(result.usage, result.providerMetadata, modelId), {
     costReported: reportedCost(result.providerMetadata) !== null,
   }).catch(() => undefined);
   const taken = new Set(team.map((member) => member.name.toLowerCase()));

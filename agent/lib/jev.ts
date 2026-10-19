@@ -3,6 +3,7 @@ import { experimental_decide as decide, type Experimental_DecisionQuestion as Ev
 import { chargeUsage, reportedCost } from "./spend";
 import type { Usage } from "./usage";
 import { withGatewayOptions } from "./models";
+import { liveEnv } from "./settings/store";
 
 /**
  * Jev: small decisions, for a tenth of a cent.
@@ -47,12 +48,12 @@ export function gatewayReachable(env: Env = process.env): boolean {
  * wherever the Gateway cannot be reached — a standalone server on Ollama keeps
  * working, it simply never gets a second opinion.
  */
-export function jevEnabled(env: Env = process.env): boolean {
+export function jevEnabled(env: Env = liveEnv()): boolean {
   if (off(env.BOT_JEV)) return false;
   return gatewayReachable(env);
 }
 
-export function confidenceFloor(env: Env = process.env): number {
+export function confidenceFloor(env: Env = liveEnv()): number {
   const raw = Number(env.BOT_JEV_CONFIDENCE);
   return Number.isFinite(raw) && raw > 0 && raw <= 1 ? raw : DEFAULT_CONFIDENCE;
 }
@@ -94,7 +95,7 @@ const count = (value: unknown): number => (typeof value === "number" && Number.i
  * number is 0 here, while the budget is told separately that nobody priced the
  * call (`reportedCost` is null; see `judge`).
  */
-export function spent(usage: unknown, metadata: unknown, model: string = process.env.BOT_JEV_MODEL?.trim() || DEFAULT_MODEL): Usage {
+export function spent(usage: unknown, metadata: unknown, model: string = liveEnv().BOT_JEV_MODEL?.trim() || DEFAULT_MODEL): Usage {
   const raw = (usage ?? {}) as { inputTokens?: unknown; outputTokens?: unknown; inputTokenDetails?: { cacheReadTokens?: unknown; cacheWriteTokens?: unknown } };
   return {
     inputTokens: count(raw.inputTokens),
@@ -138,7 +139,7 @@ export async function judge<const QUESTIONS extends Record<string, EvaluationQue
   if (!jevEnabled()) return null;
   try {
     const result = await decide({
-      model: process.env.BOT_JEV_MODEL?.trim() || DEFAULT_MODEL,
+      model: liveEnv().BOT_JEV_MODEL?.trim() || DEFAULT_MODEL,
       state: state as never,
       questions,
       providerOptions: withGatewayOptions(),

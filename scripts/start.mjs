@@ -17,7 +17,14 @@ import { pathToFileURL } from "node:url";
 
 import nextEnv from "@next/env";
 
+import { overlaySettings, savedSettings } from "./settings.mjs";
+
 nextEnv.loadEnvConfig(process.cwd(), false);
+
+// Settings saved in the console that the agent's build fixes (caps, where the
+// computer runs) win over .env; a change since the last build rebuilds it.
+const plan = savedSettings("plan");
+overlaySettings(plan?.overlay);
 
 const agentEntry = join(process.cwd(), ".output", "server", "index.mjs");
 
@@ -25,13 +32,14 @@ const agentEntry = join(process.cwd(), ".output", "server", "index.mjs");
 // decides a few things (which web search, which model endpoint) from the
 // environment it starts with. BOT_BUILD_ON_START=1 asks for that; a missing
 // build gets one either way.
-if (process.env.BOT_BUILD_ON_START === "1" || !existsSync(agentEntry)) {
-  console.log("[bot] Building the agent...");
+if (process.env.BOT_BUILD_ON_START === "1" || !existsSync(agentEntry) || plan?.changed === true) {
+  console.log(plan?.changed === true && existsSync(agentEntry) ? "[bot] Settings changed since the last build; building the agent again..." : "[bot] Building the agent...");
   const built = spawnSync(join(process.cwd(), "node_modules", ".bin", "eve"), ["build"], { stdio: "inherit" });
   if (built.status !== 0) {
     console.error("[bot] The agent did not build; see above.");
     process.exit(built.status ?? 1);
   }
+  savedSettings("record");
 }
 if (!existsSync(agentEntry)) {
   console.error("[bot] No agent build at .output/. Run `npm run build` first.");

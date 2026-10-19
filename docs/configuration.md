@@ -1,29 +1,92 @@
 # Configuration
 
-Everything is optional except a model credential. `.env.example` documents all
-of it; these are the ones that matter.
+Everything is optional except a model credential. Most of it is set in the console, on the **Settings** page; the
+environment variables below are the defaults until it is, and `.env.example` documents every one.
+
+## Settings
+
+The gear in the console's sidebar opens Settings, by area: Models, Spend, Team computer, Browser, Memory & decisions,
+Email, Background work, Team and Data controls. Each setting says where its value comes from (changed here, from
+`.env`, or the default), and Reset goes back to the environment's.
+
+- **Who changes what.** Settings for the whole deployment (the computer, the browser, email, data controls) are its
+  owner's:
+  - the holder of `BOT_CONSOLE_TOKEN`;
+  - on Vercel with Vercel Authentication, whoever signs in to the production deployment;
+  - locally with no token, the developer.
+
+  `BOT_CONSOLE_TOKENS` holders are tenants: they see and change their own workspace's settings (timezone, first
+  Bot's name, models, reasoning, memory), and may only set its budget below the deployment's.
+- **When a change applies.**
+  - Most apply within about 30 seconds, on every instance.
+  - The computer's settings apply when a session next gets the computer. On Vercel the allowed sites and timeout are
+    pushed to the running machine; CPUs and a drive apply from its next session. On Docker they apply from the
+    container's next start.
+  - Cost and token caps and where the computer runs are fixed when the agent is built. `npm run build` and
+    `npm start` lay the saved values over the environment and record what they used, `npm start` rebuilds when they
+    changed, and on Vercel they apply with the next deploy. Until then the page marks the change as waiting.
+- **Secrets** (the email webhook's token) are sealed with the computer's key and never shown again. An export
+  without secrets leaves all saved settings out.
+- **Locking.** `BOT_SETTINGS_EDITABLE=off` shows the page without letting anyone change it, so only the environment
+  applies. `BOT_MODELS_EDITABLE=off` does the same for models alone.
+- **Environment only.** These stay in the environment, because the console needs them before it can run, or because
+  changing them from a web page would be unsafe:
+  - model access and your own endpoint (`AI_GATEWAY_API_KEY`, `BOT_MODEL_BASE_URL`, …);
+  - the store (`BOT_STORE`, `BLOB_READ_WRITE_TOKEN`, `BOT_DATA_DIR`);
+  - sign-in (`BOT_CONSOLE_TOKEN`, `BOT_CONSOLE_TOKENS`, `BOT_CONSOLE_AUTH`, `BOT_CONSOLE_OPEN`);
+  - the computer's name and key (`BOT_COMPUTER_NAME`, `BOT_COMPUTER_KEY`), which name its drive and seal secrets;
+  - shell isolation (`BOT_SHELL_ISOLATION`);
+  - web search on your own endpoint;
+  - the tick and standup schedules;
+  - whether the background worker runs at all (`BOT_WORKER`). Settings can pause it and set its pace.
 
 ## Models
+
+The console's **Models** page picks the AI Gateway model for each role:
+- **HQ:** the conversation.
+- **Bots:** standard, quick and deep jobs.
+- **Helper:** memories, a new Bot's hello, and team suggestions.
+
+It lists Gateway's models, free ones first and then paid ones cheapest first, with prices and whether each can see
+screenshots. You can also type any `provider/model` id Gateway serves. **Free models only** puts every role on a free
+model; a role not set to one runs on the free model that can see screenshots (`minimax/minimax-m3.1-flash` today).
+
+Choices are saved per workspace and win over the variables below, which stay the defaults. A change applies from
+HQ's next message and each job's next run, within about 30 seconds, and a running job keeps its model. The page warns
+when a choice will hurt:
+- a model that can't see screenshots on a Bots role, since browser steps then fail;
+- a helper that can't answer in a fixed format, since memories may not save;
+- a model Gateway no longer lists.
+
+While `BOT_ZDR` is on, it refuses models without Zero Data Retention. With `BOT_MODEL_BASE_URL` set, the page only
+shows the endpoint's models.
 
 | Variable | Does |
 | --- | --- |
 | `AI_GATEWAY_API_KEY` | model access on Vercel (or link the project and use OIDC) |
 | `BOT_MODEL_BASE_URL` / `BOT_MODEL` / `BOT_MODEL_API_KEY` | your own OpenAI-compatible endpoint and the model used everywhere on it |
 | `BOT_MODEL_QUICK` / `BOT_MODEL_STANDARD` / `BOT_MODEL_DEEP` | the model at each effort level; HQ routes between the last two |
-| `BOT_HQ_MODEL` | pin HQ to one model |
+| `BOT_HQ_MODEL` | HQ's default model |
+| `BOT_TEAMMATE_MODEL` / `BOT_MEMORY_MODEL` | one default model for every Bot job / the helper's default model |
+| `BOT_MODELS_EDITABLE` | `off` makes the Models page read-only, for a deployment whose console tokens go to people who should not choose what its Gateway key pays for |
 | `BOT_MODEL_PRICES` | `model=in/out` USD per million tokens, so spend caps hold off Gateway; OpenRouter is read automatically |
 | `BOT_JEV` / `BOT_JEV_MODEL` / `BOT_JEV_CONFIDENCE` | the decision model behind memory and the browser gate; `off` disables it (see [Development](development.md#a-second-opinion-on-small-decisions)) |
 | `BOT_ZDR` | `1` asks AI Gateway for Zero Data Retention on every call: only providers with a no-retention agreement serve it (Pro and Enterprise; see [Safety](safety.md#data-controls)) |
 | `BOT_INFERENCE_REGION` | `us` keeps inference in that region; Gateway fails a call it cannot serve there rather than run it elsewhere |
 
-Free models are fine for trying things, with limits (checked 16 Oct 2026). On AI
-Gateway, `nvidia/nemotron-3.5-lightning-free` and `stealth/cat-jam` cost nothing
-and both run HQ, Bots and the shell. Neither takes images, so the browser fails
-when a step sends it a screenshot (the thread says so). Neither can extract
-memories either: Nemotron's answers do not fit the schema, and Cat Jam refuses
-the structured request. Keep memory on a paid quick model (`BOT_MEMORY_MODEL`)
-or off. Free models offer no Zero Data Retention, and a stealth model can go
-away without notice. Vercel's Token Pass (Pro, early access) is the cheaper
+Free models are fine for trying things, with limits (checked 19 Oct 2026). On AI Gateway,
+`minimax/minimax-m3.1-flash` costs nothing and does everything here:
+- it calls tools;
+- it sees screenshots, so the browser works;
+- it extracts memories.
+
+A full job ran on it end to end. Other free models fall short:
+- `nvidia/nemotron-3.5-lightning-free`, `stealth/cat-jam`, `stealth/glyph-cluster`, `poolside/laguna-s-2.1-free`
+  and `reflection/beam-free` take no images, so browser steps fail (the thread says so).
+- Those tested couldn't extract memories.
+
+Free models offer no Zero Data Retention, and a stealth model can go away without notice; the Models page shows
+what is free today. Vercel's Token Pass (Pro, early access) is the cheaper
 paid option: $30 buys $80 of usage on the models it covers.
 
 ## Spend
@@ -66,7 +129,7 @@ paid option: $30 buys $80 of usage on the models it covers.
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
-| `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | Vercel Pro, production: `on` runs the background worker (`daemon/`, a [Vercel Daemon](https://vercel.com/docs/daemons) that `vercel.json` declares and that idles while this is off), which asks the app for the watchdog's work every `30` seconds with its OIDC token, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. About 3 Vercel Blob operations a pass, roughly $1–2 a month; **never on Hobby**, whose 2,000 monthly Blob operations it would use up within hours (Vercel then blocks the store for 30 days). Redeploy after changing it |
+| `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | Vercel Pro, production: `on` runs the background worker (`daemon/`, a [Vercel Daemon](https://vercel.com/docs/daemons) that `vercel.json` declares and that idles while this is off), which asks the app for the watchdog's work every `30` seconds with its OIDC token, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. About 3 Vercel Blob operations a pass, roughly $1–2 a month; **never on Hobby**, whose 2,000 monthly Blob operations it would use up within hours (Vercel then blocks the store for 30 days). Redeploy after turning it on or off; Settings can pause it or change its pace without one |
 | `BOT_TICK_ON_START` | `off` stops a standalone server sweeping for stranded jobs a minute after it starts |
 | `BOT_WORKFLOW_WORLD` | a shared Workflow world package for a standalone server, such as `@workflow/world-postgres` (with `WORKFLOW_POSTGRES_URL`), so conversations survive rebuilds; experimental, see `docs/decisions/0002-workflow-world.md` |
 | `BOT_BUILD_ID` | overrides the build id leases are stamped with (see `docs/safety.md`, run fencing) |

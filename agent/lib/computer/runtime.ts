@@ -16,6 +16,7 @@ import {
   type ComputerRuntime,
 } from "./script";
 import { DEFAULT_SHELL_PORTS } from "./shell-helper";
+import { liveEnv } from "../settings/store";
 
 /**
  * Operating the team's computer: its screens, sign-ins and files.
@@ -75,15 +76,18 @@ export class ComputerError extends Error {
   }
 }
 
-let runtime: ComputerRuntime | null = null;
+let runtime: { readonly from: string; readonly runtime: ComputerRuntime } | null = null;
 
+/** The runtime for the Chrome flags, proxy and mirror set in Settings over the environment; made again when they change. */
 function currentRuntime(): ComputerRuntime {
-  const flags = [process.env.BOT_COMPUTER_CHROME_FLAGS ?? ""];
-  if (process.env.BOT_BROWSER_PROXY) flags.push(`--proxy-server=${process.env.BOT_BROWSER_PROXY}`);
+  const env = liveEnv();
+  const flags = [env.BOT_COMPUTER_CHROME_FLAGS ?? ""];
+  if (env.BOT_BROWSER_PROXY) flags.push(`--proxy-server=${env.BOT_BROWSER_PROXY}`);
+  const from = JSON.stringify([flags, env.BOT_COMPUTER_APT_MIRROR ?? ""]);
   // Whether Chrome may keep its own sandbox is decided on the computer, at launch: an
   // ordinary Docker container forbids the user namespaces it needs (see `script.ts`).
-  runtime ??= computerRuntime({ chromeFlags: flags.join(" "), aptMirror: process.env.BOT_COMPUTER_APT_MIRROR });
-  return runtime;
+  if (runtime?.from !== from) runtime = { from, runtime: computerRuntime({ chromeFlags: flags.join(" "), aptMirror: env.BOT_COMPUTER_APT_MIRROR }) };
+  return runtime.runtime;
 }
 
 /** How long a process trusts that the computer has the current runtime. */
@@ -159,8 +163,8 @@ export async function installSoftware(io: ComputerIo): Promise<void> {
 }
 
 /** What a Bot's shell may connect to when Landlock fences it: the defaults plus `BOT_SHELL_TCP_PORTS`. */
-export function shellPorts(): string {
-  const extra = (process.env.BOT_SHELL_TCP_PORTS ?? "").split(",").map((entry) => Number(entry.trim()));
+export function shellPorts(env: Readonly<Record<string, string | undefined>> = liveEnv()): string {
+  const extra = (env.BOT_SHELL_TCP_PORTS ?? "").split(",").map((entry) => Number(entry.trim()));
   const ports = new Set<number>([...DEFAULT_SHELL_PORTS, ...extra.filter((port) => Number.isInteger(port) && port > 0 && port < 65536)]);
   return [...ports].sort((left, right) => left - right).join(",");
 }

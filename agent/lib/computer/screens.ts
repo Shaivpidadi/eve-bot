@@ -1,5 +1,6 @@
 import { COMPUTER_NAME } from "../computer";
 import { readDoc, updateDoc, writeDoc } from "../store";
+import { effectiveEnv } from "../settings/store";
 
 /**
  * Screens on the team's computer.
@@ -142,7 +143,11 @@ export async function clearBotTab(workspaceId: string, botId: string, sessionId?
   });
 }
 
-export const MAX_SCREENS = Math.min(9, Math.max(1, Number(process.env.BOT_COMPUTER_MAX_SCREENS ?? 4)));
+/** Screens the computer runs at once, 1 to 9 (Settings over the environment). */
+export const maxScreens = (env: Readonly<Record<string, string | undefined>> = process.env): number => {
+  const value = Number(env.BOT_COMPUTER_MAX_SCREENS);
+  return Number.isInteger(value) ? Math.min(9, Math.max(1, value)) : 4;
+};
 
 /** Everything on a screen listens on localhost only; websockify is the way in. */
 export const screenPorts = (n: number) => ({
@@ -187,6 +192,7 @@ export async function teamScreen(workspaceId: string): Promise<ScreenAllocation 
  * recently used screen that nobody is controlling moves to this workspace.
  */
 export async function allocateScreen(workspaceId: string, botId?: string): Promise<ScreenAllocation> {
+  const screens = maxScreens(await effectiveEnv());
   const outcome: { screen: ScreenAllocation | null } = { screen: null };
   await updateDoc<ScreenTable>(TABLE_KEY, (current) => {
     const table = current ?? emptyTable();
@@ -198,7 +204,7 @@ export async function allocateScreen(workspaceId: string, botId?: string): Promi
     }
 
     const taken = new Set(table.screens.map((screen) => screen.n));
-    const free = Array.from({ length: MAX_SCREENS }, (_, index) => index + 1).find((n) => !taken.has(n));
+    const free = Array.from({ length: screens }, (_, index) => index + 1).find((n) => !taken.has(n));
     const reclaim =
       free === undefined
         ? [...table.screens]

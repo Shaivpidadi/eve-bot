@@ -1,3 +1,5 @@
+import { liveEnv } from "./settings/store";
+
 /**
  * "Every weekday at 9" is not "every 1440 minutes".
  *
@@ -140,8 +142,8 @@ export function nextRun(schedule: Schedule, from: Date): Date {
 }
 
 /** The timezone a clock routine uses when nobody named one. */
-export const defaultTimezone = (): string => {
-  const named = process.env.BOT_TIMEZONE?.trim();
+export const defaultTimezone = (env: Readonly<Record<string, string | undefined>> = liveEnv()): string => {
+  const named = env.BOT_TIMEZONE?.trim();
   if (named !== undefined && named !== "" && isTimezone(named)) return named;
   try {
     return new Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";

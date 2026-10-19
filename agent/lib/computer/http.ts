@@ -23,7 +23,8 @@ import {
   type ScreenAllocation,
   type ScreenControl,
 } from "./screens";
-import { mintToken, type ComputerAccess } from "./tokens";
+import { mintToken, tokenTtlSeconds, type ComputerAccess } from "./tokens";
+import { effectiveEnv } from "../settings/store";
 
 /**
  * The console's computer routes: the team's live browser and its still frame,
@@ -46,7 +47,11 @@ const json = (body: unknown, status = 200) =>
 /** Control lapses this long after the console's last heartbeat. */
 const CONTROL_LEASE_MS = 90_000;
 /** Nobody holds a Bot's browser longer than this in one go. */
-const CONTROL_MAX_MS = Number(process.env.BOT_COMPUTER_CONTROL_MINUTES ?? 30) * 60_000;
+/** The longest one person may hold a Bot's browser (Settings over the environment). */
+const controlMaxMs = (env: Readonly<Record<string, string | undefined>>): number => {
+  const minutes = Number(env.BOT_COMPUTER_CONTROL_MINUTES);
+  return (Number.isFinite(minutes) && minutes > 0 ? minutes : 30) * 60_000;
+};
 /** How long a request waits on the computer before answering "starting". */
 const START_WAIT_MS = 20_000;
 
@@ -171,7 +176,7 @@ async function connection(
       inputUrl: `/bot/v1/bots/${botId}/computer/input`,
     });
   }
-  const token = mintToken(await computerKey(), { n: screen.n, target: "browser", access });
+  const token = mintToken(await computerKey(), { n: screen.n, target: "browser", access }, tokenTtlSeconds(await effectiveEnv()));
   return json({ mode: "vnc", ...shared, url: gateway + token });
 }
 
@@ -273,7 +278,7 @@ export async function renewControl(access: Access, botId: string | undefined): P
   if (screen === null || current === null || current.by !== access.user) {
     return json({ error: "You do not have control of this browser." }, 409);
   }
-  const until = Math.min(Date.now() + CONTROL_LEASE_MS, Date.parse(current.since) + CONTROL_MAX_MS);
+  const until = Math.min(Date.now() + CONTROL_LEASE_MS, Date.parse(current.since) + controlMaxMs(await effectiveEnv()));
   if (until <= Date.now()) {
     await setControl(screen.n, null);
     return json({ error: "Control timed out. Take control again if you still need it." }, 409);

@@ -4,6 +4,7 @@ import ops from "../channels/ops";
 import { getBot } from "../lib/bots";
 import { botIdForRoom, HQ_ROOM, roomAttributes } from "../lib/rooms";
 import { standupCron, standupRoom } from "../lib/standup";
+import { effectiveEnv } from "../lib/settings/store";
 
 /**
  * A morning report, the way a teammate would give one.
@@ -20,7 +21,7 @@ export default defineSchedule({
     const workspaceId = process.env.BOT_DEFAULT_WORKSPACE ?? "default";
     waitUntil(
       (async () => {
-        let room = standupRoom();
+        let room = standupRoom(await effectiveEnv().catch(() => process.env));
         // A Bot's room is only on the board while the Bot is on the roster.
         const botId = botIdForRoom(room);
         if (botId !== null && (await getBot(workspaceId, botId).catch(() => null)) === null) room = HQ_ROOM;

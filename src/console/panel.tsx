@@ -59,7 +59,7 @@ function UsageSection({ member }: { member: Member }) {
           {(usage.cacheWriteTokens ?? 0) > 0 ? ` · ${tokens(usage.cacheWriteTokens ?? 0)} written` : ""}
         </ListRow>
         <ListRow icon={DotIcon} title={usd(usage.costUsd)}>
-          {usage.costUsd === 0 && usage.steps > 0 ? "provider reported no cost; set BOT_MODEL_PRICES on a custom endpoint" : `as ${modelsOf(usage) ?? "the provider"} priced it`}
+          {usage.costUsd === 0 && usage.steps > 0 ? "provider reported no cost; set model prices in Settings, Spend, on a custom endpoint" : `as ${modelsOf(usage) ?? "the provider"} priced it`}
         </ListRow>
       </ul>
     </Section>

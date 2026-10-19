@@ -21,6 +21,13 @@ export interface Access {
   readonly user: string;
   /** Who that is, for the console: a display name and, when Vercel knows them, a picture. */
   readonly profile: Profile;
+  /**
+   * May change the whole deployment's settings (see `settings/store.ts`): the
+   * holder of `BOT_CONSOLE_TOKEN`, Vercel Authentication on production, or a
+   * local development console. A `BOT_CONSOLE_TOKENS` holder is a tenant, even
+   * one whose token names the default workspace.
+   */
+  readonly owner: boolean;
 }
 
 export interface Profile {
@@ -39,18 +46,19 @@ const COOKIE_MAX_AGE_S = 30 * 24 * 60 * 60;
 const WORKSPACE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const DEFAULT_WORKSPACE = process.env.BOT_DEFAULT_WORKSPACE ?? "default";
 
-/** `BOT_CONSOLE_TOKEN` opens the default workspace; `BOT_CONSOLE_TOKENS="token=workspace,…"` adds more. */
-const TOKENS: ReadonlyMap<string, string> = (() => {
-  const tokens = new Map<string, string>();
-  const single = process.env.BOT_CONSOLE_TOKEN?.trim();
-  if (single) tokens.set(single, DEFAULT_WORKSPACE);
+/** `BOT_CONSOLE_TOKEN` opens the default workspace as its owner; `BOT_CONSOLE_TOKENS="token=workspace,…"` adds tenants. */
+const TOKENS: ReadonlyMap<string, { readonly workspaceId: string; readonly owner: boolean }> = (() => {
+  const tokens = new Map<string, { workspaceId: string; owner: boolean }>();
   for (const entry of (process.env.BOT_CONSOLE_TOKENS ?? "").split(",")) {
     const cut = entry.lastIndexOf("=");
     if (cut <= 0) continue;
     const token = entry.slice(0, cut).trim();
     const workspaceId = entry.slice(cut + 1).trim();
-    if (token !== "" && WORKSPACE.test(workspaceId)) tokens.set(token, workspaceId);
+    if (token !== "" && WORKSPACE.test(workspaceId)) tokens.set(token, { workspaceId, owner: false });
   }
+  // Set last, so the owner's token stays the owner's even if it is also listed as a tenant's.
+  const single = process.env.BOT_CONSOLE_TOKEN?.trim();
+  if (single) tokens.set(single, { workspaceId: DEFAULT_WORKSPACE, owner: true });
   return tokens;
 })();
 
@@ -63,15 +71,23 @@ const openAllowed = (): boolean =>
 
 const digest = (value: string) => createHash("sha256").update(value).digest();
 
-export function workspaceForToken(token: string): string | null {
+/** The workspace a token opens, and whether it is the owner's; null for no match. */
+function tokenMatch(token: string): { readonly workspaceId: string; readonly owner: boolean } | null {
   const presented = digest(token);
-  let found: string | null = null;
+  let found: { readonly workspaceId: string; readonly owner: boolean } | null = null;
   // Compare against every token in constant time; stop early and timing leaks which matched.
-  for (const [candidate, workspaceId] of TOKENS) {
-    if (timingSafeEqual(presented, digest(candidate))) found = workspaceId;
+  for (const [candidate, match] of TOKENS) {
+    if (timingSafeEqual(presented, digest(candidate))) found = match;
   }
   return found;
 }
+
+export function workspaceForToken(token: string): string | null {
+  return tokenMatch(token)?.workspaceId ?? null;
+}
+
+/** The local development console (not on Vercel, not production) is its machine's owner's. */
+const developmentDefault = (): boolean => process.env.VERCEL !== "1" && process.env.NODE_ENV !== "production";
 
 function presentedToken(request: Request): string | null {
   const header = request.headers.get("authorization");
@@ -154,25 +170,27 @@ export async function setStoredName(workspaceId: string, raw: string): Promise<s
 }
 
 /** Who this is, for the console and the session: a header or Vercel first, then the name set in the console. */
-async function accessFor(request: Request, workspaceId: string): Promise<Access> {
+async function accessFor(request: Request, workspaceId: string, owner: boolean): Promise<Access> {
   const known = profile(request);
   const name = known.source === "none" ? await storedName(workspaceId).catch(() => null) : null;
   return {
     workspaceId,
     user: user(request),
     profile: name === null ? known : { name, avatarUrl: null, source: "workspace" },
+    owner,
   };
 }
 
 export async function authenticate(request: Request): Promise<Gate> {
   const token = presentedToken(request);
-  const tokenWorkspace = token === null || !tokensConfigured() ? null : workspaceForToken(token);
-  if (tokenWorkspace !== null) return { ok: true, access: await accessFor(request, tokenWorkspace) };
+  const matched = token === null || !tokensConfigured() ? null : tokenMatch(token);
+  if (matched !== null) return { ok: true, access: await accessFor(request, matched.workspaceId, matched.owner) };
 
   if (vercelAuthentication()) {
     const host = requestHost(request);
     if (host !== null && (await hostIsProtected(host))) {
-      return { ok: true, access: await accessFor(request, DEFAULT_WORKSPACE) };
+      // Previews share production's store, so only production's owner changes deployment settings.
+      return { ok: true, access: await accessFor(request, DEFAULT_WORKSPACE, process.env.VERCEL_ENV === "production") };
     }
   }
 
@@ -192,7 +210,8 @@ export async function authenticate(request: Request): Promise<Gate> {
     new URL(request.url).searchParams.get("workspace") ??
     DEFAULT_WORKSPACE;
   if (!WORKSPACE.test(workspaceId)) return { ok: false, status: 400, error: "invalid workspace" };
-  return { ok: true, access: await accessFor(request, workspaceId) };
+  // An explicitly opened deployment (BOT_CONSOLE_OPEN=1) lets anyone in, so nobody there is its owner.
+  return { ok: true, access: await accessFor(request, workspaceId, developmentDefault()) };
 }
 
 /** Sets the console cookie, or clears it when `token` is null. */

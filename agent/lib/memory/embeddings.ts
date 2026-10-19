@@ -5,6 +5,7 @@ import { readDoc, updateDoc } from "../store";
 import { chargeUsage, reportedCost } from "../spend";
 import { type MemoryEntry, type MemorySlot, normalize } from "./store";
 import { withGatewayOptions } from "../models";
+import { liveEnv } from "../settings/store";
 
 /**
  * Meaning, not just words, for ranking lessons.
@@ -35,12 +36,12 @@ export interface VectorDoc {
 
 const key = (workspaceId: string, slot: MemorySlot) => `memory/v2/${workspaceId}/${slot}.vectors.json`;
 
-export function embeddingsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function embeddingsEnabled(env: Readonly<Record<string, string | undefined>> = liveEnv()): boolean {
   if (/^(0|off|false|none)$/i.test(env.BOT_MEMORY_EMBEDDINGS ?? "")) return false;
   return gatewayReachable(env);
 }
 
-export const embeddingModel = (env: NodeJS.ProcessEnv = process.env): string => env.BOT_MEMORY_EMBEDDING_MODEL?.trim() || DEFAULT_EMBEDDING_MODEL;
+export const embeddingModel = (env: Readonly<Record<string, string | undefined>> = liveEnv()): string => env.BOT_MEMORY_EMBEDDING_MODEL?.trim() || DEFAULT_EMBEDDING_MODEL;
 
 /** A short digest of the text an embedding was made from, to know when it went stale. */
 export function digest(text: string): string {

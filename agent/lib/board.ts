@@ -19,6 +19,7 @@ import { ledgerTotal, NO_USAGE, readLedger, type Usage } from "./usage";
 import { HQ_ROOM, roomForBot } from "./rooms";
 import { getRoomState, type AnsweredInput, type Branch, type RoomState } from "./roomstate";
 import type { ActivityEvent, Bot, Job } from "./types";
+import { liveEnv } from "./settings/store";
 
 /**
  * What the console shows: one roster entry per teammate with its presence, and
@@ -261,7 +262,7 @@ export async function buildBoard(
       bots: ledger.bots,
     },
     budget,
-    exportable: exportEnabled(),
+    exportable: exportEnabled(liveEnv()),
     health: jobHealth(open, {
       now,
       pausedBotIds: new Set(bots.filter((bot) => bot.status !== "active").map((bot) => bot.id)),

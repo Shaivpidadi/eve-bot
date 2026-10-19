@@ -37,7 +37,8 @@ import { learnFromFeedback } from "../lib/memory/outcomes";
 import { sameFindings } from "../lib/findings";
 import { jevEnabled, judge } from "../lib/jev";
 import { completionQuestions, noteShadow, readVerdict, unmetCriteria } from "../lib/jev-watch";
-import { DEFAULT_EFFORT, explainGatewayError, nextEffort } from "../lib/models";
+import { explainGatewayError } from "../lib/gateway-errors";
+import { DEFAULT_EFFORT, nextEffort } from "../lib/models";
 import { ROUTINE_REPORT_PREFIX } from "../lib/rooms";
 import { nextWake } from "../lib/run-stop";
 import { operator } from "../lib/session";
@@ -471,8 +472,11 @@ async function claimForRun(
     return refused(`${bot.name} is paused. Resume them to run this job.`);
   }
 
-  // A job whose last run failed gets another try on a more capable model.
-  if (job.status === "failed" && (job.effort ?? DEFAULT_EFFORT) !== "deep") {
+  // A job whose last run failed gets another try on a more capable model,
+  // unless the next effort runs on the same model (all on one free model, say).
+  // Loaded here, inside the step: the store it reads stays out of the workflow bundle.
+  const { runModel, sameModelNext } = await import("../lib/model-settings");
+  if (job.status === "failed" && (job.effort ?? DEFAULT_EFFORT) !== "deep" && !(await sameModelNext(workspaceId, job.effort ?? DEFAULT_EFFORT))) {
     await patchJob(workspaceId, jobId, (current) => ({
       ...current,
       effort: nextEffort(current.effort ?? DEFAULT_EFFORT),
@@ -497,9 +501,12 @@ async function claimForRun(
   // Unchecked: the claim goes back and this run retries at `retryAt`.
   // The computer's sessions that finished since the last sweep count before this run is admitted.
   await chargeComputerRuntimeSoon();
+  // The model this run runs on, chosen now and written into its brief (see `renderBrief`).
+  const model = await runModel(workspaceId, claimed.job.effort ?? DEFAULT_EFFORT);
   const admission = await admitClaimedRun(workspaceId, claimed.job, token, {
     waitToken: options.waitToken,
     deferrals: options.deferrals,
+    freeModel: model?.free === true,
   });
   if (!admission.admitted) return { ok: false, reason: admission.reason, retryAt: admission.retryAt, title: claimed.job.title };
 
@@ -528,7 +535,7 @@ async function claimForRun(
   return {
     ok: true,
     token,
-    brief: renderBrief(bot, claimed.job, { token }),
+    brief: renderBrief(bot, claimed.job, { token, model }),
     botName: bot.name,
     title: claimed.job.title,
     requiresSignoff: claimed.job.requiresSignoff,

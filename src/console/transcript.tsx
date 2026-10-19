@@ -4,7 +4,6 @@ import type { InputRequest, InputResolution } from "eve/client";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
-  BrainIcon,
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
@@ -74,7 +73,6 @@ const STEP_WORDS: Readonly<Record<string, string>> = {
 const NOTICE_ICONS: Readonly<Record<NoticeIcon, LucideIcon>> = {
   alert: CircleAlertIcon,
   branch: GitBranchIcon,
-  brain: BrainIcon,
   check: CircleCheckIcon,
   clock: ClockIcon,
   dot: DotIcon,
@@ -214,7 +212,6 @@ export function Transcript({
               <div className={cn(BUBBLE, YOURS)}>
                 <MentionText text={item.text} onColor />
               </div>
-              <RememberButton text={item.text} />
             </div>,
           );
           break;
@@ -224,7 +221,6 @@ export function Transcript({
               <div className={cn(BUBBLE, THEIRS)}>
                 <Prose text={item.text} />
               </div>
-              <RememberButton text={item.text} />
               <BranchButton eventId={item.key} store={store} disabled={room.live} />
             </div>,
           );
@@ -246,6 +242,15 @@ export function Transcript({
           const face = faceFor(item.face);
           const Glyph = NOTICE_ICONS[item.icon];
           const error = item.tone === "error";
+          // What was remembered is a quiet line under the exchange; the Memory page has the rest.
+          if (item.quiet === true) {
+            rows.push(
+              <div key={item.key} className={cn("-mt-1 mb-1 self-center text-center text-[11px] text-faint", item.old && OLD)}>
+                {item.detail ?? item.label}
+              </div>,
+            );
+            break;
+          }
           rows.push(
             <div
               key={item.key}
@@ -743,31 +748,3 @@ function BranchButton({ eventId, store, disabled }: { eventId: string; store: Ro
   );
 }
 
-function RememberButton({ text }: { text: string }) {
-  const [state, setState] = useState<"idle" | "busy" | "done" | "failed">("idle");
-  if (text.trim() === "") return null;
-  return (
-    <Button
-      variant="ghost"
-      size="icon-xs"
-      className={cn(
-        "flex-none text-muted-foreground opacity-0 transition-opacity group-focus-within/msg:opacity-100 group-hover/msg:opacity-100",
-        state === "done" && "text-brand opacity-100 hover:text-brand",
-      )}
-      aria-label={state === "done" ? "Remembered" : "Remember this"}
-      title={state === "done" ? "Remembered" : state === "failed" ? "Could not remember that" : "Remember this"}
-      disabled={state === "busy"}
-      onClick={async () => {
-        setState("busy");
-        try {
-          const response = await api("/bot/v1/memory/profile", { method: "POST", body: JSON.stringify({ text: text.slice(0, 500) }) });
-          setState(response.ok || response.status === 409 ? "done" : "failed");
-        } catch {
-          setState("failed");
-        }
-      }}
-    >
-      {state === "done" ? <CheckIcon /> : <BrainIcon />}
-    </Button>
-  );
-}

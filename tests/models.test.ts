@@ -118,7 +118,15 @@ describe("explainGatewayError", () => {
     // A text-only model handed a screenshot (seen live from stealth/cat-jam in a browser job).
     const images = explainGatewayError("GatewayInvalidRequestError: This model does not support image or file input. Remove it and retry.");
     expect(images?.kind).toBe("no-images");
-    expect(images?.text).toContain("BOT_TEAMMATE_MODEL");
+    expect(images?.text).toContain("Models page");
     expect(explainGatewayError("fetch failed")).toBeNull();
+  });
+});
+
+describe("gateway-errors", () => {
+  it("imports nothing, since run_job's workflow body calls it and a workflow can't bundle the store or Node's built-ins", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("../agent/lib/gateway-errors.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/^\s*import\b|\bimport\(/m);
   });
 });

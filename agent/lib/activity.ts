@@ -1,11 +1,15 @@
 import { newId, timeKey } from "./ids";
 import { readDoc, store, writeDoc } from "./store";
 import type { ActivityEvent, ActivityKind } from "./types";
+import { liveEnv } from "./settings/store";
 
 const prefix = (workspaceId: string) => `activity/${workspaceId}/`;
 
-/** Events kept per workspace before the oldest are trimmed. */
-const RETAIN = Number(process.env.BOT_ACTIVITY_RETAIN ?? 500);
+/** Events kept per workspace before the oldest are trimmed, from Settings over `BOT_ACTIVITY_RETAIN`. */
+const retain = (): number => {
+  const kept = Number(liveEnv().BOT_ACTIVITY_RETAIN?.trim() || 500);
+  return Number.isFinite(kept) && kept >= 50 ? Math.floor(kept) : 500;
+};
 const PRUNE_EVERY = 200;
 
 /** Per workspace, so a busy workspace cannot starve a quiet one of pruning. */
@@ -49,7 +53,7 @@ export async function record(input: {
 
   const writes = (writesSincePrune.get(input.workspaceId) ?? 0) + 1;
   writesSincePrune.set(input.workspaceId, writes >= PRUNE_EVERY ? 0 : writes);
-  if (writes >= PRUNE_EVERY) await pruneActivity(input.workspaceId, RETAIN);
+  if (writes >= PRUNE_EVERY) await pruneActivity(input.workspaceId, retain());
 
   return event;
 }
@@ -97,7 +101,7 @@ export async function recentActivity(
 }
 
 /** Trims the oldest events so a long-lived workspace does not grow without bound. */
-export async function pruneActivity(workspaceId: string, keep = RETAIN): Promise<number> {
+export async function pruneActivity(workspaceId: string, keep = retain()): Promise<number> {
   const keys = await store().list(prefix(workspaceId));
   const stale = keys.slice(0, Math.max(0, keys.length - keep));
   await Promise.all(

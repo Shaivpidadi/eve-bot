@@ -31,6 +31,7 @@ import { journal } from "./journal";
 import { sessionState } from "./session-state";
 import { within } from "../../../lib/cancel";
 import { closeFinishedTabs } from "../../../lib/computer/tab-sweep";
+import { effectiveEnv } from "../../../lib/settings/store";
 
 /**
  * The Bot's browser: the Google Chrome on the team's one screen, which every
@@ -46,7 +47,6 @@ import { closeFinishedTabs } from "../../../lib/computer/tab-sweep";
  * next job finds its tabs and sign-ins where it left them.
  */
 
-const MAX_OUTPUT = process.env.BOT_BROWSER_MAX_OUTPUT ?? "20000";
 
 const preparedDirectories = sessionState<true>();
 
@@ -86,7 +86,7 @@ async function labelledTab(
     const listed = await runAgentBrowser<{ data?: { tabs?: { label?: string | null; targetId?: string }[] } }>(
       pluginContext(ctx),
       ["--cdp", String(cdp), "tab", "list", "--json"],
-      { session, env: environment(await sessionDirectory(ctx)), abortSignal: ctx.abortSignal },
+      { session, env: await environment(await sessionDirectory(ctx)), abortSignal: ctx.abortSignal },
     );
     const tabs = listed.json?.data?.tabs ?? [];
     const tab =
@@ -116,7 +116,7 @@ async function ensureRunTab(ctx: ToolContext, binding: SessionBinding, n: number
       const opened = await runAgentBrowser<{ data?: { targetId?: string } }>(
         pluginContext(ctx),
         ["--cdp", String(cdp), "--pin-tab", "tab", "new", "--label", label, "about:blank"],
-        { session, env: environment(await sessionDirectory(ctx)), abortSignal: ctx.abortSignal },
+        { session, env: await environment(await sessionDirectory(ctx)), abortSignal: ctx.abortSignal },
       );
       // `tab new` answers with the new tab's target id; list the tabs only if it did not.
       targetId = opened.json?.data?.targetId ?? (await labelledTab(ctx, cdp, session, label));
@@ -152,16 +152,18 @@ export async function sessionDirectory(ctx: ToolContext): Promise<string> {
   return directory;
 }
 
-function environment(directory: string): Record<string, string> {
+/** agent-browser's environment for a session, with the deployment's settings (see `settings/store.ts`). */
+async function environment(directory: string): Promise<Record<string, string>> {
+  const settings = await effectiveEnv();
   const env: Record<string, string> = {
-    AGENT_BROWSER_MAX_OUTPUT: MAX_OUTPUT,
+    AGENT_BROWSER_MAX_OUTPUT: settings.BOT_BROWSER_MAX_OUTPUT?.trim() || "20000",
     // Page text is untrusted input; the markers let the model see where it starts.
     AGENT_BROWSER_CONTENT_BOUNDARIES: "1",
     AGENT_BROWSER_DOWNLOAD_PATH: COMPUTER_PATHS.downloads,
     AGENT_BROWSER_SCREENSHOT_DIR: directory,
   };
-  if (process.env.BOT_BROWSER_ALLOWED_DOMAINS) {
-    env.AGENT_BROWSER_ALLOWED_DOMAINS = process.env.BOT_BROWSER_ALLOWED_DOMAINS;
+  if (settings.BOT_BROWSER_ALLOWED_DOMAINS?.trim()) {
+    env.AGENT_BROWSER_ALLOWED_DOMAINS = settings.BOT_BROWSER_ALLOWED_DOMAINS.trim();
   }
   return env;
 }
@@ -307,7 +309,7 @@ async function browserCommand(ctx: ToolContext, args: readonly string[], options
   const run = async () =>
     runAgentBrowser(pluginContext(ctx), ["--cdp", String(screenPorts(n).cdp), "--pin-tab", ...args], {
       abortSignal: ctx.abortSignal,
-      env: environment(await sessionDirectory(ctx)),
+      env: await environment(await sessionDirectory(ctx)),
       // One agent-browser session per run, pinned to that run's own tab in the shared browser.
       session,
     });
@@ -370,7 +372,7 @@ async function guarded(
     result = failure(error);
   }
   const report = parseGuardAnswer<{ blocked: Stopped[] }>(
-    (await io.run(`node ${program} disarm ${shellQuote(armed.id)} ${guardGraceMs()}`, { timeoutMs: 20_000 }).catch((error: unknown) => ({ stdout: JSON.stringify({ ok: false, error: String(error) }) }))).stdout,
+    (await io.run(`node ${program} disarm ${shellQuote(armed.id)} ${guardGraceMs(await effectiveEnv())}`, { timeoutMs: 20_000 }).catch((error: unknown) => ({ stdout: JSON.stringify({ ok: false, error: String(error) }) }))).stdout,
   );
   return report.ok ? { ...result, stopped: report.blocked } : { ...result, unwatched: report.error };
 }

@@ -3,6 +3,7 @@ import { getBot } from "./bots";
 import { newId } from "./ids";
 import { claimJob, dueJobs, failJob, leaseStranded, releaseJob } from "./jobs";
 import type { Bot, Job } from "./types";
+import { liveEnv } from "./settings/store";
 
 /**
  * One pass of the watchdog: find due jobs with nothing waiting on them, claim
@@ -33,7 +34,7 @@ export async function dispatchDue(
   options: { readonly batch?: number } = {},
 ): Promise<DispatchOutcome> {
   const started = Date.now();
-  const batch = options.batch ?? Number(process.env.BOT_TICK_BATCH ?? 10);
+  const batch = options.batch ?? (Number(liveEnv().BOT_TICK_BATCH?.trim() || 10) || 10);
   const due = await dueJobs(Number.POSITIVE_INFINITY);
   const runnable = await pickRunnable(due, batch);
   let dispatched = 0;

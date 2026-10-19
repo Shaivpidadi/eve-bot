@@ -27,13 +27,39 @@ describe("authenticate", () => {
     const bearer = await authenticate(request({ authorization: "Bearer acme-token", "x-bot-user": "ann@acme.test" }));
     expect(bearer).toEqual({
       ok: true,
-      access: { workspaceId: "acme", user: "ann@acme.test", profile: { name: "ann@acme.test", avatarUrl: null, source: "header" } },
+      access: { workspaceId: "acme", user: "ann@acme.test", profile: { name: "ann@acme.test", avatarUrl: null, source: "header" }, owner: false },
     });
     const cookie = await authenticate(request({ cookie: "theme=dark; bot_console=globex-token" }));
-    expect(cookie).toEqual({ ok: true, access: { workspaceId: "globex", user: "operator", profile: { name: "operator", avatarUrl: null, source: "none" } } });
+    expect(cookie).toEqual({ ok: true, access: { workspaceId: "globex", user: "operator", profile: { name: "operator", avatarUrl: null, source: "none" }, owner: false } });
     // Holding a token never grants another workspace.
     const wrong = await authenticate(request({ authorization: "Bearer acme-token", "x-bot-workspace": "globex" }));
     expect(wrong).toMatchObject({ ok: true, access: { workspaceId: "acme" } });
+  });
+
+  it("makes only the BOT_CONSOLE_TOKEN holder the owner, even when a tenant's token names the default workspace", async () => {
+    vi.stubEnv("BOT_CONSOLE_TOKEN", "top-secret");
+    vi.stubEnv("BOT_CONSOLE_TOKENS", "tenant-token=default,top-secret=acme");
+    const { authenticate } = await import("../agent/lib/access");
+    expect(await authenticate(request({ authorization: "Bearer top-secret" }))).toMatchObject({ ok: true, access: { workspaceId: "default", owner: true } });
+    expect(await authenticate(request({ authorization: "Bearer tenant-token" }))).toMatchObject({ ok: true, access: { workspaceId: "default", owner: false } });
+  });
+
+  it("makes Vercel Authentication the owner on production only, since previews share its store", async () => {
+    vi.stubEnv("VERCEL", "1");
+    vi.doMock("../agent/lib/protection", async (original) => ({ ...(await original<object>()), hostIsProtected: async () => true, requestHost: () => "bot.example" }));
+    vi.stubEnv("VERCEL_ENV", "production");
+    expect(await (await import("../agent/lib/access")).authenticate(request())).toMatchObject({ ok: true, access: { owner: true } });
+    vi.resetModules();
+    vi.stubEnv("VERCEL_ENV", "preview");
+    expect(await (await import("../agent/lib/access")).authenticate(request())).toMatchObject({ ok: true, access: { owner: false } });
+    vi.doUnmock("../agent/lib/protection");
+  });
+
+  it("makes nobody the owner of a deployment opened to everyone", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("BOT_CONSOLE_OPEN", "1");
+    const { authenticate } = await import("../agent/lib/access");
+    expect(await authenticate(request())).toMatchObject({ ok: true, access: { owner: false } });
   });
 
   it("refuses without a valid token once tokens are configured", async () => {
@@ -47,7 +73,7 @@ describe("authenticate", () => {
     const { authenticate } = await import("../agent/lib/access");
     expect(await authenticate(request())).toEqual({
       ok: true,
-      access: { workspaceId: "default", user: "operator", profile: { name: "operator", avatarUrl: null, source: "none" } },
+      access: { workspaceId: "default", user: "operator", profile: { name: "operator", avatarUrl: null, source: "none" }, owner: true },
     });
     expect(await authenticate(request({ "x-bot-workspace": "team-b" }))).toMatchObject({ ok: true, access: { workspaceId: "team-b" } });
     expect(await authenticate(request({}, "http://localhost:3000/bot/v1/state?workspace=team%20c"))).toMatchObject({ ok: false, status: 400 });

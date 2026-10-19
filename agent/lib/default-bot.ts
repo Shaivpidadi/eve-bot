@@ -4,6 +4,9 @@
  * catch-all; its standing instructions carry the habits that make work
  * finished rather than attempted.
  */
+/** The first Bot's name, from Settings over `BOT_DEFAULT_BOT_NAME`. */
+export const defaultBotName = (env: Readonly<Record<string, string | undefined>>): string => env.BOT_DEFAULT_BOT_NAME?.trim() || DEFAULT_BOT.name;
+
 export const DEFAULT_BOT: {
   name: string;
   role: string;
@@ -11,7 +14,7 @@ export const DEFAULT_BOT: {
   skills: string[];
   persona: string;
 } = {
-  name: process.env.BOT_DEFAULT_BOT_NAME ?? "Atlas",
+  name: "Atlas",
   role: "Generalist: research, analysis, writing, and work inside any web app",
   emoji: "🧭",
   skills: ["research", "browser", "shell", "analysis", "writing", "email"],
