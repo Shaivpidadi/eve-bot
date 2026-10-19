@@ -236,3 +236,41 @@ describe("the team and the background worker use what Settings say", () => {
     expect(await workerPaused()).toBe(true);
   });
 });
+
+describe("the Vercel computer is brought up to what Settings say", () => {
+  it("pushes only what changed to the running machine, once per change", async () => {
+    vi.stubEnv("BOT_SANDBOX_ALLOW_DOMAINS", "");
+    vi.stubEnv("BOT_SANDBOX_VCPUS", "");
+    vi.stubEnv("BOT_COMPUTER_DRIVE", "");
+    const update = vi.fn(async () => undefined);
+    const get = vi.fn(async () => ({ networkPolicy: { allow: { "github.com": [] } }, vcpus: 4, timeout: 30 * 60_000, mounts: {}, update }));
+    vi.doMock("@vercel/sandbox", () => ({ Sandbox: { get }, Drive: {} }));
+    try {
+      const { saveSettings } = await load();
+      const { reconcile, sameNetwork } = await import("../agent/lib/computer-config");
+      await saveSettings(owner, { BOT_SANDBOX_ALLOW_DOMAINS: "github.com", BOT_SANDBOX_VCPUS: 2 });
+      const sandbox = {} as never;
+      await reconcile(sandbox, { sandboxName: "team" });
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(update).toHaveBeenCalledWith({ resources: { vcpus: 2 } });
+      // Nothing changed since: no call to Vercel at all.
+      await reconcile(sandbox, { sandboxName: "team" });
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(sameNetwork(undefined, "allow-all")).toBe(true);
+      expect(sameNetwork({ allow: ["b.com", "a.com"] }, { allow: ["a.com", "b.com"] })).toBe(true);
+      expect(sameNetwork("allow-all", { allow: ["a.com"] })).toBe(false);
+    } finally {
+      vi.doUnmock("@vercel/sandbox");
+    }
+  });
+
+  it("gives the Chrome flags and shell ports from Settings to the computer's runtime", async () => {
+    vi.stubEnv("BOT_SHELL_TCP_PORTS", "");
+    const { saveSettings } = await load();
+    const { shellPorts } = await import("../agent/lib/computer/runtime");
+    const before = shellPorts();
+    await saveSettings(owner, { BOT_SHELL_TCP_PORTS: "5432" });
+    expect(shellPorts()).toContain("5432");
+    expect(before).not.toContain("5432");
+  });
+});

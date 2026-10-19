@@ -3,6 +3,7 @@ import { Drive, Sandbox as VercelSandbox } from "@vercel/sandbox";
 import { COMPUTER_NAME } from "./computer";
 import { COMPUTER_SCRIPT } from "./computer/script";
 import type { ComputerIo } from "./hands";
+import { liveEnv } from "./settings/store";
 
 /**
  * The team computer's work on a Vercel Drive (`BOT_COMPUTER_DRIVE=on`).
@@ -22,7 +23,7 @@ import type { ComputerIo } from "./hands";
 export const DRIVE_MOUNT = "/team";
 
 /** Whether this deployment keeps the computer's work on a drive. */
-export function driveWanted(env: Readonly<Record<string, string | undefined>> = process.env): boolean {
+export function driveWanted(env: Readonly<Record<string, string | undefined>> = liveEnv()): boolean {
   return env.BOT_COMPUTER !== "local" && /^(1|true|on|yes)$/i.test(env.BOT_COMPUTER_DRIVE?.trim() ?? "");
 }
 
@@ -30,7 +31,7 @@ export function driveWanted(env: Readonly<Record<string, string | undefined>> = 
 export const DRIVE_NAME = COMPUTER_NAME;
 
 /** The mount a new machine is made with, or nothing without a drive. */
-export function driveMounts(env: Readonly<Record<string, string | undefined>> = process.env) {
+export function driveMounts(env: Readonly<Record<string, string | undefined>> = liveEnv()) {
   return driveWanted(env) ? { [DRIVE_MOUNT]: { drive: DRIVE_NAME, mode: "read-write" as const } } : undefined;
 }
 
@@ -51,9 +52,9 @@ export function driveSize(env: Readonly<Record<string, string | undefined>> = pr
 let made: Promise<void> | null = null;
 
 /** Makes the drive if it does not exist yet. Once per process; a failure is retried next time. */
-export function ensureDrive(): Promise<void> {
+export function ensureDrive(env: Readonly<Record<string, string | undefined>> = liveEnv()): Promise<void> {
   made ??= (async () => {
-    const maxSize = driveSize();
+    const maxSize = driveSize(env);
     await Drive.getOrCreate({ name: DRIVE_NAME, ...(maxSize === undefined ? {} : { maxSize }) });
   })().catch((error: unknown) => {
     made = null;
@@ -67,10 +68,10 @@ export function ensureDrive(): Promise<void> {
  * next session, so a running machine keeps working as it is and picks the drive
  * up the next time it starts; `bot-computer drive` then moves its files over.
  */
-export async function attachDrive(sandboxName: string): Promise<boolean> {
-  const mounts = driveMounts();
+export async function attachDrive(sandboxName: string, env: Readonly<Record<string, string | undefined>> = liveEnv()): Promise<boolean> {
+  const mounts = driveMounts(env);
   if (mounts === undefined) return false;
-  await ensureDrive();
+  await ensureDrive(env);
   const sandbox = await VercelSandbox.get({ name: sandboxName });
   if (sandbox.mounts?.[DRIVE_MOUNT]?.drive === DRIVE_NAME) return false;
   await sandbox.update({ mounts });
