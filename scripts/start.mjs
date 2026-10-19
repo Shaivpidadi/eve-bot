@@ -13,7 +13,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import nextEnv from "@next/env";
 
@@ -28,41 +27,41 @@ overlaySettings(plan?.overlay);
 
 const agentEntry = join(process.cwd(), ".output", "server", "index.mjs");
 
+// A production server never builds the team computer's template on demand, and
+// since eve 0.79 `eve build` makes it (a Docker image, minutes the first time,
+// seconds after) and records it in .output/. A build made without it (such as
+// `npm run build` with BOT_SKIP_SANDBOX_PREWARM=1) is built again here for a
+// local computer. BOT_PREWARM_ON_START=0 skips that, for a host that
+// provisions the template another way.
+const prepared = join(process.cwd(), ".output", ".eve", "compile", "sandbox-prepared-artifacts.json");
+const templateMissing = process.env.BOT_PREWARM_ON_START !== "0" && process.env.BOT_COMPUTER === "local" && !existsSync(prepared);
+
 // In a container the agent builds here rather than in the image, because it
 // decides a few things (which web search, which model endpoint) from the
 // environment it starts with. BOT_BUILD_ON_START=1 asks for that; a missing
 // build gets one either way.
-if (process.env.BOT_BUILD_ON_START === "1" || !existsSync(agentEntry) || plan?.changed === true) {
-  console.log(plan?.changed === true && existsSync(agentEntry) ? "[bot] Settings changed since the last build; building the agent again..." : "[bot] Building the agent...");
+const needed = process.env.BOT_BUILD_ON_START === "1" || !existsSync(agentEntry) || plan?.changed === true;
+if (needed || templateMissing) {
+  console.log(
+    needed
+      ? plan?.changed === true && existsSync(agentEntry)
+        ? "[bot] Settings changed since the last build; building the agent again..."
+        : "[bot] Building the agent..."
+      : "[bot] Building the agent with the team computer's template...",
+  );
   const built = spawnSync(join(process.cwd(), "node_modules", ".bin", "eve"), ["build"], { stdio: "inherit" });
-  if (built.status !== 0) {
+  if (built.status === 0) savedSettings("record");
+  else if (needed) {
     console.error("[bot] The agent did not build; see above.");
     process.exit(built.status ?? 1);
+  } else {
+    // The build that is there still serves; only the computer is missing.
+    console.error("[bot] Could not build the computer's template; see above. The first job will fail until it exists. Is Docker running?");
   }
-  savedSettings("record");
 }
 if (!existsSync(agentEntry)) {
   console.error("[bot] No agent build at .output/. Run `npm run build` first.");
   process.exit(1);
-}
-
-// A production server never builds a sandbox template on demand; eve expects
-// them provisioned before it serves traffic, and `eve build` does that only
-// for Vercel. So the team's computer's template is built here, with the same
-// API eve's own build hook uses: minutes the first time (Chrome and a desktop
-// are installed into it), seconds after, since it is a cached Docker image.
-// BOT_PREWARM_ON_START=0 skips it, for a host that provisions another way.
-if (process.env.BOT_PREWARM_ON_START !== "0" && process.env.BOT_COMPUTER === "local") {
-  console.log("[bot] Provisioning the team's computer template...");
-  try {
-    const { prewarmBuiltAppSandboxes } = await import(
-      pathToFileURL(join(process.cwd(), "node_modules", "eve", "dist", "src", "execution", "sandbox", "prewarm.js")).href
-    );
-    await prewarmBuiltAppSandboxes({ appRoot: process.cwd(), log: (line) => console.log(`[bot] ${line}`) });
-  } catch (error) {
-    console.error(`[bot] Could not provision the computer template: ${error instanceof Error ? error.message : String(error)}`);
-    console.error("[bot] The first job will fail until it exists. Is Docker running?");
-  }
 }
 
 const agentPort = process.env.EVE_NEXT_PRODUCTION_PORT?.trim() || "4274";
