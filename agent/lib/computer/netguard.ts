@@ -37,8 +37,8 @@ export const NETGUARD_FILE = "bot-computer-netguard.mjs";
 export const GUARD_TTL_MS = 30_000;
 
 /** How long a click gets to send what it sends, before the guard reports. */
-export const guardGraceMs = (): number => {
-  const value = Number(process.env.BOT_BROWSER_GUARD_MS);
+export const guardGraceMs = (env: Readonly<Record<string, string | undefined>> = process.env): number => {
+  const value = Number(env.BOT_BROWSER_GUARD_MS);
   return Number.isFinite(value) && value >= 200 && value <= 10_000 ? value : 1_200;
 };
 

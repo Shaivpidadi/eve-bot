@@ -15,6 +15,7 @@ import {
   stepQuestion,
   stopBefore,
 } from "../lib/pilot";
+import { effectiveEnv } from "../../../lib/settings/store";
 
 /**
  * A few browser steps, driven without a model turn for each one.
@@ -35,8 +36,8 @@ import {
 const DEFAULT_STEPS = 6;
 const MAX_STEPS = 12;
 
-const seconds = (): number => {
-  const value = Number(process.env.BOT_PILOT_SECONDS);
+const seconds = (env: Readonly<Record<string, string | undefined>>): number => {
+  const value = Number(env.BOT_PILOT_SECONDS);
   return Number.isFinite(value) && value > 0 ? value : 60;
 };
 
@@ -59,7 +60,7 @@ export default defineTool({
       return { ran: false as const, goal, stopped: "unavailable" as const, note: STOP_NOTE.unavailable };
     }
     const limit = maxSteps ?? DEFAULT_STEPS;
-    const deadline = Date.now() + seconds() * 1_000;
+    const deadline = Date.now() + seconds(await effectiveEnv()) * 1_000;
     const actions: { action: string; target: string; changed: string }[] = [];
     /** The proposal or refusal the gate handed back for the step the pilot stopped at. */
     let held: Record<string, unknown> | null = null;

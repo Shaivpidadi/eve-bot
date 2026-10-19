@@ -6,6 +6,7 @@ import { browser, refreshScreen, textOf } from "./browser";
 import { journalPage } from "./journal";
 import { treeIndex, type TreeFacts } from "./consequence";
 import { sessionState } from "./session-state";
+import { effectiveEnv } from "../../../lib/settings/store";
 
 /**
  * What a Bot sees of a page, kept small.
@@ -30,9 +31,9 @@ const positive = (raw: string | undefined, fallback: number): number => {
 };
 
 /** Characters of tree a Bot gets by default; `page_snapshot` with `full` gets agent-browser's own cap. */
-export const pageBudget = (): number => positive(process.env.BOT_BROWSER_PAGE_CHARS, 8_000);
+export const pageBudget = (env: Readonly<Record<string, string | undefined>> = process.env): number => positive(env.BOT_BROWSER_PAGE_CHARS, 8_000);
 /** A moment for the page to finish re-rendering after the load event, before it is read. */
-const settleMs = (): number => positive(process.env.BOT_BROWSER_SETTLE_MS, 300);
+const settleMs = (env: Readonly<Record<string, string | undefined>> = process.env): number => positive(env.BOT_BROWSER_SETTLE_MS, 300);
 
 /** `  - link "Inbox" [ref=e12] [selected]`; the name and the trailing flags are optional. */
 const LINE = /^(\s*)-\s+([A-Za-z]+)(?:\s+"((?:[^"\\]|\\.)*)")?(.*)$/;
@@ -309,7 +310,8 @@ export const refsSeen = (ctx: ToolContext): ReadonlyMap<string, TreeFacts> | und
  */
 export async function look(ctx: ToolContext, options: { readonly full?: boolean } = {}): Promise<Look | { readonly error: string; readonly detail: string }> {
   await browser(ctx, ["wait", "--load", "domcontentloaded"]);
-  const settle = settleMs();
+  const env = await effectiveEnv();
+  const settle = settleMs(env);
   if (settle > 0) await browser(ctx, ["wait", String(settle)]);
   const snapshot = await browser(ctx, ["snapshot", "-c"]);
   if (!snapshot.ok) return { error: snapshot.error ?? "The page could not be read.", detail: snapshot.output };
@@ -317,7 +319,7 @@ export async function look(ctx: ToolContext, options: { readonly full?: boolean 
   const tree = textOf(snapshot, "snapshot");
   const at = await browser(ctx, ["get", "url"]);
   const url = at.ok ? textOf(at, "url").trim().slice(0, 500) : "";
-  const trimmed = options.full === true ? null : trimTree(tree, pageBudget());
+  const trimmed = options.full === true ? null : trimTree(tree, pageBudget(env));
   const result: Look = {
     url,
     page: trimmed === null ? tree : trimmed.text,

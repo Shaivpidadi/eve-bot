@@ -139,3 +139,16 @@ describe("readers use what Settings say", () => {
     expect(await admitRun("other", "run_2", 2)).toMatchObject({ ok: true });
   });
 });
+
+describe("the browser uses what Settings say", () => {
+  it("reads its page size, settle, guard and pilot from Settings over the environment", async () => {
+    vi.stubEnv("BOT_BROWSER_PAGE_CHARS", "8000");
+    const { effectiveEnv, saveSettings } = await load();
+    const { pageBudget } = await import("../agent/subagents/teammate/lib/page");
+    const { guardGraceMs } = await import("../agent/lib/computer/netguard");
+    expect(pageBudget(await effectiveEnv())).toBe(8000);
+    await saveSettings(owner, { BOT_BROWSER_PAGE_CHARS: 16000, BOT_BROWSER_GUARD_MS: 2500 });
+    expect(pageBudget(await effectiveEnv())).toBe(16000);
+    expect(guardGraceMs(await effectiveEnv())).toBe(2500);
+  });
+});
