@@ -49,7 +49,7 @@ again; getting there takes one push that may change workflows:
 ```bash
 git clone https://github.com/<you>/<your-copy> && cd <your-copy>
 git remote add upstream https://github.com/Shaivpidadi/eve-bot.git && git fetch upstream --tags
-git merge v0.5.1 -m "chore: sync with upstream eve-bot v0.5.1" && git push
+git merge v0.5.2 -m "chore: sync with upstream eve-bot v0.5.2" && git push
 ```
 
 Vercel deploys the push, and from then on the copy updates itself. If the merge
@@ -67,7 +67,7 @@ git clone https://github.com/<you>/<your-copy> && cd <your-copy>
 git remote add upstream https://github.com/Shaivpidadi/eve-bot.git && git fetch upstream main --tags
 root=$(git rev-list --max-parents=0 HEAD | tail -1)
 git replace --graft "$root" "$(git log --format='%H %T' upstream/main | awk -v t="$(git rev-parse "$root^{tree}")" '$2==t{print $1; exit}')"
-git merge v0.5.1 -m "chore: sync with upstream eve-bot" && git push
+git merge v0.5.2 -m "chore: sync with upstream eve-bot" && git push
 ```
 
 Vercel deploys the push. From then on the workflow keeps the copy current.
