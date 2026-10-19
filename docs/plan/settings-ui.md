@@ -76,7 +76,7 @@ what the console itself depends on, and as the defaults.
 - A generic sheet rendered from the registry: source badges, Reset, secret fields, "applies after restart" marks, the
   read-only view for tenants and locked deployments. The Models page becomes its Models section.
 
-### S3. Live settings, area by area `[to-do]` (one commit per area, tests each)
+### S3. Live settings, area by area `[done]` (one commit per area, tests each)
 - **Spend:** budgets (workspace), computer rates, model prices. The budget message stops saying "raise
   BOT_BUDGET_MONTHLY_USD" and points to Settings.
 - **Browser:** allowed domains, page size, settle, guard, output, pilot.
@@ -87,19 +87,20 @@ what the console itself depends on, and as the defaults.
   retention, tick batch.
 - **Background work:** the daemon asks the app; off, it checks every 10 minutes.
 
-### S4. Next-start computer settings `[to-do]`
+### S4. Next-start computer settings `[done]`
 - Drive, vCPUs, timeout, network allowlist, Chrome flags, proxy, apt mirror, shell ports.
 - On Vercel, a change is pushed to the running machine with `sandbox.update` where Vercel allows it (allowlist,
   timeout live; vCPUs and mounts from the next session). On Docker it applies at the container's next start.
 
-### S5. Restart tier `[to-do]`
-- The generated settings file at build and start: image, backend, computer name, local port/bind/forwarder, cost and
-  token caps, cron schedules.
-- The page lists changes waiting for a restart or deploy.
+### S5. Rebuild tier `[done]`
+- As built (see R1): `scripts/settings.mjs` gives build.mjs and start.mjs the saved values to lay over the environment
+  and records what each build used in `settings/_built-<target>.json`; `npm start` rebuilds when they changed.
+  Readers take the built values; the page marks a saved change as waiting.
 
-### S6. Docs `[to-do]`
-- `docs/configuration.md` turns around: "Set everything in Settings; these are the environment variables the app needs
-  before it can show Settings (and the defaults)". `.env.example` keeps only the env-only ones plus a pointer.
+### S6. Docs `[done]`
+- `docs/configuration.md` opens with a Settings section (who, when it applies, secrets, locking, what stays env-only).
+  `.env.example` keeps every variable as the defaults, with a pointer to Settings at the top. Console copy that named
+  env vars points at Settings.
 
 
 ## Review (19 Oct), and what changed

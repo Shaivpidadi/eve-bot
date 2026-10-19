@@ -99,7 +99,7 @@ async function fetchOpenRouterPrices(baseURL: string): Promise<ReadonlyMap<strin
     }
   } catch (error) {
     console.warn(
-      `[bot] Could not read OpenRouter's price list (${error instanceof Error ? error.message : String(error)}); set BOT_MODEL_PRICES so the spend caps hold.`,
+      `[bot] Could not read OpenRouter's price list (${error instanceof Error ? error.message : String(error)}); set model prices in Settings (Spend) so the spend caps hold.`,
     );
   }
   return prices;

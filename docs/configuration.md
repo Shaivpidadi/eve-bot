@@ -1,7 +1,44 @@
 # Configuration
 
-Everything is optional except a model credential. `.env.example` documents all
-of it; these are the ones that matter.
+Everything is optional except a model credential. Most of it is set in the console, on the **Settings** page; the
+environment variables below are the defaults until it is, and `.env.example` documents every one.
+
+## Settings
+
+The gear in the console's sidebar opens Settings, by area: Models, Spend, Team computer, Browser, Memory & decisions,
+Email, Background work, Team and Data controls. Each setting says where its value comes from (changed here, from
+`.env`, or the default), and Reset goes back to the environment's.
+
+- **Who changes what.** Settings for the whole deployment (the computer, the browser, email, data controls) are its
+  owner's:
+  - the holder of `BOT_CONSOLE_TOKEN`;
+  - on Vercel with Vercel Authentication, whoever signs in to the production deployment;
+  - locally with no token, the developer.
+
+  `BOT_CONSOLE_TOKENS` holders are tenants: they see and change their own workspace's settings (timezone, first
+  Bot's name, models, reasoning, memory), and may only set its budget below the deployment's.
+- **When a change applies.**
+  - Most apply within about 30 seconds, on every instance.
+  - The computer's settings apply when a session next gets the computer. On Vercel the allowed sites and timeout are
+    pushed to the running machine; CPUs and a drive apply from its next session. On Docker they apply from the
+    container's next start.
+  - Cost and token caps and where the computer runs are fixed when the agent is built. `npm run build` and
+    `npm start` lay the saved values over the environment and record what they used, `npm start` rebuilds when they
+    changed, and on Vercel they apply with the next deploy. Until then the page marks the change as waiting.
+- **Secrets** (the email webhook's token) are sealed with the computer's key and never shown again. An export
+  without secrets leaves all saved settings out.
+- **Locking.** `BOT_SETTINGS_EDITABLE=off` shows the page without letting anyone change it, so only the environment
+  applies. `BOT_MODELS_EDITABLE=off` does the same for models alone.
+- **Environment only.** These stay in the environment, because the console needs them before it can run, or because
+  changing them from a web page would be unsafe:
+  - model access and your own endpoint (`AI_GATEWAY_API_KEY`, `BOT_MODEL_BASE_URL`, …);
+  - the store (`BOT_STORE`, `BLOB_READ_WRITE_TOKEN`, `BOT_DATA_DIR`);
+  - sign-in (`BOT_CONSOLE_TOKEN`, `BOT_CONSOLE_TOKENS`, `BOT_CONSOLE_AUTH`, `BOT_CONSOLE_OPEN`);
+  - the computer's name and key (`BOT_COMPUTER_NAME`, `BOT_COMPUTER_KEY`), which name its drive and seal secrets;
+  - shell isolation (`BOT_SHELL_ISOLATION`);
+  - web search on your own endpoint;
+  - the tick and standup schedules;
+  - whether the background worker runs at all (`BOT_WORKER`). Settings can pause it and set its pace.
 
 ## Models
 
@@ -92,7 +129,7 @@ paid option: $30 buys $80 of usage on the models it covers.
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
-| `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | Vercel Pro, production: `on` runs the background worker (`daemon/`, a [Vercel Daemon](https://vercel.com/docs/daemons) that `vercel.json` declares and that idles while this is off), which asks the app for the watchdog's work every `30` seconds with its OIDC token, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. About 3 Vercel Blob operations a pass, roughly $1–2 a month; **never on Hobby**, whose 2,000 monthly Blob operations it would use up within hours (Vercel then blocks the store for 30 days). Redeploy after changing it |
+| `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | Vercel Pro, production: `on` runs the background worker (`daemon/`, a [Vercel Daemon](https://vercel.com/docs/daemons) that `vercel.json` declares and that idles while this is off), which asks the app for the watchdog's work every `30` seconds with its OIDC token, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. About 3 Vercel Blob operations a pass, roughly $1–2 a month; **never on Hobby**, whose 2,000 monthly Blob operations it would use up within hours (Vercel then blocks the store for 30 days). Redeploy after turning it on or off; Settings can pause it or change its pace without one |
 | `BOT_TICK_ON_START` | `off` stops a standalone server sweeping for stranded jobs a minute after it starts |
 | `BOT_WORKFLOW_WORLD` | a shared Workflow world package for a standalone server, such as `@workflow/world-postgres` (with `WORKFLOW_POSTGRES_URL`), so conversations survive rebuilds; experimental, see `docs/decisions/0002-workflow-world.md` |
 | `BOT_BUILD_ID` | overrides the build id leases are stamped with (see `docs/safety.md`, run fencing) |

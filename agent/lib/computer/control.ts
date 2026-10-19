@@ -148,7 +148,7 @@ function vercelIo(sandbox: VercelSandbox): ComputerIo {
  */
 function vmControl(): ComputerControl {
   const unavailable =
-    "The console cannot open a microsandbox computer yet. Set BOT_COMPUTER_LOCAL=docker to run the local computer in Docker, or unset BOT_COMPUTER to use Vercel Sandbox.";
+    "The console cannot open a microsandbox computer yet. Choose Docker as the local computer, or Vercel Sandbox as where it runs, in Settings, Team computer.";
   return {
     backend: "local",
     availability: async () => ({ state: "unavailable", error: unavailable }),
@@ -321,7 +321,7 @@ function docker(cli: string, args: readonly string[], options: { input?: Uint8Ar
     });
     child.on("error", (error) => {
       clearTimeout(timer);
-      reject(new Error((error as NodeJS.ErrnoException).code === "ENOENT" ? "Docker is not installed. Install Docker Desktop, or unset BOT_COMPUTER to use Vercel Sandbox." : message(error)));
+      reject(new Error((error as NodeJS.ErrnoException).code === "ENOENT" ? "Docker is not installed. Install Docker Desktop, or choose Vercel Sandbox in Settings, Team computer." : message(error)));
     });
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -337,7 +337,7 @@ function expectDocker(result: DockerResult, what: string): void {
 
 function dockerProblem(stderr: string): string {
   if (/cannot connect to the docker daemon|failed to connect to the docker api|docker daemon is not running/i.test(stderr)) {
-    return "Docker is not running. Start Docker Desktop, or unset BOT_COMPUTER to use Vercel Sandbox.";
+    return "Docker is not running. Start Docker Desktop, or choose Vercel Sandbox in Settings, Team computer.";
   }
   return stderr.trim().slice(0, 400) || "Docker reported an error.";
 }
