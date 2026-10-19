@@ -75,6 +75,12 @@ export async function isProjectWorker(
 
 type Send = (workspaceId: string, room: string, message: string) => Promise<void>;
 
+/** How often the daemon calls in, from Settings over `BOT_WORKER_EVERY_SECONDS`: 10 s to an hour, 30 s otherwise. */
+export function workerEverySeconds(env: Readonly<Record<string, string | undefined>> = process.env): number {
+  const seconds = Number(env.BOT_WORKER_EVERY_SECONDS?.trim() || 30);
+  return Number.isFinite(seconds) ? Math.min(3600, Math.max(10, Math.round(seconds))) : 30;
+}
+
 /** One pass of the watchdog's work (see `schedules/tick.ts`), noted in a heartbeat. */
 export async function workerTick(send: Send): Promise<{ readonly dispatch: DispatchOutcome; readonly notes: number; readonly slow: boolean }> {
   const previous = await readHeartbeat();

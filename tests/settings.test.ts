@@ -210,3 +210,29 @@ describe("data controls and reasoning use what Settings say", () => {
     expect(exportEnabled(await effectiveEnv())).toBe(true);
   });
 });
+
+describe("the team and the background worker use what Settings say", () => {
+  it("reads a workspace's timezone and first Bot's name, and the worker's pace, from Settings", async () => {
+    vi.stubEnv("BOT_TIMEZONE", "UTC");
+    const { effectiveEnv, saveSettings } = await load();
+    const { defaultTimezone } = await import("../agent/lib/schedule");
+    const { defaultBotName } = await import("../agent/lib/default-bot");
+    const { workerEverySeconds } = await import("../agent/lib/worker");
+    await saveSettings(tenant, { BOT_TIMEZONE: "Asia/Tokyo", BOT_DEFAULT_BOT_NAME: "Iris" });
+    expect(defaultTimezone(await effectiveEnv("acme"))).toBe("Asia/Tokyo");
+    expect(defaultTimezone(await effectiveEnv("other"))).toBe("UTC");
+    expect(defaultBotName(await effectiveEnv("acme"))).toBe("Iris");
+    expect(defaultBotName(await effectiveEnv("other"))).toBe("Atlas");
+    await saveSettings(owner, { BOT_WORKER_EVERY_SECONDS: 120 });
+    expect(workerEverySeconds(await effectiveEnv())).toBe(120);
+    expect(workerEverySeconds({ BOT_WORKER_EVERY_SECONDS: "2" })).toBe(10);
+  });
+
+  it("pauses the worker only where the deployment turned it on", async () => {
+    const { saveSettings, workerPaused } = await load();
+    await saveSettings(owner, { BOT_WORKER: false });
+    expect(await workerPaused()).toBe(false);
+    vi.stubEnv("BOT_WORKER", "on");
+    expect(await workerPaused()).toBe(true);
+  });
+});

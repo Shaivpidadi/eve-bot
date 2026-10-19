@@ -6,7 +6,10 @@
 // with the OIDC token Vercel keeps fresh in VERCEL_OIDC_TOKEN_FILE.
 import { readFile } from "node:fs/promises";
 
-const EVERY_MS = Number(process.env.BOT_WORKER_EVERY_SECONDS ?? 30) * 1000;
+// The pace starts from the environment; each answer from the app carries the one
+// set in Settings, so a change there needs no redeploy.
+let everyMs = Number(process.env.BOT_WORKER_EVERY_SECONDS ?? 30) * 1000;
+let paused = false;
 const base = (process.env.BOT_PUBLIC_URL?.trim() || `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`).replace(/\/+$/, "");
 const stop = new AbortController();
 process.on("SIGTERM", () => stop.abort());
@@ -26,6 +29,11 @@ async function tick() {
   const body = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${body.slice(0, 200)}`);
   const outcome = JSON.parse(body);
+  if (Number.isFinite(outcome.everySeconds) && outcome.everySeconds >= 10) everyMs = outcome.everySeconds * 1000;
+  if ((outcome.paused === true) !== paused) {
+    paused = outcome.paused === true;
+    console.log(paused ? "[worker] paused in Settings; asking again each pass" : "[worker] resumed");
+  }
   if (outcome.due > 0 || outcome.notes > 0 || process.env.BOT_WORKER_VERBOSE === "1") {
     console.log(`[worker] ${outcome.due} due, ${outcome.dispatched} dispatched, ${outcome.notes} notes, ${Date.now() - started}ms`);
   }
@@ -44,7 +52,7 @@ if (!/^(1|true|on|yes)$/i.test(process.env.BOT_WORKER?.trim() ?? "")) {
   process.exit(0);
 }
 
-console.log(`[worker] calling ${base} every ${EVERY_MS / 1000}s`);
+console.log(`[worker] calling ${base} every ${everyMs / 1000}s`);
 let failures = 0;
 while (!stop.signal.aborted) {
   try {
@@ -56,6 +64,6 @@ while (!stop.signal.aborted) {
     // One line per failure, then quieter: a deploy in progress fails a few passes.
     if (failures <= 3 || failures % 20 === 0) console.error(`[worker] tick failed (${failures}): ${error instanceof Error ? error.message : String(error)}`);
   }
-  await wait(failures === 0 ? EVERY_MS : Math.min(EVERY_MS * 2 ** Math.min(failures, 4), 10 * 60_000));
+  await wait(failures === 0 ? everyMs : Math.min(everyMs * 2 ** Math.min(failures, 4), 10 * 60_000));
 }
 console.log("[worker] stopped");

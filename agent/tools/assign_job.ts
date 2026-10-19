@@ -10,6 +10,7 @@ import { operator } from "../lib/session";
 import { briefFromRecipe, findRecipe, noteRecipeUsed } from "../lib/recipes";
 import { DAYS, defaultTimezone, describeSchedule, isSchedule, nextRun, type Schedule } from "../lib/schedule";
 import { looseBoolean } from "../lib/tool-input";
+import { effectiveEnv } from "../lib/settings/store";
 
 type Rating = { readonly effort: JobEffort; readonly by: "hq" | "default" };
 
@@ -129,7 +130,7 @@ export default defineTool({
     let schedule: Schedule | null = null;
     if (input.dailyAt !== undefined) {
       const [hour = "0", minute = "0"] = input.dailyAt.split(":");
-      const timezone = input.timezone?.trim() || defaultTimezone();
+      const timezone = input.timezone?.trim() || defaultTimezone(await effectiveEnv(who.workspaceId));
       const candidate: unknown = {
         hour: Number(hour),
         minute: Number(minute),

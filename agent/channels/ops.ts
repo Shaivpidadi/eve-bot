@@ -28,10 +28,10 @@ import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
-import { isProjectWorker, workerTick } from "../lib/worker";
+import { isProjectWorker, workerEverySeconds, workerTick } from "../lib/worker";
 import { gatewayCatalog } from "../lib/gateway-models";
 import { modelsEditable, modelsReport, saveModelSettings, settingsInput } from "../lib/model-settings";
-import { effectiveEnv, saveSettings, settingsReport } from "../lib/settings/store";
+import { effectiveEnv, saveSettings, settingsReport, workerPaused } from "../lib/settings/store";
 import type { SettingDef } from "../lib/settings/registry";
 import { acceptTrigger, recentTriggers, TRIGGER_PATH, verifiedTrigger } from "../lib/triggers";
 import { sessionIsGone } from "../lib/gone";
@@ -396,11 +396,14 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      */
     POST("/bot/v1/internal/tick", async (request, { attachSession, from }) => {
       if (!(await isProjectWorker(request)) && !(await isInternal(request))) return json({ error: "not found" }, 404);
+      // The daemon takes its pace from the answer, so Settings change it without a redeploy.
+      const everySeconds = workerEverySeconds(await effectiveEnv());
+      if (await workerPaused()) return json({ ok: true, paused: true, due: 0, dispatched: 0, notes: 0, everySeconds });
       const outcome = await workerTick(sendInto(from, attachSession));
       if (outcome.dispatch.due > 0 || outcome.notes > 0) {
         console.log(`[bot] worker: ${outcome.dispatch.due} due, ${outcome.dispatch.dispatched} dispatched, ${outcome.notes} notes, ${outcome.dispatch.ms}ms`);
       }
-      return json({ ok: true, ...outcome.dispatch, notes: outcome.notes, slow: outcome.slow });
+      return json({ ok: true, ...outcome.dispatch, notes: outcome.notes, slow: outcome.slow, everySeconds });
     }),
 
     /**
@@ -1204,7 +1207,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           hour: Number(hour),
           minute: Number(minute),
           ...(days.length === 0 ? {} : { days }),
-          timezone: typeof body.timezone === "string" && body.timezone.trim() !== "" ? body.timezone.trim() : defaultTimezone(),
+          timezone: typeof body.timezone === "string" && body.timezone.trim() !== "" ? body.timezone.trim() : defaultTimezone(await effectiveEnv(gate.access.workspaceId)),
         };
         if (!isSchedule(candidate)) {
           return json({ error: "That is not a time and timezone I know. Use HH:MM and an IANA name such as America/New_York." }, 422);
