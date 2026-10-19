@@ -209,11 +209,14 @@ screen and the Bot's routines on the right. Right-click a Bot, or use the **⋯*
 on hover, for its menu: pin, move to a section, mark unread, clear chat,
 rename, edit profile, duplicate, hide, delete.
 
-- **Usage, Memory, and Connectors** open as sheets over the console, so the
+- **Usage, Memory, Models, and Connectors** open as sheets over the console, so the
   conversation stays in view. Usage shows the workspace's spend: the total,
   the last seven days, a bar per day, and tables by model, by who ran it, and
   job by job, with the price the provider reported. Off AI Gateway set
   `BOT_MODEL_PRICES` to see dollars instead of zeros.
+- **Models.** Pick the AI Gateway model for HQ, each kind of Bot job, and the
+  helper, from Gateway's list (free ones first, paid ones with their prices)
+  or by name. One switch puts the whole team on free models.
 - **Budget.** The card on the Usage sheet is the workspace's limit for the
   month and the day. Everything that calls a model draws on it.
 - **Who is signed in.** Behind Vercel Authentication the console shows your
