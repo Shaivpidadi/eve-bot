@@ -274,3 +274,30 @@ describe("the Vercel computer is brought up to what Settings say", () => {
     expect(before).not.toContain("5432");
   });
 });
+
+describe("settings the build fixes", () => {
+  it("apply as built, and say when a saved change waits for the next build", async () => {
+    vi.stubEnv("BOT_JOB_COST_LIMIT_USD", "5");
+    vi.stubEnv("VERCEL_ENV", "");
+    const { effectiveEnv, rebuildPlan, recordBuilt, saveSettings, settingsReport } = await load();
+    expect(await rebuildPlan()).toEqual({ overlay: {}, changed: false });
+    await saveSettings(owner, { BOT_JOB_COST_LIMIT_USD: 2 });
+    // Saved, but the agent running was not built with it: readers keep the built value.
+    expect((await effectiveEnv()).BOT_JOB_COST_LIMIT_USD).toBe("5");
+    expect(await rebuildPlan()).toEqual({ overlay: { BOT_JOB_COST_LIMIT_USD: "2" }, changed: true });
+    const job = () => settingsReport(owner).then((report) => report.settings.find((setting) => setting.env === "BOT_JOB_COST_LIMIT_USD"));
+    expect(await job()).toMatchObject({ value: "2", pending: true });
+    // The build lays the saved value over the environment and records it.
+    await recordBuilt({ ...process.env, BOT_JOB_COST_LIMIT_USD: "2" });
+    expect((await effectiveEnv()).BOT_JOB_COST_LIMIT_USD).toBe("2");
+    expect(await rebuildPlan()).toMatchObject({ changed: false });
+    expect(await job()).toMatchObject({ pending: false });
+  });
+
+  it("show where a value came from before the start script laid Settings over it", async () => {
+    const { envBeforeOverlay } = await load();
+    const base = { BOT_COMPUTER: "local", BOT_SETTINGS_OVERLAY: JSON.stringify({ BOT_COMPUTER: null }) };
+    expect(envBeforeOverlay(base).BOT_COMPUTER).toBeUndefined();
+    expect(envBeforeOverlay({ BOT_COMPUTER: "local" }).BOT_COMPUTER).toBe("local");
+  });
+});

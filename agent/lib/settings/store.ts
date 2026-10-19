@@ -64,6 +64,8 @@ export async function effectiveEnv(workspaceId?: string, base: Readonly<Record<s
     for (const [name, value] of Object.entries(doc.values)) {
       const def = SETTINGS_BY_ENV.get(name);
       if (def === undefined || def.scope !== scope || def.page === "models") continue;
+      // Fixed when the agent was built: what applies is what the build used (below), not what was saved since.
+      if (def.tier === "rebuild") continue;
       // The worker is turned on by the deployment's environment; a setting can only pause it.
       if (name === "BOT_WORKER") {
         if (value === "off") env[name] = "off";
@@ -78,7 +80,9 @@ export async function effectiveEnv(workspaceId?: string, base: Readonly<Record<s
       env[name] = value;
     }
   };
-  // Deployment first, then the workspace's own, which wins where it may.
+  // What this deployment was built with, then the deployment's settings, then the workspace's own, which wins where it may.
+  const built = await readBuilt(base);
+  if (built !== null) for (const [name, value] of Object.entries(built.values)) if (SETTINGS_BY_ENV.get(name)?.tier === "rebuild") env[name] = value;
   lay(deployment, "deployment");
   await unsealInto(env, deployment, "deployment");
   lay(workspace, "workspace");
@@ -207,6 +211,8 @@ export interface SettingView {
   /** A saved value is hiding a variable that is set too. */
   readonly overridesEnv: boolean;
   readonly editable: boolean;
+  /** Saved, but the agent running now was built before it: it applies with the next deploy or rebuild. */
+  readonly pending: boolean;
 }
 
 /** Every setting this caller may see, as the Settings page shows them. Tenants see only their workspace's. */
@@ -215,13 +221,17 @@ export async function settingsReport(
   base: Readonly<Record<string, string | undefined>> = process.env,
   where: (def: SettingDef) => boolean = () => true,
 ): Promise<{ readonly editable: boolean; readonly owner: boolean; readonly settings: readonly SettingView[] }> {
-  const [deployment, workspace] = await Promise.all([readSettingsDoc(DEPLOYMENT_KEY), readSettingsDoc(workspaceKey(caller.workspaceId))]);
+  const [deployment, workspace, built] = await Promise.all([readSettingsDoc(DEPLOYMENT_KEY), readSettingsDoc(workspaceKey(caller.workspaceId)), readBuilt(base)]);
   const editable = settingsEditable(base);
+  const before = envBeforeOverlay(base);
   const settings = SETTINGS.filter((def) => def.page !== "models" && where(def) && (caller.owner || (def.scope === "workspace" && def.sensitive !== true))).map((def): SettingView => {
     const doc = def.scope === "deployment" ? deployment : workspace;
     const saved = def.kind.type === "secret" ? (doc.sealed[def.env] ?? null) : (doc.values[def.env] ?? null);
-    const fromEnv = base[def.env]?.trim() || null;
+    const fromEnv = before[def.env]?.trim() || null;
     const isSecret = def.kind.type === "secret";
+    // A change the running agent was not built with yet.
+    const inBuild = built?.values[def.env] ?? fromEnv;
+    const pending = def.tier === "rebuild" && (saved ?? fromEnv) !== inBuild;
     return {
       env: def.env,
       area: def.area,
@@ -236,6 +246,7 @@ export async function settingsReport(
       isSet: saved !== null || fromEnv !== null,
       overridesEnv: saved !== null && fromEnv !== null,
       editable: editable && (def.scope === "workspace" || caller.owner),
+      pending,
     };
   });
   return { editable, owner: caller.owner, settings };
@@ -245,6 +256,86 @@ export async function settingsReport(
 export async function workerPaused(): Promise<boolean> {
   const doc = await readSettingsDoc(DEPLOYMENT_KEY);
   return doc.values.BOT_WORKER === "off" && on(process.env.BOT_WORKER);
+}
+
+// ---------------------------------------------------------------------------
+// The rebuild tier
+// ---------------------------------------------------------------------------
+
+/**
+ * Settings `eve build` fixes (cost and token caps, where the computer runs)
+ * apply through the environment the build and the server start with:
+ * `scripts/build.mjs` and `scripts/start.mjs` lay the saved values over it
+ * (`rebuildOverlay`) and, once the build succeeds, record what it used
+ * (`recordBuilt`), per target, so readers and the page agree with the agent
+ * that is actually running.
+ */
+interface BuiltDoc {
+  readonly values: Readonly<Record<string, string>>;
+  readonly at: string;
+}
+
+/** Previews and production share a store on Vercel; each records its own build. */
+export const buildTarget = (env: Readonly<Record<string, string | undefined>> = process.env): string => env.VERCEL_ENV?.trim() || "local";
+export const builtKey = (target: string) => `settings/_built-${target}.json`;
+
+async function readBuilt(base: Readonly<Record<string, string | undefined>>): Promise<BuiltDoc | null> {
+  const doc = await readSettingsDoc(builtKey(buildTarget(base)));
+  return doc.at === null ? null : { values: doc.values, at: doc.at };
+}
+
+/**
+ * What a build here should lay over the environment, and whether that differs
+ * from what the running agent was built with (no record yet counts as built
+ * from the environment alone).
+ */
+export async function rebuildPlan(env: Readonly<Record<string, string | undefined>> = process.env): Promise<{ readonly overlay: Record<string, string>; readonly changed: boolean }> {
+  const [overlay, built] = await Promise.all([rebuildOverlay(), readBuilt(env)]);
+  const wanted = (name: string) => overlay[name] ?? (env[name]?.trim() || undefined);
+  const names = SETTINGS.filter((def) => def.tier === "rebuild").map((def) => def.env);
+  const changed = built === null ? Object.keys(overlay).length > 0 : names.some((name) => wanted(name) !== built.values[name]);
+  return { overlay, changed };
+}
+
+/** The saved rebuild-tier values a build should use, over the environment's. */
+export async function rebuildOverlay(): Promise<Record<string, string>> {
+  const deployment = await readSettingsDoc(DEPLOYMENT_KEY);
+  const overlay: Record<string, string> = {};
+  for (const [name, value] of Object.entries(deployment.values)) {
+    const def = SETTINGS_BY_ENV.get(name);
+    if (def?.tier === "rebuild" && def.scope === "deployment") overlay[name] = value;
+  }
+  return overlay;
+}
+
+/** Notes the rebuild-tier values a finished build used, as the environment had them. */
+export async function recordBuilt(env: Readonly<Record<string, string | undefined>> = process.env): Promise<void> {
+  const values: Record<string, string> = {};
+  for (const def of SETTINGS) {
+    const value = env[def.env]?.trim();
+    if (def.tier === "rebuild" && value) values[def.env] = value;
+  }
+  const { writeDoc } = await import("../store");
+  const key = builtKey(buildTarget(env));
+  await writeDoc(key, { values, sealed: {}, at: new Date().toISOString(), by: "build" });
+  cache.delete(key);
+}
+
+/** The variable `scripts/start.mjs` sets with what the environment had before it laid saved values over it. */
+export const OVERLAY_VAR = "BOT_SETTINGS_OVERLAY";
+
+/** The environment as it was before the start script's overlay, so the page can say where a value came from. */
+export function envBeforeOverlay(base: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string | undefined>> {
+  const raw = base[OVERLAY_VAR];
+  if (raw === undefined || raw === "") return base;
+  try {
+    const was = JSON.parse(raw) as Record<string, string | null>;
+    const env: Record<string, string | undefined> = { ...base };
+    for (const [name, value] of Object.entries(was)) env[name] = value ?? undefined;
+    return env;
+  } catch {
+    return base;
+  }
 }
 
 /** For tests. */

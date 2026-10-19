@@ -43,6 +43,7 @@ interface Setting {
   readonly isSet: boolean;
   readonly overridesEnv: boolean;
   readonly editable: boolean;
+  readonly pending?: boolean;
 }
 
 interface Report {
@@ -162,7 +163,11 @@ function Field({ setting, busy, onSave }: { setting: Setting; busy: boolean; onS
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <b className="font-medium">{setting.label}</b>
         {setting.help === "" ? null : <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{setting.help}</span>}
-        {TIER_NOTE[setting.tier] === null ? null : <span className="text-[11.5px] text-warning">{TIER_NOTE[setting.tier]}</span>}
+        {setting.pending ? (
+          <span className="text-[11.5px] text-warning">Saved; the running agent was built before it. Applies with the next deploy, or the next npm start here.</span>
+        ) : TIER_NOTE[setting.tier] === null ? null : (
+          <span className="text-[11.5px] text-faint">{TIER_NOTE[setting.tier]}</span>
+        )}
         <span className="flex items-center gap-2">
           <Source setting={setting} />
           {setting.source === "setting" && setting.editable ? (
