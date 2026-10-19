@@ -549,14 +549,19 @@ export function Sidebar({
           <form ref={signOut} method="post" action="/bot/v1/session/end" hidden />
           <Button
             variant="outline"
-            className="h-[34px] min-w-0 flex-1 gap-[7px] rounded-full bg-card px-2 text-[12.5px] font-medium shadow-xs transition-[box-shadow,transform] hover:bg-card hover:shadow-md active:scale-[0.98] dark:bg-card dark:hover:bg-card"
+            className="@container h-[34px] min-w-0 flex-1 gap-1.5 rounded-full bg-card px-2 text-[12.5px] font-medium shadow-xs transition-[box-shadow,transform] hover:bg-card hover:shadow-md active:scale-[0.98] dark:bg-card dark:hover:bg-card"
             onClick={onConnectors}
             title={apps.connected ? "Your connected apps" : "Connect the apps your team uses"}
           >
-            <span className="min-w-0 text-center leading-[1.15] whitespace-normal">{apps.connected ? "Apps" : "Connect apps"}</span>
-            <span className="inline-flex flex-none *:-ml-0.5 *:ring-2 *:ring-card *:first:ml-0" aria-hidden="true">
-              {apps.list.slice(0, 3).map((app) => (
-                <BrandMark key={app.key} brand={app.brand} label={app.label} url={app.url} size={18} />
+            {/* One short word, so it never wraps beside the marks; the title says the rest. */}
+            <span className="min-w-0 truncate">{apps.connected ? "Apps" : "Connect"}</span>
+            {/* Two marks, where the pill has room for them beside the word. */}
+            <span
+              className={cn("hidden flex-none *:-ml-1 *:ring-2 *:ring-card *:first:ml-0", apps.connected ? "@[4rem]:inline-flex" : "@[5.375rem]:inline-flex")}
+              aria-hidden="true"
+            >
+              {apps.list.slice(0, 2).map((app) => (
+                <BrandMark key={app.key} brand={app.brand} label={app.label} url={app.url} size={16} />
               ))}
             </span>
           </Button>
