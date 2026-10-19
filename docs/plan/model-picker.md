@@ -86,7 +86,7 @@ in the console, switch the whole team to free models with one toggle, and name a
 - **Tests:** mapping, free detection (including `varies_by_provider`), ordering, the default pick, and failure falling
   back to the last good list.
 
-### M2. Stored settings and resolution `[to-do]`
+### M2. Stored settings and resolution `[done]`
 - `agent/lib/model-settings.ts`:
   - `readModelSettings(ws)`, cached 30 s.
   - `saveModelSettings(ws, input, by)`: validates id shape, and under free-only checks each id is listed and free.

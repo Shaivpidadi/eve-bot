@@ -60,6 +60,28 @@ export function modelForEffort(effort: JobEffort): string {
   return customEndpoint() === null ? DEFAULT_MODELS[effort] : endpointDefaultModel();
 }
 
+/** The model that reads exchanges for memories, writes intros and proposes rosters, unless `BOT_MEMORY_MODEL` names one. */
+export const DEFAULT_MEMORY_MODEL = "anthropic/claude-haiku-4-5";
+const DEFAULT_HQ_MODEL = "anthropic/claude-sonnet-5";
+
+/**
+ * The jobs a model can be chosen for, in the console (see `model-settings.ts`):
+ * HQ's conversation, a Bot's job at each effort, and the helper's small calls.
+ */
+export const MODEL_ROLES = ["hq", "standard", "quick", "deep", "helper"] as const;
+export type ModelRole = (typeof MODEL_ROLES)[number];
+export const isModelRole = (value: unknown): value is ModelRole => typeof value === "string" && (MODEL_ROLES as readonly string[]).includes(value);
+
+/** The role a job's effort runs under. */
+export const effortRole = (effort: JobEffort): ModelRole => effort;
+
+/** The deployment's own choice for a role: its environment variables, else the built-in default. */
+export function defaultModelFor(role: ModelRole): string {
+  if (role === "hq") return process.env.BOT_HQ_MODEL?.trim() || (customEndpoint() === null ? DEFAULT_HQ_MODEL : endpointDefaultModel());
+  if (role === "helper") return process.env.BOT_MEMORY_MODEL?.trim() || (customEndpoint() === null ? DEFAULT_MEMORY_MODEL : modelForEffort("quick"));
+  return modelForEffort(role);
+}
+
 /** One level up, for a job whose last run failed. */
 export function nextEffort(effort: JobEffort): JobEffort {
   return effort === "quick" ? "standard" : "deep";
@@ -275,7 +297,7 @@ export function hqModel():
   | { readonly model: LanguageModel; readonly modelContextWindowTokens: number } {
   const endpoint = customEndpoint();
   const named = process.env.BOT_HQ_MODEL?.trim();
-  if (endpoint === null) return { model: named || "anthropic/claude-sonnet-5", ...gatewayModelOptions() };
+  if (endpoint === null) return { model: named || DEFAULT_HQ_MODEL, ...gatewayModelOptions() };
   return { model: endpointModel(endpoint, named || endpointDefaultModel()), modelContextWindowTokens: endpoint.contextWindowTokens };
 }
 

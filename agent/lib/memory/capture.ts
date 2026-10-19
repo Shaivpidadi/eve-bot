@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { confidenceFloor, jevEnabled, judge, type Judgement, spent } from "../jev";
 import { probabilityOf, readVerdict } from "../jev-watch";
-import { customEndpoint, endpointModel, modelForEffort, withGatewayOptions } from "../models";
+import { customEndpoint, DEFAULT_MEMORY_MODEL, endpointModel, modelForEffort, withGatewayOptions } from "../models";
 import { chargeUsage, reportedCost } from "../spend";
 import { nearest } from "./rank";
 import {
@@ -492,7 +492,7 @@ const SYSTEM: Record<CaptureMode, string> = {
 };
 
 /** The model that reads exchanges: `BOT_MEMORY_MODEL`, else a fast small Gateway model, else the endpoint's quick model. */
-export const DEFAULT_MEMORY_MODEL = "anthropic/claude-haiku-4-5";
+export { DEFAULT_MEMORY_MODEL };
 
 export function extractionModelId(): string {
   const named = process.env.BOT_MEMORY_MODEL?.trim();
