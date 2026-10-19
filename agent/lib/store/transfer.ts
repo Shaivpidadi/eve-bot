@@ -45,8 +45,11 @@ interface Line {
 /** The computer's access key: connector keys and OAuth tokens are sealed with a key derived from it (see `connectors.ts`). */
 const isSealingKey = (key: string): boolean => /^computer\/[^/]+\/access-key\.json$/.test(key);
 
-/** Keys that hold credentials: connector keys and OAuth tokens, sealed, and the key they are sealed with. */
-export const isSecretKey = (key: string): boolean => /^connectors\//.test(key) || /^oauth-pending\//.test(key) || isSealingKey(key);
+/** Settings saved in the console, which can hold sealed secrets (see `settings/store.ts`). */
+const isSettingsKey = (key: string): boolean => /^settings\/(?:_deployment|[^/]+\/settings)\.json$/.test(key);
+
+/** Keys that hold credentials: connector keys and OAuth tokens, sealed, settings with sealed secrets, and the key they are sealed with. */
+export const isSecretKey = (key: string): boolean => /^connectors\//.test(key) || /^oauth-pending\//.test(key) || isSettingsKey(key) || isSealingKey(key);
 
 /** Whether `key` belongs to `workspace`: some path segment is its id. Deployment-wide keys (the computer) belong to none. */
 export const inWorkspace = (key: string, workspace: string): boolean => key.split("/").some((segment) => segment === workspace || segment === `${workspace}.json`);

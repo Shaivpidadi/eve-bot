@@ -31,6 +31,8 @@ import { isInternal, noteOrigin } from "../lib/self";
 import { isProjectWorker, workerTick } from "../lib/worker";
 import { gatewayCatalog } from "../lib/gateway-models";
 import { modelsEditable, modelsReport, saveModelSettings, settingsInput } from "../lib/model-settings";
+import { saveSettings, settingsReport } from "../lib/settings/store";
+import type { SettingDef } from "../lib/settings/registry";
 import { acceptTrigger, recentTriggers, TRIGGER_PATH, verifiedTrigger } from "../lib/triggers";
 import { sessionIsGone } from "../lib/gone";
 import { worldIsLocal } from "../lib/world";
@@ -203,6 +205,14 @@ async function hireFromForm(
   });
   if (template === null) waitUntil(writeIntro(bot).catch(() => null));
   return { bot: { id: bot.id, name: bot.name, room: roomForBot(bot.id) } };
+}
+
+/** Whether a setting means anything here: the computer it is about, or the worker this deployment runs. */
+function settingApplies(def: SettingDef): boolean {
+  if (def.where === "vercel-computer") return computerMode() === "vercel";
+  if (def.where === "local-computer") return computerMode() === "local";
+  if (def.where === "worker") return /^(1|true|on|yes)$/i.test(process.env.BOT_WORKER?.trim() ?? "");
+  return true;
 }
 
 /** This deployment's public address, for redirect URIs: the configured one, else what the request came in on. */
@@ -408,6 +418,28 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       } catch {
         return new Response(null, { status: 503 });
       }
+    }),
+
+    /**
+     * Every setting the caller may see, with its value and where it comes from
+     * (see lib/settings). Tenants see only their own workspace's.
+     */
+    GET("/bot/v1/settings", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return json(await settingsReport(gate.access, process.env, settingApplies));
+    }),
+
+    /** Saves changes ({ "BOT_…": value or null }); deployment settings need the owner. */
+    PUT("/bot/v1/settings", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      const changes = body?.changes;
+      if (typeof changes !== "object" || changes === null || Array.isArray(changes)) return json({ error: 'Send { "changes": { "BOT_…": value or null } }.' }, 400);
+      const saved = await saveSettings({ workspaceId: gate.access.workspaceId, owner: gate.access.owner, by: gate.access.user }, changes as Record<string, unknown>);
+      if (!saved.ok) return json({ error: saved.error }, saved.status);
+      return json(await settingsReport(gate.access, process.env, settingApplies));
     }),
 
     /** The models each role runs on, AI Gateway's list, and the free-only switch (see lib/model-settings.ts). */
@@ -1109,6 +1141,8 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const secrets = new URL(request.url).searchParams.get("secrets") === "1";
+      // The key secrets are sealed with opens the whole deployment's, so only its owner takes it.
+      if (secrets && !gate.access.owner) return json({ error: "Only this deployment's owner can export secrets." }, 403);
       const out = new PassThrough();
       const chunks: Buffer[] = [];
       out.on("data", (chunk: Buffer) => chunks.push(chunk));
