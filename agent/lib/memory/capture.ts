@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { confidenceFloor, jevEnabled, judge, type Judgement, spent } from "../jev";
 import { probabilityOf, readVerdict } from "../jev-watch";
-import { customEndpoint, DEFAULT_MEMORY_MODEL, endpointModel, modelForEffort, withGatewayOptions } from "../models";
+import { customEndpoint, DEFAULT_MEMORY_MODEL, endpointModel, HELPER_MAX_OUTPUT, modelForEffort, withGatewayOptions } from "../models";
 import { resolveModel } from "../model-settings";
 import { effectiveEnv } from "../settings/store";
 import { chargeUsage, reportedCost } from "../spend";
@@ -541,6 +541,7 @@ export const modelExtract: Extract = async (input, existing, fields) => {
   const { model, id: modelId } = await helperModel(input.workspaceId);
   const result = await generateText({
     model,
+    maxOutputTokens: HELPER_MAX_OUTPUT,
     output: Output.object({ schema: OPERATIONS_SCHEMA }),
     providerOptions: withGatewayOptions(),
     system: SYSTEM[input.mode],

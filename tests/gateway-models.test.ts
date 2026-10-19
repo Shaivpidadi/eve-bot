@@ -32,11 +32,13 @@ describe("toCatalogModel", () => {
       priceVaries: false,
       outputPerM: 10,
       context: 128000,
+      maxOutput: null,
       vision: false,
       structured: false,
       reasoning: false,
       zdr: "none",
     });
+    expect(toCatalogModel(entry({ max_tokens: 524288 }))).toMatchObject({ maxOutput: 524288 });
     expect(toCatalogModel(entry({ type: "image" }))).toBeNull();
     expect(toCatalogModel(entry({ tags: ["reasoning"] }))).toBeNull();
     expect(toCatalogModel(entry({ id: "no slash" }))).toBeNull();

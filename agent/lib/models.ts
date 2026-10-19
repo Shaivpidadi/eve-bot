@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { LanguageModel } from "ai";
+import { defaultSettingsMiddleware, gateway, type LanguageModel, wrapLanguageModel } from "ai";
 
 import { pricedModel } from "./pricing";
 import { steadyModel } from "./steady";
@@ -86,6 +86,9 @@ export function defaultModelFor(role: ModelRole): string {
 /** Context window assumed for a model Gateway does not list, which eve cannot look up. */
 export const UNLISTED_CONTEXT_TOKENS = 128_000;
 
+/** The context window to hand eve with a selection: only for a model Gateway does not list, which eve cannot look up. */
+export const contextToSend = (listed: number | null | undefined): number | null => (listed == null ? UNLISTED_CONTEXT_TOKENS : null);
+
 /** A Gateway model chosen for a turn or a job, as eve takes it: the data controls, and what eve cannot look up itself. */
 export function gatewaySelection(model: {
   readonly id: string;
@@ -106,6 +109,39 @@ export function gatewaySelection(model: {
     ...(model.context ? { modelContextWindowTokens: model.context } : {}),
     // A model that does not reason gets no reasoning setting rather than one it may reject.
     ...(model.reasoning === false ? { reasoning: "provider-default" as const } : model.level ? { reasoning: model.level } : {}),
+  };
+}
+
+/**
+ * What the helper may write for a hello, a team suggestion or a memory
+ * change: short by design. Said outright, so a model the provider does not
+ * know is not capped (and warned about) by default instead.
+ */
+export const HELPER_MAX_OUTPUT = 4_096;
+
+/** The most a picked model is asked to write in one call, whatever Gateway lists. */
+const MAX_OUTPUT_CEILING = 65_536;
+
+/**
+ * A step's selection for a model picked in the console, as a live model that
+ * says how much it may write. eve looks a model's output limit up from Gateway
+ * but does not send it with the call, and Gateway then holds a model its
+ * provider does not know (MiniMax, the free default, today) to 4,096 tokens a
+ * call: enough to cut a long answer, or a file written in one call, short. eve
+ * takes a live model only per step, so the step resolvers hand this over; the
+ * turn's choice stays an id. Without a listed limit, the selection as it was.
+ */
+export function withOutputLimit<T extends { readonly model: string; readonly modelContextWindowTokens?: number }>(
+  selection: T,
+  listed: { readonly context: number | null; readonly maxOutput?: number | null } | null,
+): T | (Omit<T, "model"> & { readonly model: LanguageModel; readonly modelContextWindowTokens: number }) {
+  const maxOutput = listed?.maxOutput;
+  if (maxOutput == null || maxOutput <= 0) return selection;
+  return {
+    ...selection,
+    model: wrapLanguageModel({ model: gateway(selection.model), middleware: defaultSettingsMiddleware({ settings: { maxOutputTokens: Math.min(maxOutput, MAX_OUTPUT_CEILING) } }) }),
+    // eve cannot look a live model up, so it is told the context window too.
+    modelContextWindowTokens: selection.modelContextWindowTokens ?? listed?.context ?? UNLISTED_CONTEXT_TOKENS,
   };
 }
 

@@ -20,6 +20,8 @@ export interface CatalogModel {
   readonly priceVaries: boolean;
   readonly outputPerM: number | null;
   readonly context: number | null;
+  /** The most it writes in one call, as Gateway lists it. */
+  readonly maxOutput?: number | null;
   /** Takes images, which the browser needs (it works from screenshots). */
   readonly vision: boolean;
   /** Answers in a JSON schema, which memory extraction needs. */
@@ -75,6 +77,7 @@ export function toCatalogModel(raw: unknown): CatalogModel | null {
     priceVaries: pricing.varies_by_provider === true,
     outputPerM,
     context: typeof entry.context_window === "number" && entry.context_window > 0 ? entry.context_window : null,
+    maxOutput: typeof entry.max_tokens === "number" && entry.max_tokens > 0 ? entry.max_tokens : null,
     vision: tags.includes("vision") || inputs.includes("image"),
     structured: tags.includes("structured-output"),
     reasoning: tags.includes("reasoning"),
@@ -115,6 +118,12 @@ export async function gatewayCatalog(fetcher: typeof fetch = fetch): Promise<Cat
   // A failure is retried sooner than a success is refreshed.
   cached = { catalog, until: Date.now() + (catalog.error === null ? CACHE_MS : 60_000) };
   return catalog;
+}
+
+/** A model as Gateway lists it, or null when it does not (or the list cannot be read). */
+export async function listedModel(id: string): Promise<CatalogModel | null> {
+  const catalog = await gatewayCatalog().catch(() => null);
+  return catalog?.models.find((model) => model.id === id) ?? null;
 }
 
 /** For tests. */

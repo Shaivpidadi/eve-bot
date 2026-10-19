@@ -1,6 +1,8 @@
 import { defineAgent, defineDynamic } from "eve";
 
-import { customEndpoint, defaultModelFor, gatewaySelection, hqModel, levelOf, reasoningFor, tokenLimits, UNLISTED_CONTEXT_TOKENS } from "./lib/models";
+import type { DynamicResolveContext } from "eve";
+
+import { contextToSend, customEndpoint, defaultModelFor, gatewaySelection, hqModel, levelOf, reasoningFor, tokenLimits, withOutputLimit } from "./lib/models";
 
 /**
  * HQ's model on AI Gateway: the workspace's choice in the console (see
@@ -9,16 +11,36 @@ import { customEndpoint, defaultModelFor, gatewaySelection, hqModel, levelOf, re
  * turn and a turn never switches models halfway. Loaded lazily, so the store
  * stays out of whatever loads this definition.
  */
+type HqChoice = { readonly selection: ReturnType<typeof gatewaySelection>; readonly picked: string | null };
+
+async function hqChoice(ctx: DynamicResolveContext): Promise<HqChoice> {
+  const [{ resolveModel }, { operator }, { effectiveEnv }] = await Promise.all([import("./lib/model-settings"), import("./lib/session"), import("./lib/settings/store")]);
+  const workspaceId = operator(ctx).workspaceId;
+  const [resolved, env] = await Promise.all([resolveModel(workspaceId, "hq").catch(() => null), effectiveEnv(workspaceId).catch(() => process.env)]);
+  // How hard HQ reasons, from Settings; the agent's own setting when none is chosen.
+  const level = levelOf(env.BOT_HQ_REASONING);
+  if (resolved === null || resolved.source === "default") return { selection: gatewaySelection({ id: defaultModelFor("hq"), level }), picked: null };
+  return { selection: gatewaySelection({ id: resolved.id, context: contextToSend(resolved.context), reasoning: resolved.reasoning, level }), picked: resolved.id };
+}
+
+/** Each session's choice for its turn, so its steps run on the same model (on this instance; another one asks again). */
+const turns = new Map<string, HqChoice>();
+const MAX_TURNS = 500;
+
 const hqOnGateway = defineDynamic({
   events: {
     "turn.started": async (_event, ctx) => {
-      const [{ resolveModel }, { operator }, { effectiveEnv }] = await Promise.all([import("./lib/model-settings"), import("./lib/session"), import("./lib/settings/store")]);
-      const workspaceId = operator(ctx).workspaceId;
-      const [resolved, env] = await Promise.all([resolveModel(workspaceId, "hq").catch(() => null), effectiveEnv(workspaceId).catch(() => process.env)]);
-      // How hard HQ reasons, from Settings; the agent's own setting when none is chosen.
-      const level = levelOf(env.BOT_HQ_REASONING);
-      if (resolved === null || resolved.source === "default") return gatewaySelection({ id: defaultModelFor("hq"), level });
-      return gatewaySelection({ id: resolved.id, context: resolved.context ?? UNLISTED_CONTEXT_TOKENS, reasoning: resolved.reasoning, level });
+      const choice = await hqChoice(ctx);
+      if (turns.size >= MAX_TURNS) turns.delete(turns.keys().next().value as string);
+      turns.set(ctx.session.id, choice);
+      return choice.selection;
+    },
+    // A model picked in the console is handed over live with its output limit (see `withOutputLimit`).
+    "step.started": async (_event, ctx) => {
+      const choice = turns.get(ctx.session.id) ?? (await hqChoice(ctx));
+      if (choice.picked === null) return choice.selection;
+      const { listedModel } = await import("./lib/gateway-models");
+      return withOutputLimit(choice.selection, await listedModel(choice.picked));
     },
   },
 });

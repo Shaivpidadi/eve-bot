@@ -6,7 +6,7 @@ import { spent } from "./jev";
 import { helperModel } from "./memory/capture";
 import { chargeUsage, reportedCost } from "./spend";
 import type { Bot } from "./types";
-import { withGatewayOptions } from "./models";
+import { HELPER_MAX_OUTPUT, withGatewayOptions } from "./models";
 
 const INTRO = z.object({
   hello: z.string().min(1).max(240).describe("One or two sentences, first person, in the voice the persona describes: who it is and what to hand it."),
@@ -26,6 +26,7 @@ export async function writeIntro(bot: Bot): Promise<Bot["intro"]> {
   const { model, id: modelId } = await helperModel(bot.workspaceId);
   const result = await generateText({
     model,
+    maxOutputTokens: HELPER_MAX_OUTPUT,
     output: Output.object({ schema: INTRO }),
     providerOptions: withGatewayOptions(),
     system:

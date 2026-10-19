@@ -1,5 +1,5 @@
 import { type Catalog, type CatalogModel, FREE_FALLBACK, freeDefault, gatewayCatalog } from "./gateway-models";
-import { customEndpoint, defaultModelFor, effortRole, isModelRole, type JobEffort, levelOf, MODEL_ROLES, type ModelRole, nextEffort, UNLISTED_CONTEXT_TOKENS } from "./models";
+import { contextToSend, customEndpoint, defaultModelFor, effortRole, isModelRole, type JobEffort, levelOf, MODEL_ROLES, type ModelRole, nextEffort } from "./models";
 import { effectiveEnv, liveEnv } from "./settings/store";
 
 /**
@@ -248,7 +248,7 @@ export async function runModel(
   // How hard a Bot reasons, from Settings; written into the brief with the model, so the run keeps both.
   const level = levelOf(env.BOT_TEAMMATE_REASONING);
   if (resolved.source === "default") return { id: resolved.id, context: null, reasoning: null, level, free: false };
-  return { id: resolved.id, context: resolved.context ?? UNLISTED_CONTEXT_TOKENS, reasoning: resolved.reasoning, level, free: resolved.free };
+  return { id: resolved.id, context: contextToSend(resolved.context), reasoning: resolved.reasoning, level, free: resolved.free };
 }
 
 /** Whether the next effort up would run on the model this one already does (a retry would gain nothing). */

@@ -57,7 +57,11 @@ describe("HQ", () => {
     expect(await turn({}, ctx)).toEqual({ model: "anthropic/claude-sonnet-5" });
     const { saveModelSettings } = await import("../agent/lib/model-settings");
     await saveModelSettings("ws1", { roles: { hq: "free/eyes" } }, "op", catalog);
-    expect(await turn({}, ctx)).toEqual({ model: "free/eyes", modelContextWindowTokens: 1_000_000, reasoning: "provider-default" });
+    // A model Gateway lists is left for eve to look up, so its output limit comes with it rather than a 4,096-token default.
+    expect(await turn({}, ctx)).toEqual({ model: "free/eyes", reasoning: "provider-default" });
+    // One it doesn't list gets a context window, since eve could not look one up.
+    await saveModelSettings("ws1", { roles: { hq: "acme/unlisted" } }, "op", catalog);
+    expect(await turn({}, ctx)).toMatchObject({ model: "acme/unlisted", modelContextWindowTokens: 128_000 });
     // Another workspace keeps its own.
     expect(await turn({}, { ...ctx, session: { id: "s2", auth: auth("ws2") } })).toEqual({ model: "anthropic/claude-sonnet-5" });
   });
@@ -87,5 +91,36 @@ describe("a Bot's job", () => {
     const memory = { role: "user", content: "# How to do your work: what the team remembers\n\neffort: quick" };
     expect(await turn({}, { session: { id: "run_c", auth: auth("ws1") }, messages: [memory, ...brief("effort: deep\nmodel: free/eyes")] })).toMatchObject({ model: "free/eyes" });
     expect(await turn({}, { session: { id: "run_d", auth: auth("ws1") }, messages: [memory, ...brief("effort: deep")] })).toEqual({ model: "anthropic/claude-opus-5" });
+  });
+});
+
+describe("a model picked in the console", () => {
+  const listing = { data: [{ id: "free/eyes", name: "Eyes", type: "language", tags: ["tool-use"], context_window: 1_000_000, max_tokens: 524_288, pricing: { input: "0", output: "0" } }] };
+
+  it("is asked for its own output limit at each step, not the provider's 4,096-token default", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(listing))));
+    try {
+      const teammate = ((await import("../agent/subagents/teammate/agent")) as { default: Handlers }).default;
+      const step = teammate.model.events["step.started"]!;
+      const brief = (lines: string) => [{ role: "user", content: `## Job\nid: job_1\n${lines}\n\nDo the thing.` }];
+      const picked = (await step({}, { session: { id: "run_p", auth: auth("ws1") }, messages: brief("effort: quick\nmodel: free/eyes") })) as { model: unknown; modelContextWindowTokens: number };
+      // A live model rather than an id, told the listed context window too.
+      expect(typeof picked.model).toBe("object");
+      expect(picked.modelContextWindowTokens).toBe(1_000_000);
+      // A job on the default models runs on them as before.
+      expect(await step({}, { session: { id: "run_q", auth: auth("ws1") }, messages: brief("effort: deep") })).toEqual({ model: "anthropic/claude-opus-5" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("writes at most a ceiling's worth in one call, and is left as it was when Gateway lists no limit", async () => {
+    const { withOutputLimit } = await import("../agent/lib/models");
+    const selection = { model: "free/eyes", reasoning: "provider-default" as const };
+    expect(withOutputLimit(selection, null)).toBe(selection);
+    expect(withOutputLimit(selection, { context: 1000, maxOutput: null })).toBe(selection);
+    const live = withOutputLimit(selection, { context: 1000, maxOutput: 524_288 }) as { model: { doGenerate: unknown }; reasoning: string; modelContextWindowTokens: number };
+    expect(live).toMatchObject({ reasoning: "provider-default", modelContextWindowTokens: 1000 });
+    expect(typeof live.model.doGenerate).toBe("function");
   });
 });

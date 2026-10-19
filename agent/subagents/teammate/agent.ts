@@ -3,7 +3,7 @@ import { defineAgent, defineDynamic } from "eve";
 
 import type { DynamicResolveContext } from "eve";
 
-import { customEndpoint, effortInBrief, endpointModel, gatewaySelection, modelForEffort, modelInBrief, type ReasoningLevel, reasoningFor, tokenLimits } from "../../lib/models";
+import { customEndpoint, effortInBrief, endpointModel, gatewaySelection, modelForEffort, modelInBrief, type ReasoningLevel, reasoningFor, tokenLimits, withOutputLimit } from "../../lib/models";
 
 const textOf = (message: ModelMessage): string =>
   typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.map((part) => (part.type === "text" ? part.text : "")).join("\n") : "";
@@ -18,7 +18,14 @@ export function briefText(messages: readonly ModelMessage[]): string {
   return users.find((text) => /^## Job$/m.test(text)) ?? users.at(-1) ?? "";
 }
 
-type Chosen = { readonly id: string; readonly context: number | null; readonly reasoning: boolean | null; readonly level?: ReasoningLevel | null };
+type Chosen = {
+  readonly id: string;
+  readonly context: number | null;
+  readonly reasoning: boolean | null;
+  readonly level?: ReasoningLevel | null;
+  /** Picked in the console (the brief names it), rather than by the job's effort. */
+  readonly picked?: boolean;
+};
 
 /**
  * A job keeps the model it started with: prompt caches are per model, and a
@@ -35,7 +42,7 @@ function modelFor(ctx: Pick<DynamicResolveContext, "session" | "messages">): Cho
   if (remembered !== undefined) return remembered;
   const brief = briefText(ctx.messages);
   const named = endpoint === null ? modelInBrief(brief) : null;
-  const model: Chosen = named ?? { id: modelForEffort(effortInBrief(brief)), context: null, reasoning: null };
+  const model: Chosen = named === null ? { id: modelForEffort(effortInBrief(brief)), context: null, reasoning: null } : { ...named, picked: true };
   if (chosen.size >= MAX_REMEMBERED) chosen.delete(chosen.keys().next().value as string);
   chosen.set(ctx.session.id, model);
   return model;
@@ -82,7 +89,11 @@ export default defineAgent({
             "turn.started": (_event, ctx) => selection(modelFor(ctx)),
             "step.started": async (event, ctx) => {
               await refuseStoppedRun(event, ctx);
-              return selection(modelFor(ctx));
+              const model = modelFor(ctx);
+              if (model.picked !== true) return selection(model);
+              // A model picked in the console is handed over live with its output limit (see `withOutputLimit`).
+              const { listedModel } = await import("../../lib/gateway-models");
+              return withOutputLimit(selection(model), await listedModel(model.id));
             },
           }
         : {

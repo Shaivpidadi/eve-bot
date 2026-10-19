@@ -5,7 +5,7 @@ import { spent } from "./jev";
 import { helperModel } from "./memory/capture";
 import { chargeUsage, reportedCost } from "./spend";
 import { TEMPLATES } from "./templates";
-import { withGatewayOptions } from "./models";
+import { HELPER_MAX_OUTPUT, withGatewayOptions } from "./models";
 
 /** The most Bots one description proposes; a team grows from there. */
 export const MAX_PROPOSED = 5;
@@ -39,6 +39,7 @@ export async function proposeRoster(workspaceId: string, need: string, team: rea
   const { model, id: modelId } = await helperModel(workspaceId);
   const result = await generateText({
     model,
+    maxOutputTokens: HELPER_MAX_OUTPUT,
     output: Output.object({ schema: PROPOSAL }),
     providerOptions: withGatewayOptions(),
     system: [
