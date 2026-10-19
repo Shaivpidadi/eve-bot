@@ -1,6 +1,6 @@
 import { currentKind, describeKind } from "./hands/kinds";
 import { journalOf, renderJournal } from "./journal";
-import { DEFAULT_EFFORT } from "./models";
+import { DEFAULT_EFFORT, modelLine } from "./models";
 import { describeSchedule } from "./schedule";
 import type { Bot, Job } from "./types";
 
@@ -13,7 +13,11 @@ import type { Bot, Job } from "./types";
  * hands back to `job_brief` to prove it is the run that owns the job (see
  * `bindRun` in `jobs.ts`); the parent cannot know its child's session in advance.
  */
-export function renderBrief(bot: Bot, job: Job, run: { readonly token: string }): string {
+export function renderBrief(
+  bot: Bot,
+  job: Job,
+  run: { readonly token: string; readonly model?: { readonly id: string; readonly context?: number | null; readonly reasoning?: boolean | null } | null },
+): string {
   const sections = [
     `You are ${bot.name} ${bot.emoji}, ${bot.role}.`,
     bot.persona.trim(),
@@ -33,6 +37,8 @@ export function renderBrief(bot: Bot, job: Job, run: { readonly token: string })
           : `cadence: every ${job.everyMinutes} minutes`,
       // Read back by the teammate's model choice (see models.ts); keep the format.
       `effort: ${job.effort ?? DEFAULT_EFFORT}`,
+      // The model this run started on, read back the same way, so a change in the console applies from the next run.
+      ...(run.model ? [modelLine(run.model)] : []),
       job.requiresSignoff ? "sign-off: a human must approve the deliverable" : "sign-off: not required",
       describeKind(currentKind()),
       "",

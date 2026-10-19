@@ -133,8 +133,9 @@ export const REPAIR_GRACE_MS = 2 * 60_000;
 
 /**
  * What a run is assumed to cost before it starts, by effort. Deliberately on
- * the high side of a typical run on the default models (`models.ts`: quick is
- * about a tenth of standard, deep about 2.5 times), and never above the
+ * the high side of a typical run on the default models (`models.ts`), and a
+ * limit when a workspace picks pricier ones in the console; a run on a free
+ * model reserves nothing. Never above the
  * per-session cap, which bounds what one run can spend anyway. What a run
  * does not spend goes back when it settles, so a high estimate costs
  * concurrency, not money.
@@ -638,9 +639,9 @@ export async function admitClaimedRun(
   workspaceId: string,
   job: Pick<Job, "id" | "effort" | "title" | "botId">,
   runToken: string,
-  options: { readonly waitToken?: string; readonly deferrals?: number; readonly now?: Date } = {},
+  options: { readonly waitToken?: string; readonly deferrals?: number; readonly now?: Date; readonly freeModel?: boolean } = {},
 ): Promise<ClaimedAdmission> {
-  const admission = await admitRun(workspaceId, runToken, estimateForEffort(job.effort ?? DEFAULT_EFFORT), {
+  const admission = await admitRun(workspaceId, runToken, options.freeModel === true ? 0 : estimateForEffort(job.effort ?? DEFAULT_EFFORT), {
     jobId: job.id,
     ...(options.now === undefined ? {} : { now: options.now }),
   });

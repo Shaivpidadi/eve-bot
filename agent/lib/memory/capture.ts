@@ -4,6 +4,7 @@ import { z } from "zod";
 import { confidenceFloor, jevEnabled, judge, type Judgement, spent } from "../jev";
 import { probabilityOf, readVerdict } from "../jev-watch";
 import { customEndpoint, DEFAULT_MEMORY_MODEL, endpointModel, modelForEffort, withGatewayOptions } from "../models";
+import { resolveModel } from "../model-settings";
 import { chargeUsage, reportedCost } from "../spend";
 import { nearest } from "./rank";
 import {
@@ -500,10 +501,21 @@ export function extractionModelId(): string {
   return customEndpoint() === null ? DEFAULT_MEMORY_MODEL : modelForEffort("quick");
 }
 
-export function extractionModel() {
-  const id = extractionModelId();
+/**
+ * The helper's model for a workspace (memory, intros, rosters): the console's
+ * choice (see `model-settings.ts`), else `BOT_MEMORY_MODEL` or the default; on a
+ * custom endpoint, that endpoint's model as before. `id` is what usage is
+ * charged under.
+ */
+export async function helperModel(workspaceId: string): Promise<{ readonly model: string | ReturnType<typeof endpointModel>; readonly id: string }> {
   const endpoint = customEndpoint();
-  return endpoint === null ? id : endpointModel(endpoint, id);
+  if (endpoint !== null) {
+    const id = extractionModelId();
+    return { model: endpointModel(endpoint, id), id };
+  }
+  const resolved = await resolveModel(workspaceId, "helper").catch(() => null);
+  const id = resolved?.id ?? extractionModelId();
+  return { model: id, id };
 }
 
 const renderExisting = (existing: Existing, fields: Fields): string =>
@@ -523,7 +535,7 @@ const renderExisting = (existing: Existing, fields: Fields): string =>
 
 /** Proposes changes with the quick model, and counts what that cost. */
 export const modelExtract: Extract = async (input, existing, fields) => {
-  const model = extractionModel();
+  const { model, id: modelId } = await helperModel(input.workspaceId);
   const result = await generateText({
     model,
     output: Output.object({ schema: OPERATIONS_SCHEMA }),
@@ -542,7 +554,7 @@ export const modelExtract: Extract = async (input, existing, fields) => {
     maxRetries: 0,
     abortSignal: input.abortSignal ?? AbortSignal.timeout(45_000),
   });
-  void chargeUsage(input.workspaceId, "memory", spent(result.usage, result.providerMetadata, extractionModelId()), {
+  void chargeUsage(input.workspaceId, "memory", spent(result.usage, result.providerMetadata, modelId), {
     costReported: reportedCost(result.providerMetadata) !== null,
   }).catch(() => undefined);
   const changes = result.output?.changes ?? [];

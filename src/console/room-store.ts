@@ -61,7 +61,7 @@ export function failureNotice(message: string): Omit<Notice, "icon"> {
   if (/\bdoes not support (?:image|file|vision)\b|\bimage (?:or file )?input is not supported\b/i.test(message)) {
     return {
       label: "This model can't see the screen",
-      detail: "It reads text only, and the browser works from screenshots. Choose a model that takes images for this Bot (BOT_TEAMMATE_MODEL), then try again.",
+      detail: "It reads text only, and the browser works from screenshots. Choose a model that takes images for Bots on the Models page, then try again.",
       tone: "error",
     };
   }

@@ -37,7 +37,8 @@ import { learnFromFeedback } from "../lib/memory/outcomes";
 import { sameFindings } from "../lib/findings";
 import { jevEnabled, judge } from "../lib/jev";
 import { completionQuestions, noteShadow, readVerdict, unmetCriteria } from "../lib/jev-watch";
-import { DEFAULT_EFFORT, explainGatewayError, nextEffort } from "../lib/models";
+import { customEndpoint, DEFAULT_EFFORT, effortRole, explainGatewayError, nextEffort, UNLISTED_CONTEXT_TOKENS } from "../lib/models";
+import { resolveModel, type ResolvedModel } from "../lib/model-settings";
 import { ROUTINE_REPORT_PREFIX } from "../lib/rooms";
 import { nextWake } from "../lib/run-stop";
 import { operator } from "../lib/session";
@@ -471,8 +472,9 @@ async function claimForRun(
     return refused(`${bot.name} is paused. Resume them to run this job.`);
   }
 
-  // A job whose last run failed gets another try on a more capable model.
-  if (job.status === "failed" && (job.effort ?? DEFAULT_EFFORT) !== "deep") {
+  // A job whose last run failed gets another try on a more capable model,
+  // unless the next effort runs on the same model (all on one free model, say).
+  if (job.status === "failed" && (job.effort ?? DEFAULT_EFFORT) !== "deep" && !(await sameModelNext(workspaceId, job.effort ?? DEFAULT_EFFORT))) {
     await patchJob(workspaceId, jobId, (current) => ({
       ...current,
       effort: nextEffort(current.effort ?? DEFAULT_EFFORT),
@@ -497,9 +499,12 @@ async function claimForRun(
   // Unchecked: the claim goes back and this run retries at `retryAt`.
   // The computer's sessions that finished since the last sweep count before this run is admitted.
   await chargeComputerRuntimeSoon();
+  // The model this run runs on, chosen now and written into its brief (see `renderBrief`).
+  const model = await runModel(workspaceId, claimed.job.effort ?? DEFAULT_EFFORT);
   const admission = await admitClaimedRun(workspaceId, claimed.job, token, {
     waitToken: options.waitToken,
     deferrals: options.deferrals,
+    freeModel: model?.free === true,
   });
   if (!admission.admitted) return { ok: false, reason: admission.reason, retryAt: admission.retryAt, title: claimed.job.title };
 
@@ -528,7 +533,7 @@ async function claimForRun(
   return {
     ok: true,
     token,
-    brief: renderBrief(bot, claimed.job, { token }),
+    brief: renderBrief(bot, claimed.job, { token, model }),
     botName: bot.name,
     title: claimed.job.title,
     requiresSignoff: claimed.job.requiresSignoff,
@@ -821,3 +826,23 @@ async function markSentBack(
   // A person saying what to change is the clearest statement of how they want work done.
   await learnFromFeedback(workspaceId, jobId, note, result);
 }
+
+/**
+ * The model a run on this effort starts on, for the workspace (see
+ * `model-settings.ts`): null on a custom endpoint, whose model the teammate
+ * picks from the brief's effort as before.
+ */
+async function runModel(workspaceId: string, effort: JobEffortName): Promise<{ id: string; context: number | null; reasoning: boolean | null; free: boolean } | null> {
+  if (customEndpoint() !== null) return null;
+  const resolved: ResolvedModel | null = await resolveModel(workspaceId, effortRole(effort)).catch(() => null);
+  if (resolved === null || resolved.source === "default") return resolved === null ? null : { id: resolved.id, context: null, reasoning: null, free: false };
+  return { id: resolved.id, context: resolved.context ?? UNLISTED_CONTEXT_TOKENS, reasoning: resolved.reasoning, free: resolved.free };
+}
+
+/** Whether the next effort up would run on the model this one already does. */
+async function sameModelNext(workspaceId: string, effort: JobEffortName): Promise<boolean> {
+  const [now, next] = await Promise.all([runModel(workspaceId, effort), runModel(workspaceId, nextEffort(effort))]);
+  return now !== null && next !== null && now.id === next.id;
+}
+
+type JobEffortName = Parameters<typeof nextEffort>[0];

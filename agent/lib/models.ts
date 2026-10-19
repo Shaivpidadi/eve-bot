@@ -37,10 +37,10 @@ const DEFAULT_MODELS: Readonly<Record<JobEffort, string>> = {
  */
 export const EFFORT_DESCRIPTIONS: Readonly<Record<JobEffort, string>> = {
   quick:
-    "Lookups, status checks, and simple routine monitors: one page or one query, a short answer, nothing to judge. The cheapest model, about a tenth of standard.",
+    "Lookups, status checks, and simple routine monitors: one page or one query, a short answer, nothing to judge. Runs on the team's quick model.",
   standard:
     "Most work: operating a web app, reading and summarising, drafting, following a clear multi-step brief. The default.",
-  deep: "Hard multi-step research or analysis, coding, ambiguous instructions, or anything high-stakes where a mistake is costly. The most capable model, about 2.5 times standard.",
+  deep: "Hard multi-step research or analysis, coding, ambiguous instructions, or anything high-stakes where a mistake is costly. Runs on the team's most capable model.",
 };
 
 const MODEL_ENV: Readonly<Record<JobEffort, string>> = {
@@ -80,6 +80,38 @@ export function defaultModelFor(role: ModelRole): string {
   if (role === "hq") return process.env.BOT_HQ_MODEL?.trim() || (customEndpoint() === null ? DEFAULT_HQ_MODEL : endpointDefaultModel());
   if (role === "helper") return process.env.BOT_MEMORY_MODEL?.trim() || (customEndpoint() === null ? DEFAULT_MEMORY_MODEL : modelForEffort("quick"));
   return modelForEffort(role);
+}
+
+/** Context window assumed for a model Gateway does not list, which eve cannot look up. */
+export const UNLISTED_CONTEXT_TOKENS = 128_000;
+
+/** A Gateway model chosen for a turn or a job, as eve takes it: the data controls, and what eve cannot look up itself. */
+export function gatewaySelection(model: { readonly id: string; readonly context?: number | null; readonly reasoning?: boolean | null }): {
+  readonly model: string;
+  readonly modelOptions?: { readonly providerOptions: GatewayOptions };
+  readonly modelContextWindowTokens?: number;
+  readonly reasoning?: "provider-default";
+} {
+  return {
+    model: model.id,
+    ...gatewayModelOptions(),
+    ...(model.context ? { modelContextWindowTokens: model.context } : {}),
+    // A model that does not reason gets no reasoning setting rather than one it may reject.
+    ...(model.reasoning === false ? { reasoning: "provider-default" as const } : {}),
+  };
+}
+
+const MODEL_LINE = /^model: (\S+)(?: context=(\d+))?(?: reasoning=(yes|no))?$/m;
+
+/** The `model:` line `run_job` writes into a brief (see `renderBrief`), so every step of a run uses the model it started on. */
+export function modelLine(model: { readonly id: string; readonly context?: number | null; readonly reasoning?: boolean | null }): string {
+  return `model: ${model.id}${model.context ? ` context=${model.context}` : ""}${model.reasoning === false ? " reasoning=no" : ""}`;
+}
+
+export function modelInBrief(brief: string): { readonly id: string; readonly context: number | null; readonly reasoning: boolean | null } | null {
+  const match = MODEL_LINE.exec(brief);
+  if (match === null) return null;
+  return { id: match[1]!, context: match[2] === undefined ? null : Number(match[2]), reasoning: match[3] === "no" ? false : null };
 }
 
 /** One level up, for a job whose last run failed. */
@@ -273,7 +305,7 @@ export function explainGatewayError(
   if (NO_IMAGES.test(message)) {
     return {
       kind: "no-images",
-      text: "This model reads text only, and the browser works from screenshots. Set BOT_TEAMMATE_MODEL (or the Bot's model) to one that takes images, then run it again.",
+      text: "This model reads text only, and the browser works from screenshots. Choose a model that takes images for Bots on the Models page (marked as seeing images), then run it again.",
     };
   }
   return null;

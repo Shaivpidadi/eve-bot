@@ -1,0 +1,87 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { CatalogModel } from "../agent/lib/gateway-models";
+
+/**
+ * The console's model choice reaches the agents: HQ picks it per turn, a job's
+ * run writes it into the brief, and the teammate follows the brief, so a run
+ * never switches model halfway (on any instance) and a change applies next run.
+ */
+
+const catalog = {
+  models: [
+    {
+      id: "free/eyes",
+      name: "Eyes",
+      provider: "free",
+      free: true,
+      inputPerM: 0,
+      priceVaries: false,
+      outputPerM: 0,
+      context: 1_000_000,
+      vision: true,
+      structured: true,
+      reasoning: false,
+      zdr: "none",
+    } satisfies CatalogModel,
+  ],
+};
+
+const auth = (workspaceId: string) => ({ current: { principalId: "op", principalType: "user", authenticator: "test", attributes: { workspaceId, room: "desk" } }, initiator: null });
+type Handlers = { model: { events: Record<string, (event: unknown, ctx: unknown) => unknown> } };
+
+beforeEach(() => {
+  vi.resetModules();
+  vi.unstubAllEnvs();
+  vi.stubEnv("BOT_STORE", "memory");
+  vi.stubEnv("BOT_MODEL_BASE_URL", "");
+  vi.stubEnv("BOT_HQ_MODEL", "");
+  vi.stubEnv("BOT_TEAMMATE_MODEL", "");
+  vi.stubEnv("BOT_ZDR", "");
+});
+
+describe("the brief's model line", () => {
+  it("reads back what it wrote, and nothing when there is none", async () => {
+    const { modelInBrief, modelLine } = await import("../agent/lib/models");
+    expect(modelInBrief(`effort: quick\n${modelLine({ id: "free/eyes", context: 1_000_000, reasoning: false })}\n`)).toEqual({ id: "free/eyes", context: 1_000_000, reasoning: false });
+    expect(modelInBrief(`effort: quick\n${modelLine({ id: "acme/plain" })}`)).toEqual({ id: "acme/plain", context: null, reasoning: null });
+    expect(modelInBrief("effort: quick")).toBeNull();
+  });
+});
+
+describe("HQ", () => {
+  it("runs on the deployment's default until the workspace picks a model, then on that from the next turn", async () => {
+    const hq = ((await import("../agent/agent")) as { default: Handlers }).default;
+    const turn = hq.model.events["turn.started"]!;
+    const ctx = { session: { id: "s1", auth: auth("ws1") }, messages: [] };
+    expect(await turn({}, ctx)).toEqual({ model: "anthropic/claude-sonnet-5" });
+    const { saveModelSettings } = await import("../agent/lib/model-settings");
+    await saveModelSettings("ws1", { roles: { hq: "free/eyes" } }, "op", catalog);
+    expect(await turn({}, ctx)).toEqual({ model: "free/eyes", modelContextWindowTokens: 1_000_000, reasoning: "provider-default" });
+    // Another workspace keeps its own.
+    expect(await turn({}, { ...ctx, session: { id: "s2", auth: auth("ws2") } })).toEqual({ model: "anthropic/claude-sonnet-5" });
+  });
+
+  it("keeps Zero Data Retention on whatever model is picked", async () => {
+    vi.stubEnv("BOT_ZDR", "1");
+    const hq = ((await import("../agent/agent")) as { default: Handlers }).default;
+    expect(await hq.model.events["turn.started"]!({}, { session: { id: "s1", auth: auth("ws1") }, messages: [] })).toEqual({
+      model: "anthropic/claude-sonnet-5",
+      modelOptions: { providerOptions: { gateway: { zeroDataRetention: true } } },
+    });
+  });
+});
+
+describe("a Bot's job", () => {
+  it("runs on the model its brief names, and by its effort when the brief names none", async () => {
+    const teammate = ((await import("../agent/subagents/teammate/agent")) as { default: Handlers }).default;
+    const turn = teammate.model.events["turn.started"]!;
+    const brief = (lines: string) => [{ role: "user", content: `## Job\nid: job_1\n${lines}\n\nDo the thing.` }];
+    expect(await turn({}, { session: { id: "run_a", auth: auth("ws1") }, messages: brief("effort: quick\nmodel: free/eyes context=1000000 reasoning=no") })).toEqual({
+      model: "free/eyes",
+      modelContextWindowTokens: 1_000_000,
+      reasoning: "provider-default",
+    });
+    expect(await turn({}, { session: { id: "run_b", auth: auth("ws1") }, messages: brief("effort: deep") })).toEqual({ model: "anthropic/claude-opus-5" });
+  });
+});

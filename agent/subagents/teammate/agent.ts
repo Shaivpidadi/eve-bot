@@ -3,7 +3,7 @@ import { defineAgent, defineDynamic } from "eve";
 
 import type { DynamicResolveContext } from "eve";
 
-import { customEndpoint, effortInBrief, endpointModel, gatewayModelOptions, type GatewayOptions, modelForEffort, reasoningFor, tokenLimits } from "../../lib/models";
+import { customEndpoint, effortInBrief, endpointModel, gatewaySelection, modelForEffort, modelInBrief, reasoningFor, tokenLimits } from "../../lib/models";
 
 /** The brief is the first message a teammate receives. */
 function briefText(messages: readonly ModelMessage[]): string {
@@ -13,17 +13,24 @@ function briefText(messages: readonly ModelMessage[]): string {
   return first.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
 }
 
+type Chosen = { readonly id: string; readonly context: number | null; readonly reasoning: boolean | null };
+
 /**
  * A job keeps the model it started with: prompt caches are per model, and a
- * brief compacted out of the history must not switch it mid-run.
+ * brief compacted out of the history must not switch it mid-run. The brief
+ * names it (`run_job` writes the workspace's choice there, see
+ * `model-settings.ts`), so every step agrees on any instance; a brief from
+ * before that, or on a custom endpoint, picks by its effort as before.
  */
-const chosen = new Map<string, string>();
+const chosen = new Map<string, Chosen>();
 const MAX_REMEMBERED = 500;
 
-function modelFor(ctx: Pick<DynamicResolveContext, "session" | "messages">): string {
+function modelFor(ctx: Pick<DynamicResolveContext, "session" | "messages">): Chosen {
   const remembered = chosen.get(ctx.session.id);
   if (remembered !== undefined) return remembered;
-  const model = modelForEffort(effortInBrief(briefText(ctx.messages)));
+  const brief = briefText(ctx.messages);
+  const named = endpoint === null ? modelInBrief(brief) : null;
+  const model: Chosen = named ?? { id: modelForEffort(effortInBrief(brief)), context: null, reasoning: null };
   if (chosen.size >= MAX_REMEMBERED) chosen.delete(chosen.keys().next().value as string);
   chosen.set(ctx.session.id, model);
   return model;
@@ -57,11 +64,8 @@ async function refuseStoppedRun(event: unknown, ctx: DynamicResolveContext): Pro
  * `BOT_TEAMMATE_REASONING` sets reasoning depth for every model, and the cost
  * limit is the backstop for a runaway loop.
  */
-/** The job's model, with AI Gateway's data controls when any are set (see `gatewayOptions`). */
-function selection(model: string): string | { readonly model: string; readonly modelOptions?: { readonly providerOptions: GatewayOptions } } {
-  const options = gatewayModelOptions();
-  return options.modelOptions === undefined ? model : { model, ...options };
-}
+/** The job's model, with AI Gateway's data controls and what eve cannot look up itself (see `gatewaySelection`). */
+const selection = (model: Chosen) => gatewaySelection(model);
 
 export default defineAgent({
   description:
@@ -79,7 +83,7 @@ export default defineAgent({
         : {
             "step.started": async (event, ctx) => {
               await refuseStoppedRun(event, ctx);
-              return { model: endpointModel(endpoint, modelFor(ctx)), modelContextWindowTokens: endpoint.contextWindowTokens };
+              return { model: endpointModel(endpoint, modelFor(ctx).id), modelContextWindowTokens: endpoint.contextWindowTokens };
             },
           },
   }),

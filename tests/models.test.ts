@@ -118,7 +118,7 @@ describe("explainGatewayError", () => {
     // A text-only model handed a screenshot (seen live from stealth/cat-jam in a browser job).
     const images = explainGatewayError("GatewayInvalidRequestError: This model does not support image or file input. Remove it and retry.");
     expect(images?.kind).toBe("no-images");
-    expect(images?.text).toContain("BOT_TEAMMATE_MODEL");
+    expect(images?.text).toContain("Models page");
     expect(explainGatewayError("fetch failed")).toBeNull();
   });
 });

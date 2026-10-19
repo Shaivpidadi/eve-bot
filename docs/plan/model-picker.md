@@ -94,13 +94,13 @@ in the console, switch the whole team to free models with one toggle, and name a
 - `models.ts`: the env and built-in defaults per role stay the single source.
 - **Tests:** precedence, free-only enforcement and fallback, validation, and that the cache is cleared on save.
 
-### M3. Use it everywhere a model is chosen `[to-do]`
+### M3. Use it everywhere a model is chosen `[done]`
 - HQ `agent/agent.ts`: `model: defineDynamic` on `turn.started` only. It returns `{ model, ...gatewayModelOptions() }`
   so ZDR and region still apply, plus `modelContextWindowTokens` from the saved catalog entry (or 128k for an
   unlisted id), and `reasoning: "provider-default"` when the model has no `reasoning` tag. The store is loaded
   lazily, as the teammate does. A custom endpoint keeps today's static model.
 - `run_job`: resolves the role for the job's effort and passes it to `renderBrief` (D8). Escalation after a failure is
-  skipped, with a journal line, when the next effort resolves to the same model.
+  skipped when the next effort resolves to the same model (as built: no journal line; the effort stays).
 - Teammate: reads `model:` from the brief; falls back to `modelForEffort` (unchanged and synchronous, so
   `tests/models.test.ts` stays valid) for older briefs. Same selection extras as HQ.
 - Helper: memory (`capture.ts`), `intro.ts` and `roster.ts` resolve the helper role for their workspace (each has one
