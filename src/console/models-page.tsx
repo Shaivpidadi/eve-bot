@@ -305,9 +305,9 @@ function Picker({ report, role, onClose, onPick }: { report: Report; role: Role;
 
 function Option({ model, current, needsVision, onPick }: { model: CatalogModel; current: boolean; needsVision: boolean; onPick: (id: string) => void }) {
   return (
-    <ModelSelectorItem value={`${model.name} ${model.id}`} onSelect={() => onPick(model.id)} className={cn(current && "bg-accent/60")}>
+    <ModelSelectorItem value={`${model.name} ${model.id}`} onSelect={() => onPick(model.id)} className={cn("w-full", current && "bg-accent/60")}>
       <BrandMark label={model.provider} size={22} />
-      <span className="flex min-w-0 flex-col">
+      <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-[13px]">{model.name}</span>
         <code className="truncate font-mono text-[11px] text-faint">{model.id}</code>
       </span>
