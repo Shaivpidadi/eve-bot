@@ -101,14 +101,81 @@ what the console itself depends on, and as the defaults.
 - `docs/configuration.md` turns around: "Set everything in Settings; these are the environment variables the app needs
   before it can show Settings (and the defaults)". `.env.example` keeps only the env-only ones plus a pointer.
 
+
+## Review (19 Oct), and what changed
+
+An independent pass against the code found eight problems; the plan above is amended as follows. Where this section
+and the earlier text disagree, this section wins.
+
+- **R1. "After restart" is "after rebuild".** `eve build` fixes these in `.eve/compile/compiled-agent-manifest.json`:
+  - cost caps and reasoning;
+  - cron schedules;
+  - tool definitions and their approvals;
+  - the sandbox backend.
+
+  `npm start` rebuilds only when `.output/` is missing or `BOT_BUILD_ON_START=1`.
+
+  So the rebuild tier works by **overlaying saved values into `process.env` before a build**: in `scripts/build.mjs`
+  (Vercel) before `eve build`/`next build`, and in `scripts/start.mjs`, which rebuilds when a rebuild-tier value
+  changed. There is no runtime JSON file.
+
+  The build records the values it used, keyed by deployment id, so the page can say which changes wait for the next
+  deploy. The job's budget estimate uses the built value, not the saved one. A failed store read at build falls back
+  to env and never fails the build.
+- **R2. Owner, precisely:**
+  - **Tokens:** owner comes from the token that matched (`BOT_CONSOLE_TOKEN`), not the workspace. A
+    `BOT_CONSOLE_TOKENS` entry naming `default` is still a tenant.
+  - **Open mode:** owner only under the development default (not on Vercel, not production). Under an explicit
+    `BOT_CONSOLE_OPEN=1`, deployment settings are read-only.
+  - **Vercel Authentication:** owner only on the production deployment (`VERCEL_ENV=production`). Previews share the
+    store, so there they read but don't write deployment settings.
+  - **Tenants:** see only what affects them, never deployment values such as webhook URLs. Their budget may only go
+    *below* the deployment's ceiling.
+  - **No owner** (tokens only, no `BOT_CONSOLE_TOKEN`): the page says how to become one.
+- **R3. Sealing and export:**
+  - **Where it's stored:** workspace settings at `settings/<ws>/settings.json` (next to `operator.json`), deployment
+    settings at `settings/_deployment.json` (no workspace id can match a leading underscore).
+  - **Sealing:** secrets use a distinct derivation label (`bot-settings:`). A value that can no longer be unsealed
+    reads as "not set, enter it again".
+  - **Export:** settings docs count as secret in exports, and `secrets=1` exports become owner-only.
+- **R4. Readers:**
+  - **One place for precedence:** `await effectiveEnv(workspaceId?)` returns `{ ...process.env, ...decoded settings }`.
+    The existing pure `(env)` functions stay and callers pass it in, so precedence lives in one place and the 44 test
+    files that stub env keep working.
+  - **Module constants** become functions of env. Process caches (`runtime ??=`, `configured ??=`) are keyed by the
+    settings version.
+  - **The workflow body** (`run_job`'s `"use workflow"`) never reads settings: the ZDR and region flags for its error
+    text are captured in a step.
+  - **The computer's template `prepare`** reads env only.
+- **R5. Live apply on Vercel:** a `TeamComputer` `onMachine` reconcile is always installed, not only with a drive. It
+  pushes allowlist, timeout and vCPUs with `sandbox.update` and is cached per machine and settings version, so a
+  replacement machine made with the build's values is corrected on first use. On Docker these apply when the container
+  is recreated, and the page says so.
+- **R6. The worker:** `BOT_WORKER` (env) stays the hard gate. Off means no calls and no store reads, as now. The UI
+  can only pause it or set the interval while env has it on. The tick answers with the decision before any other store
+  read, and the settings are read once per pass.
+- **R7. Smaller:**
+  - **Models:** keep `models/<ws>.json`; the registry delegates to it (one source).
+  - **On the page:** say "applies within about 30 seconds"; show "overrides the env value" when both are set.
+  - **Copy and scripts:** update console copy that names env vars; leave the scripts (`setup.mjs`, `reset.mjs`,
+    `jev-report.mjs`) on env.
+  - **Tests and conditions:** a global `forgetSettings()` for tests, and an "applies when" condition per setting to
+    hide what doesn't apply here (local-only knobs on Vercel, endpoint-only knobs on Gateway).
+- **Reclassified to `.env` only:**
+  - shell isolation (a security fence fixed at build);
+  - web search (only on a custom endpoint, which is env-only; the tool is chosen at build);
+  - the computer's name (it derives the sealing key and names the drive, backups and machine);
+  - the two cron schedules (a bad value can break the next deploy).
+- **Reasoning** is live on AI Gateway only (returned with the model selection); fixed at build on a custom endpoint.
+
 ## Inventory (all 103 `BOT_…` settings the code reads, 19 Oct 2026)
 
 | | Count |
 | --- | --- |
-| UI, live | 50 |
+| UI, live | 46 |
 | UI, from the computer's or browser's next start | 9 |
-| UI, after restart or deploy | 15 |
-| `.env` only (bootstrap, sign-in, build, debug, custom endpoint) | 29 |
+| UI, after rebuild (deploy on Vercel, `npm start` rebuild locally) | 12 |
+| `.env` only (bootstrap, sign-in, build, debug, custom endpoint, security fences) | 36 |
 
 | Setting | Area | Scope | Where | Note |
 | --- | --- | --- | --- | --- |
@@ -130,8 +197,8 @@ what the console itself depends on, and as the defaults.
 | `BOT_MODEL_STANDARD` | Models | workspace | UI, live | already on the Models page |
 | `BOT_MODEL_DEEP` | Models | workspace | UI, live | already on the Models page |
 | `BOT_MEMORY_MODEL` | Models | workspace | UI, live | already on the Models page |
-| `BOT_HQ_REASONING` | Models | workspace | UI, live | returned with the turn's model selection |
-| `BOT_TEAMMATE_REASONING` | Models | workspace | UI, live | returned with the job's model selection |
+| `BOT_HQ_REASONING` | Models | workspace | UI, live | on AI Gateway, returned with the model selection; fixed at build on a custom endpoint |
+| `BOT_TEAMMATE_REASONING` | Models | workspace | UI, live | on AI Gateway, returned with the model selection; fixed at build on a custom endpoint |
 | `BOT_MODELS_EDITABLE` | Models | deployment (owner) | .env only | replaced by owner-only editing + BOT_SETTINGS_EDITABLE |
 | `BOT_ZDR` | Data controls | deployment (owner) | UI, live |  |
 | `BOT_INFERENCE_REGION` | Data controls | deployment (owner) | UI, live |  |
@@ -146,9 +213,9 @@ what the console itself depends on, and as the defaults.
 | `BOT_MODEL` | Models | deployment (owner) | .env only | custom endpoint |
 | `BOT_MODEL_API_KEY` | Models | deployment (owner) | .env only | custom endpoint (goes with the URL) |
 | `BOT_MODEL_CONTEXT_TOKENS` | Models | deployment (owner) | .env only | custom endpoint |
-| `BOT_SEARCH_PROVIDER` | Web search | deployment (owner) | UI, live |  |
-| `BOT_SEARCH_URL` | Web search | deployment (owner) | UI, live |  |
-| `BOT_SEARCH_API_KEY` | Web search | deployment (owner) | UI, live | secret, sealed |
+| `BOT_SEARCH_PROVIDER` | Web search | deployment (owner) | .env only | only matters on a custom endpoint, which is env-only; the tool is chosen at build |
+| `BOT_SEARCH_URL` | Web search | deployment (owner) | .env only | as above |
+| `BOT_SEARCH_API_KEY` | Web search | deployment (owner) | .env only | as above |
 | `BOT_EMAIL_WEBHOOK` | Email | deployment (owner) | UI, live |  |
 | `BOT_EMAIL_WEBHOOK_TOKEN` | Email | deployment (owner) | UI, live | secret, sealed |
 | `BOT_EMAIL_WEBHOOK_TIMEOUT_MS` | Email | deployment (owner) | UI, live |  |
@@ -167,11 +234,11 @@ what the console itself depends on, and as the defaults.
 | `BOT_COMPUTER_APT_MIRROR` | Team computer | deployment (owner) | UI, next start | next install |
 | `BOT_BROWSER_PROXY` | Team computer | deployment (owner) | UI, next start | next browser start |
 | `BOT_SHELL_TCP_PORTS` | Team computer | deployment (owner) | UI, next start | next shell fence setup |
-| `BOT_SHELL_ISOLATION` | Team computer | deployment (owner) | UI, live |  |
+| `BOT_SHELL_ISOLATION` | Team computer | deployment (owner) | .env only | a security fence, fixed in the tool definitions at build |
 | `BOT_COMPUTER_IMAGE` | Team computer | deployment (owner) | UI, after restart | machines are built from it at start |
 | `BOT_COMPUTER` | Team computer | deployment (owner) | UI, after restart | backend choice |
 | `BOT_COMPUTER_LOCAL` | Team computer | deployment (owner) | UI, after restart |  |
-| `BOT_COMPUTER_NAME` | Team computer | deployment (owner) | UI, after restart | a new name is a new machine |
+| `BOT_COMPUTER_NAME` | Team computer | deployment (owner) | .env only | renaming would orphan the sealing key, drive, backups and machine |
 | `BOT_COMPUTER_LOCAL_PORT` | Team computer | deployment (owner) | UI, after restart |  |
 | `BOT_COMPUTER_LOCAL_BIND` | Team computer | deployment (owner) | UI, after restart |  |
 | `BOT_COMPUTER_FORWARDER_IMAGE` | Team computer | deployment (owner) | UI, after restart |  |
@@ -187,10 +254,10 @@ what the console itself depends on, and as the defaults.
 | `BOT_WORKER` | Background work | deployment (owner) | UI, live | daemon asks the app each pass |
 | `BOT_WORKER_EVERY_SECONDS` | Background work | deployment (owner) | UI, live |  |
 | `BOT_WORKER_VERBOSE` | Background work | deployment (owner) | .env only | developer logging |
-| `BOT_TICK_CRON` | Background work | deployment (owner) | UI, after restart | cron fixed at build |
+| `BOT_TICK_CRON` | Background work | deployment (owner) | .env only | a bad value can break the next deploy (Hobby allows daily only) |
 | `BOT_TICK_BATCH` | Background work | deployment (owner) | UI, live |  |
 | `BOT_TICK_ON_START` | Background work | deployment (owner) | .env only | startup script |
-| `BOT_STANDUP_CRON` | Team | deployment (owner) | UI, after restart | cron fixed at build |
+| `BOT_STANDUP_CRON` | Team | deployment (owner) | .env only | as above |
 | `BOT_STANDUP_ROOM` | Team | deployment (owner) | UI, live |  |
 | `BOT_TIMEZONE` | Team | workspace | UI, live |  |
 | `BOT_DEFAULT_BOT_NAME` | Team | workspace | UI, live |  |
