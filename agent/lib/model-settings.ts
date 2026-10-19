@@ -1,6 +1,5 @@
 import { type Catalog, type CatalogModel, FREE_FALLBACK, freeDefault, gatewayCatalog } from "./gateway-models";
-import { customEndpoint, defaultModelFor, isModelRole, MODEL_ROLES, type ModelRole } from "./models";
-import { readDoc, writeDoc } from "./store";
+import { customEndpoint, defaultModelFor, effortRole, isModelRole, type JobEffort, MODEL_ROLES, type ModelRole, nextEffort, UNLISTED_CONTEXT_TOKENS } from "./models";
 
 /**
  * Which AI Gateway model each role runs on, chosen in the console's Models page.
@@ -61,6 +60,8 @@ const cache = new Map<string, { readonly settings: ModelSettings; readonly until
 export async function readModelSettings(workspaceId: string): Promise<ModelSettings> {
   const hit = cache.get(workspaceId);
   if (hit !== undefined && hit.until > Date.now()) return hit.settings;
+  // Loaded lazily, as `machine.ts` does: this module is reached from workflow code, which may not bundle the store.
+  const { readDoc } = await import("./store");
   const stored = (await readDoc<ModelSettings>(key(workspaceId)).catch(() => null))?.value ?? null;
   const settings: ModelSettings = stored === null ? EMPTY : { ...EMPTY, ...stored, roles: stored.roles ?? {} };
   cache.set(workspaceId, { settings, until: Date.now() + CACHE_MS });
@@ -128,6 +129,7 @@ export async function saveModelSettings(
     at: new Date().toISOString(),
     by,
   };
+  const { writeDoc } = await import("./store");
   await writeDoc(key(workspaceId), settings);
   cache.delete(workspaceId);
   return { ok: true, settings };
@@ -228,6 +230,25 @@ export function settingsInput(body: unknown): ModelSettingsInput | null {
     input.roles = roles;
   }
   return input;
+}
+
+/**
+ * The model a job's run on this effort starts on, as `run_job` writes it into
+ * the brief: null on a custom endpoint, whose model the teammate picks from
+ * the brief's effort as before.
+ */
+export async function runModel(workspaceId: string, effort: JobEffort): Promise<{ id: string; context: number | null; reasoning: boolean | null; free: boolean } | null> {
+  if (customEndpoint() !== null) return null;
+  const resolved = await resolveModel(workspaceId, effortRole(effort)).catch(() => null);
+  if (resolved === null) return null;
+  if (resolved.source === "default") return { id: resolved.id, context: null, reasoning: null, free: false };
+  return { id: resolved.id, context: resolved.context ?? UNLISTED_CONTEXT_TOKENS, reasoning: resolved.reasoning, free: resolved.free };
+}
+
+/** Whether the next effort up would run on the model this one already does (a retry would gain nothing). */
+export async function sameModelNext(workspaceId: string, effort: JobEffort): Promise<boolean> {
+  const [now, next] = await Promise.all([runModel(workspaceId, effort), runModel(workspaceId, nextEffort(effort))]);
+  return now !== null && next !== null && now.id === next.id;
 }
 
 /** For tests. */
