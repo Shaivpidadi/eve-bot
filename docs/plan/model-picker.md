@@ -76,7 +76,7 @@ in the console, switch the whole team to free models with one toggle, and name a
 
 ## Tasks
 
-### M1. Gateway catalog `[to-do]`
+### M1. Gateway catalog `[done]`
 - `agent/lib/gateway-models.ts`: `fetchCatalog()` gets the list and keeps `type: "language"` models tagged `tool-use`,
   mapped to `{ id, name, provider, free, inputPerM, outputPerM, context, vision, structured, reasoning, zdr }`. `free`
   means input and output are both `0` and pricing doesn't vary by provider. 10 min in-process cache; on failure the
