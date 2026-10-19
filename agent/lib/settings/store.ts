@@ -104,6 +104,31 @@ export interface SaveCaller {
   readonly by: string;
 }
 
+let snapshot: { readonly env: Record<string, string | undefined>; readonly at: number } | null = null;
+let refreshing = false;
+
+/**
+ * The deployment's settings over the environment, synchronously: the last
+ * snapshot, refreshed in the background at most every 30 seconds (and at once
+ * after a save here). For readers that can't wait (Jev's floor, whether
+ * embeddings are on); until the first snapshot lands, the environment itself.
+ */
+export function liveEnv(): Readonly<Record<string, string | undefined>> {
+  if ((snapshot === null || Date.now() - snapshot.at > CACHE_MS) && !refreshing) void refreshLiveEnv();
+  return snapshot?.env ?? process.env;
+}
+
+async function refreshLiveEnv(): Promise<void> {
+  refreshing = true;
+  try {
+    snapshot = { env: await effectiveEnv(), at: Date.now() };
+  } catch {
+    // Keep the last snapshot; the next read tries again.
+  } finally {
+    refreshing = false;
+  }
+}
+
 /** Whether the console may change settings at all (`BOT_SETTINGS_EDITABLE=off` makes them read-only). */
 export const settingsEditable = (env: Readonly<Record<string, string | undefined>> = process.env): boolean =>
   !/^(0|false|off|no)$/i.test(env.BOT_SETTINGS_EDITABLE?.trim() ?? "");
@@ -161,6 +186,7 @@ export async function saveSettings(caller: SaveCaller, changes: Readonly<Record<
     cache.delete(key);
   }
   version += 1;
+  await refreshLiveEnv();
   return { ok: true };
 }
 
@@ -224,4 +250,5 @@ export async function workerPaused(): Promise<boolean> {
 /** For tests. */
 export function forgetSettings(): void {
   cache.clear();
+  snapshot = null;
 }

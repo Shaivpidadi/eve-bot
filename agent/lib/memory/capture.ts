@@ -5,6 +5,7 @@ import { confidenceFloor, jevEnabled, judge, type Judgement, spent } from "../je
 import { probabilityOf, readVerdict } from "../jev-watch";
 import { customEndpoint, DEFAULT_MEMORY_MODEL, endpointModel, modelForEffort, withGatewayOptions } from "../models";
 import { resolveModel } from "../model-settings";
+import { effectiveEnv } from "../settings/store";
 import { chargeUsage, reportedCost } from "../spend";
 import { nearest } from "./rank";
 import {
@@ -88,7 +89,8 @@ export interface CaptureDeps {
   /** Null when Jev is unavailable; the cue gate stands in. */
   readonly judge: Judge | null;
   readonly extract: Extract;
-  readonly floor: number;
+  /** How sure Jev must be to keep a memory; the workspace's (Settings over the environment) when not given. */
+  readonly floor?: number;
   readonly existing: (slot: MemorySlot) => Promise<readonly MemoryEntry[]>;
   /** The typed core of a slot; absent means empty. */
   readonly fields?: (slot: MemorySlot) => Promise<Readonly<Record<string, MemoryFieldValue>>>;
@@ -282,12 +284,13 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
   if (person.length < MIN_PERSON_CHARS) return NOTHING;
   const ask = deps.judge === null ? null : (state: unknown, questions: Record<string, EvaluationQuestion>) =>
     deps.judge!(state, questions, { timeoutMs: 6_000, workspaceId: input.workspaceId, abortSignal: input.abortSignal });
+  const floor = deps.floor ?? memoryFloor(await effectiveEnv(input.workspaceId));
 
   // 1. Is there anything here at all?
   let gate: CaptureResult["gate"] = "closed";
   if (ask !== null) {
     const judgement = await ask({ person: person.slice(0, 4_000), reply: normalize(input.reply).slice(0, 2_000) }, gateQuestions(input.mode));
-    const { verdict } = readVerdict(judgement, "worth", deps.floor);
+    const { verdict } = readVerdict(judgement, "worth", floor);
     if (verdict === "no") return NOTHING;
     if (verdict === "yes") gate = "jev";
   }
@@ -350,7 +353,7 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
         // Something new (an entry, or a field with no value yet) is kept unless Jev says no; a change to what is stored needs a clear yes.
         const fresh = proposal.op === "add" || (proposal.op === "set" && fields[proposal.slot]?.[proposal.field] === undefined);
         return facets.every((facet) => {
-          const { verdict } = readVerdict(judgement, `${facet}${index}`, deps.floor);
+          const { verdict } = readVerdict(judgement, `${facet}${index}`, floor);
           return fresh ? verdict !== "no" : verdict === "yes";
         });
       })
@@ -383,7 +386,7 @@ export async function capture(input: CaptureInput, deps: CaptureDeps): Promise<C
   const confirmed: string[] = [];
   if (ask !== null && pairs.length > 0) {
     const judgement = await ask({ pairs: pairs.map((pair) => [pair.proposal.text, pair.existing.text]) }, duplicateQuestions(pairs));
-    const same = pairs.filter((_, index) => readVerdict(judgement, `same${index}`, deps.floor).verdict === "yes");
+    const same = pairs.filter((_, index) => readVerdict(judgement, `same${index}`, floor).verdict === "yes");
     const duplicated = new Set(same.map((pair) => pair.proposal));
     proposals = proposals.filter((proposal) => !duplicated.has(proposal as Proposal & { op: "add" }));
     // Saying a stored thing again is a confirmation of it, not noise.
@@ -572,7 +575,6 @@ export function defaultDeps(workspaceId: string): CaptureDeps {
   return {
     judge: jevEnabled() ? judge : null,
     extract: modelExtract,
-    floor: memoryFloor(),
     existing: (slot) => readEntries(workspaceId, slot),
     fields: (slot) => readFields(workspaceId, slot),
     forgotten: (slot) => readForgotten(workspaceId, slot),
@@ -580,7 +582,7 @@ export function defaultDeps(workspaceId: string): CaptureDeps {
 }
 
 /** How sure Jev must be before a memory is kept; `BOT_MEMORY_FLOOR`, else Jev's own floor. */
-export function memoryFloor(env: NodeJS.ProcessEnv = process.env): number {
+export function memoryFloor(env: Readonly<Record<string, string | undefined>> = process.env): number {
   const raw = Number(env.BOT_MEMORY_FLOOR);
   return Number.isFinite(raw) && raw > 0 && raw <= 1 ? raw : confidenceFloor(env);
 }

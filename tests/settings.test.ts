@@ -166,3 +166,20 @@ describe("the team computer uses what Settings say", () => {
     expect(maxScreens({ BOT_COMPUTER_MAX_SCREENS: "40" })).toBe(9);
   });
 });
+
+describe("memory and decisions use what Settings say", () => {
+  it("turns Jev off, and sets each workspace's memory floor, from Settings", async () => {
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("BOT_JEV", "");
+    const { effectiveEnv, liveEnv, saveSettings } = await load();
+    const { jevEnabled } = await import("../agent/lib/jev");
+    const { memoryFloor } = await import("../agent/lib/memory/capture");
+    expect(jevEnabled(liveEnv())).toBe(true);
+    await saveSettings(owner, { BOT_JEV: false });
+    // A save here refreshes the snapshot the synchronous readers use.
+    expect(jevEnabled()).toBe(false);
+    await saveSettings(tenant, { BOT_MEMORY_FLOOR: 0.9 });
+    expect(memoryFloor(await effectiveEnv("acme"))).toBe(0.9);
+    expect(memoryFloor(await effectiveEnv("other"))).not.toBe(0.9);
+  });
+});
