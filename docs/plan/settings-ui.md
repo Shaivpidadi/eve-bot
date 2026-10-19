@@ -68,11 +68,11 @@ what the console itself depends on, and as the defaults.
 
 ## Phases
 
-### S1. Framework `[to-do]`
+### S1. Framework `[done]`
 - The registry, store, reader, owner flag in `access.ts`, API routes, and sealing shared with connectors.
 - **Tests:** precedence, validation, sealing, owner gating, the lock.
 
-### S2. Settings page `[to-do]`
+### S2. Settings page `[done]`
 - A generic sheet rendered from the registry: source badges, Reset, secret fields, "applies after restart" marks, the
   read-only view for tenants and locked deployments. The Models page becomes its Models section.
 
