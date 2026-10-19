@@ -5,12 +5,17 @@ import type { DynamicResolveContext } from "eve";
 
 import { customEndpoint, effortInBrief, endpointModel, gatewaySelection, modelForEffort, modelInBrief, reasoningFor, tokenLimits } from "../../lib/models";
 
-/** The brief is the first message a teammate receives. */
-function briefText(messages: readonly ModelMessage[]): string {
-  const first = messages.find((message) => message.role === "user");
-  if (first === undefined) return "";
-  if (typeof first.content === "string") return first.content;
-  return first.content.map((part) => (part.type === "text" ? part.text : "")).join("\n");
+const textOf = (message: ModelMessage): string =>
+  typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.map((part) => (part.type === "text" ? part.text : "")).join("\n") : "";
+
+/**
+ * The brief `run_job` sent (see `renderBrief`): the user message with the
+ * job's section. Not simply the first: eve puts memory and other instructions
+ * ahead of it as user messages too.
+ */
+export function briefText(messages: readonly ModelMessage[]): string {
+  const users = messages.filter((message) => message.role === "user").map(textOf);
+  return users.find((text) => /^## Job$/m.test(text)) ?? users.at(-1) ?? "";
 }
 
 type Chosen = { readonly id: string; readonly context: number | null; readonly reasoning: boolean | null };

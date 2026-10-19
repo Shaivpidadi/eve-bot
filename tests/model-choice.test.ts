@@ -83,5 +83,9 @@ describe("a Bot's job", () => {
       reasoning: "provider-default",
     });
     expect(await turn({}, { session: { id: "run_b", auth: auth("ws1") }, messages: brief("effort: deep") })).toEqual({ model: "anthropic/claude-opus-5" });
+    // eve puts memory and other instructions ahead of the brief as user messages; the brief is still found.
+    const memory = { role: "user", content: "# How to do your work: what the team remembers\n\neffort: quick" };
+    expect(await turn({}, { session: { id: "run_c", auth: auth("ws1") }, messages: [memory, ...brief("effort: deep\nmodel: free/eyes")] })).toMatchObject({ model: "free/eyes" });
+    expect(await turn({}, { session: { id: "run_d", auth: auth("ws1") }, messages: [memory, ...brief("effort: deep")] })).toEqual({ model: "anthropic/claude-opus-5" });
   });
 });
