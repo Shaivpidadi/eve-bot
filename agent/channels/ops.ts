@@ -1,4 +1,4 @@
-import { DELETE, GET, PATCH, POST, SessionStrandedError, defineChannel } from "eve/channels";
+import { DELETE, GET, PATCH, POST, PUT, SessionStrandedError, defineChannel } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
 
@@ -29,6 +29,8 @@ import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
 import { isProjectWorker, workerTick } from "../lib/worker";
+import { gatewayCatalog } from "../lib/gateway-models";
+import { modelsEditable, modelsReport, saveModelSettings, settingsInput } from "../lib/model-settings";
 import { acceptTrigger, recentTriggers, TRIGGER_PATH, verifiedTrigger } from "../lib/triggers";
 import { sessionIsGone } from "../lib/gone";
 import { worldIsLocal } from "../lib/world";
@@ -406,6 +408,25 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       } catch {
         return new Response(null, { status: 503 });
       }
+    }),
+
+    /** The models each role runs on, AI Gateway's list, and the free-only switch (see lib/model-settings.ts). */
+    GET("/bot/v1/models", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return json(await modelsReport(gate.access.workspaceId));
+    }),
+
+    /** Saves the workspace's model choices; a change applies from the next turn and the next run, within about 30 seconds. */
+    PUT("/bot/v1/models", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!modelsEditable()) return json({ error: "Models are set by this deployment and cannot be changed here." }, 403);
+      const input = settingsInput(await readJson(request));
+      if (input === null) return json({ error: "Send { freeOnly?: boolean, roles?: { hq|standard|quick|deep|helper: model id or null } }." }, 400);
+      const saved = await saveModelSettings(gate.access.workspaceId, input, gate.access.user, await gatewayCatalog());
+      if (!saved.ok) return json({ error: saved.error }, 422);
+      return json(await modelsReport(gate.access.workspaceId));
     }),
 
     /**

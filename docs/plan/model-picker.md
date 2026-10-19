@@ -111,7 +111,7 @@ in the console, switch the whole team to free models with one toggle, and name a
 - **Tests:** `tests/turn-stop.test.ts` exercises the teammate resolver and needs the store mocked.
 - **Tests:** the HQ and teammate resolvers return the stored model; helper call sites use it.
 
-### M4. API `[to-do]`
+### M4. API `[done]`
 - `GET /bot/v1/models`: the catalog (or the endpoint's read-only view), the workspace's settings, the deployment
   default per role, the resolved model per role, and the warnings (D5).
 - `PUT /bot/v1/models`: save settings and return the same shape. Operator auth, as the other pages use; 403 when

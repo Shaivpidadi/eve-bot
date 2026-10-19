@@ -1,5 +1,5 @@
-import { type Catalog, type CatalogModel, FREE_FALLBACK, freeDefault } from "./gateway-models";
-import { customEndpoint, defaultModelFor, MODEL_ROLES, type ModelRole } from "./models";
+import { type Catalog, type CatalogModel, FREE_FALLBACK, freeDefault, gatewayCatalog } from "./gateway-models";
+import { customEndpoint, defaultModelFor, isModelRole, MODEL_ROLES, type ModelRole } from "./models";
 import { readDoc, writeDoc } from "./store";
 
 /**
@@ -151,6 +151,83 @@ export function resolveFrom(settings: ModelSettings, role: ModelRole, fallback: 
     return { ...as(free, "free"), free: true };
   }
   return set === undefined ? fallback : as(set, "setting");
+}
+
+const BOT_ROLES: readonly ModelRole[] = ["standard", "quick", "deep"];
+
+/** What will go wrong with a role's model, in plain words, from what Gateway's list says about it now. */
+export function roleWarnings(role: ModelRole, settings: ModelSettings, resolved: ResolvedModel, catalog: Pick<Catalog, "models" | "error">, env: Readonly<Record<string, string | undefined>> = process.env): string[] {
+  const entry = catalog.models.find((model) => model.id === resolved.id);
+  const set = settings.roles[role];
+  const warnings: string[] = [];
+  if (entry === undefined && catalog.error === null && catalog.models.length > 0) {
+    warnings.push(set !== undefined && set.listed ? "AI Gateway no longer lists this model; calls to it may fail." : "This model is not in AI Gateway's list; check the name.");
+  }
+  if (entry !== undefined && BOT_ROLES.includes(role) && !entry.vision) warnings.push("This model can't see screenshots, so browser steps will fail.");
+  if (entry !== undefined && role === "helper" && !entry.structured) warnings.push("This model can't answer in a fixed format, so memories may not be saved.");
+  if (entry !== undefined && zdrAsked(env) && entry.zdr === "none") warnings.push("This model offers no Zero Data Retention, which this deployment asks for; Gateway will refuse it.");
+  return warnings;
+}
+
+export interface ModelsReport {
+  readonly editable: boolean;
+  /** A custom endpoint's address (host only) when one is set; the models are then its own. */
+  readonly endpoint: string | null;
+  readonly zdr: boolean;
+  readonly freeOnly: boolean;
+  readonly freeDefault: ChosenModel | null;
+  readonly at: string | null;
+  readonly by: string | null;
+  readonly catalog: Catalog;
+  readonly roles: readonly {
+    readonly role: ModelRole;
+    readonly setting: ChosenModel | null;
+    readonly default: string;
+    readonly resolved: ResolvedModel;
+    readonly warnings: readonly string[];
+  }[];
+}
+
+/** Everything the Models page shows for a workspace. */
+export async function modelsReport(workspaceId: string, env: Readonly<Record<string, string | undefined>> = process.env): Promise<ModelsReport> {
+  const endpoint = customEndpoint();
+  const settings = endpoint === null ? await readModelSettings(workspaceId) : EMPTY;
+  const catalog: Catalog = endpoint === null ? await gatewayCatalog() : { models: [], at: null, error: null };
+  return {
+    editable: modelsEditable(env),
+    endpoint: endpoint === null ? null : new URL(endpoint.baseURL).host,
+    zdr: zdrAsked(env),
+    freeOnly: settings.freeOnly,
+    freeDefault: settings.freeDefault,
+    at: settings.at,
+    by: settings.by,
+    catalog,
+    roles: MODEL_ROLES.map((role) => {
+      const resolved = endpoint === null ? resolveFrom(settings, role) : { id: defaultModelFor(role), context: null, reasoning: null, free: false, source: "default" as const };
+      return { role, setting: settings.roles[role] ?? null, default: defaultModelFor(role), resolved, warnings: endpoint === null ? roleWarnings(role, settings, resolved, catalog, env) : [] };
+    }),
+  };
+}
+
+/** A request body as `saveModelSettings` takes it; null when it is not one. */
+export function settingsInput(body: unknown): ModelSettingsInput | null {
+  if (typeof body !== "object" || body === null) return null;
+  const record = body as Record<string, unknown>;
+  const input: { freeOnly?: boolean; roles?: Partial<Record<ModelRole, string | null>> } = {};
+  if (record.freeOnly !== undefined) {
+    if (typeof record.freeOnly !== "boolean") return null;
+    input.freeOnly = record.freeOnly;
+  }
+  if (record.roles !== undefined) {
+    if (typeof record.roles !== "object" || record.roles === null || Array.isArray(record.roles)) return null;
+    const roles: Partial<Record<ModelRole, string | null>> = {};
+    for (const [role, value] of Object.entries(record.roles as Record<string, unknown>)) {
+      if (!isModelRole(role) || (value !== null && typeof value !== "string")) return null;
+      roles[role] = value;
+    }
+    input.roles = roles;
+  }
+  return input;
 }
 
 /** For tests. */
