@@ -84,7 +84,9 @@ export async function chargeComputerRuntime(
   if (options.sessions === undefined && (computerMode() !== "vercel" || vercelCredentialsError() !== null)) return 0;
   const now = options.now ?? new Date();
   const since = windowStart(now);
-  const rates = computerRates();
+  // The computer belongs to the deployment, so its rates are the deployment's (Settings over the environment).
+  const { effectiveEnv } = await import("./settings/store");
+  const rates = computerRates(await effectiveEnv());
   const charges: ComputerCharge[] = [];
   for await (const session of (options.sessions ?? vercelSessions)()) {
     if (session.createdAt < since - LONGEST_SESSION_MS) break;

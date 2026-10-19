@@ -39,7 +39,7 @@ describe.each(backends)("workspace budget on the %s store", (backend) => {
     expect(doc.reservedUsd).toBe(9);
     expect(Object.keys(doc.reservations)).toHaveLength(6);
     const refused = results.find((result) => !result.ok);
-    expect(refused?.ok === false && refused.reason).toMatch(/BOT_BUDGET_MONTHLY_USD/);
+    expect(refused?.ok === false && refused.reason).toMatch(/monthly budget in Settings/);
   });
 
   it("admits a run once however often it asks", async () => {
@@ -218,7 +218,7 @@ describe.each(backends)("workspace budget on the %s store", (backend) => {
     const { admitRun, recordSpend } = await load();
     await recordSpend(WS, null, 1.5, "hq");
     const refused = await admitRun(WS, "lease_a", 1);
-    expect(refused.ok === false && refused.reason).toMatch(/BOT_BUDGET_DAILY_USD/);
+    expect(refused.ok === false && refused.reason).toMatch(/daily budget in Settings/);
   });
 
   it("tracks spend without refusing when no limit is set", async () => {
@@ -295,7 +295,7 @@ describe("budget admission on a claimed job", () => {
     expect(after?.status).toBe("blocked");
     expect(after?.lease).toBeNull();
     const feed = await recentActivity(WS, { jobId: job.id, limit: 10 });
-    expect(feed.some((event) => event.kind === "job.blocked" && event.text.includes("BOT_BUDGET_MONTHLY_USD"))).toBe(true);
+    expect(feed.some((event) => event.kind === "job.blocked" && event.text.includes("monthly budget in Settings"))).toBe(true);
   });
 
   /** Every write to the budget fails, as a store outage would, until the returned function is called. */

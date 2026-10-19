@@ -4,6 +4,7 @@ import { DEFAULT_EFFORT, type JobEffort } from "./models";
 import { computerRates } from "./pricing";
 import { readDoc, store, updateDoc } from "./store";
 import type { Job } from "./types";
+import { effectiveEnv } from "./settings/store";
 
 /**
  * What the workspace may spend, and what it has, per calendar month.
@@ -163,7 +164,12 @@ function limitFrom(value: string | undefined): number | null {
   return parsed;
 }
 
-export function budgetLimits(env: NodeJS.ProcessEnv = process.env): BudgetLimits {
+/** The workspace's limits, as set in Settings over the environment (see `settings/store.ts`). */
+export async function workspaceLimits(workspaceId: string): Promise<BudgetLimits> {
+  return budgetLimits(await effectiveEnv(workspaceId));
+}
+
+export function budgetLimits(env: Readonly<Record<string, string | undefined>> = process.env): BudgetLimits {
   return { monthlyUsd: limitFrom(env.BOT_BUDGET_MONTHLY_USD), dailyUsd: limitFrom(env.BOT_BUDGET_DAILY_USD) };
 }
 
@@ -255,11 +261,11 @@ export function applyAdmit(
   const { monthlyUsd, dailyUsd } = input.limits;
   let reason: string | null = null;
   if (monthlyUsd !== null && committed + estimate > monthlyUsd) {
-    reason = `The workspace's budget for ${current.period} is ${usd(monthlyUsd)}: ${usd(current.spentUsd)} is spent and ${usd(current.reservedUsd)} is held by running jobs, and this run needs about ${usd(estimate)}. Raise BOT_BUDGET_MONTHLY_USD or wait for next month, then run it again.`;
+    reason = `The workspace's budget for ${current.period} is ${usd(monthlyUsd)}: ${usd(current.spentUsd)} is spent and ${usd(current.reservedUsd)} is held by running jobs, and this run needs about ${usd(estimate)}. Raise the monthly budget in Settings (Spend) or wait for next month, then run it again.`;
   } else if (dailyUsd !== null) {
     const today = current.days[dayOf(input.at)] ?? 0;
     if (today + current.reservedUsd + estimate > dailyUsd) {
-      reason = `The workspace's daily budget is ${usd(dailyUsd)}: ${usd(today)} is spent today (UTC) and ${usd(current.reservedUsd)} is held by running jobs, and this run needs about ${usd(estimate)}. Raise BOT_BUDGET_DAILY_USD or wait until tomorrow (UTC), then run it again.`;
+      reason = `The workspace's daily budget is ${usd(dailyUsd)}: ${usd(today)} is spent today (UTC) and ${usd(current.reservedUsd)} is held by running jobs, and this run needs about ${usd(estimate)}. Raise the daily budget in Settings (Spend) or wait until tomorrow (UTC), then run it again.`;
     }
   }
   if (reason !== null) {
@@ -463,7 +469,7 @@ export async function admitRun(
 ): Promise<Admission> {
   const attempt = async (): Promise<Admission> => {
     const at = options.now ?? new Date();
-    const limits = options.limits ?? budgetLimits();
+    const limits = options.limits ?? (await workspaceLimits(workspaceId));
     const outcome: { admission: Admission } = { admission: { ok: false, refusal: "unavailable", reason: "The budget could not be read." } };
     try {
       await updateDoc<BudgetDoc>(key(workspaceId, periodOf(at)), (current) => {
@@ -512,7 +518,7 @@ export async function recordSpend(
   options: { readonly id?: string; readonly now?: Date; readonly limits?: BudgetLimits } = {},
 ): Promise<SpendOutcome> {
   const at = options.now ?? new Date();
-  const limits = options.limits ?? budgetLimits();
+  const limits = options.limits ?? (await workspaceLimits(workspaceId));
   const id = options.id ?? `spend_${crypto.randomUUID()}`;
   const outcome: { value: SpendOutcome } = { value: { counted: false, halted: false } };
   const apply = (current: BudgetDoc | null, period: string): BudgetDoc | null => {
@@ -548,7 +554,7 @@ export async function recordComputerSessions(
   options: { readonly now?: Date; readonly limits?: BudgetLimits } = {},
 ): Promise<number> {
   const at = options.now ?? new Date();
-  const limits = options.limits ?? budgetLimits();
+  const limits = options.limits ?? (await workspaceLimits(workspaceId));
   const byPeriod = new Map<string, ComputerCharge[]>();
   for (const session of sessions) {
     const period = periodOf(session.stoppedAt);
@@ -569,7 +575,7 @@ export async function recordComputerSessions(
 
 async function close(workspaceId: string, runToken: string, state: "settled" | "released", now?: Date): Promise<boolean> {
   const at = now ?? new Date();
-  const limits = budgetLimits();
+  const limits = await workspaceLimits(workspaceId);
   const by = `close_${crypto.randomUUID()}`;
   const seen = { mine: false };
   const { written } = await updateHolding(workspaceId, runToken, at, (current) => {
@@ -676,7 +682,7 @@ export async function admitClaimedRun(
 
 /** What `run_job` blocks a halted run with. */
 export const BUDGET_HALT_REASON =
-  "Stopped by the workspace budget: this run spent past what it reserved, and the workspace has no budget left this period. Raise BOT_BUDGET_MONTHLY_USD (or BOT_BUDGET_DAILY_USD), or wait for the next period, then run it again.";
+  "Stopped by the workspace budget: this run spent past what it reserved, and the workspace has no budget left this period. Raise the budget in Settings (Spend), or wait for the next period, then run it again.";
 
 /** Whether the run that reserved under `runToken` still holds job `jobId`. */
 export type RunLiveness = (jobId: string, runToken: string, now: Date) => Promise<boolean>;
@@ -754,11 +760,11 @@ export interface BudgetStatus {
 }
 
 export const UNPRICED = [
-  "computer runtime (Vercel Sandbox time is billed by Vercel; set BOT_COMPUTER_USD_PER_HOUR to count it here)",
+  "computer runtime (Vercel Sandbox time is billed by Vercel; set its rate in Settings, Spend, to count it here)",
 ] as const;
 
 /** What the figures leave out: the computer's runtime, until a rate for it is set. */
-export const unpricedCosts = (env: NodeJS.ProcessEnv = process.env): readonly string[] =>
+export const unpricedCosts = (env: Readonly<Record<string, string | undefined>> = process.env): readonly string[] =>
   computerRates(env) === null ? UNPRICED : [];
 
 export function statusOf(doc: BudgetDoc, limits: BudgetLimits, now: Date, unpriced: readonly string[] = unpricedCosts()): BudgetStatus {
@@ -780,5 +786,6 @@ export function statusOf(doc: BudgetDoc, limits: BudgetLimits, now: Date, unpric
 }
 
 export async function budgetStatus(workspaceId: string, now: Date = new Date()): Promise<BudgetStatus> {
-  return statusOf(await readBudget(workspaceId, periodOf(now)), budgetLimits(), now);
+  const env = await effectiveEnv(workspaceId);
+  return statusOf(await readBudget(workspaceId, periodOf(now)), budgetLimits(env), now, unpricedCosts(env));
 }

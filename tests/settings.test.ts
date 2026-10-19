@@ -125,3 +125,17 @@ describe("exports", () => {
     expect(inWorkspace("settings/_deployment.json", "deployment")).toBe(false);
   });
 });
+
+describe("readers use what Settings say", () => {
+  it("caps a workspace's spend with the budget set in Settings over the environment's", async () => {
+    vi.stubEnv("BOT_BUDGET_MONTHLY_USD", "100");
+    const { saveSettings } = await load();
+    const { admitRun, workspaceLimits } = await import("../agent/lib/budget");
+    expect(await workspaceLimits("acme")).toMatchObject({ monthlyUsd: 100 });
+    await saveSettings(tenant, { BOT_BUDGET_MONTHLY_USD: 1 });
+    expect(await workspaceLimits("acme")).toMatchObject({ monthlyUsd: 1 });
+    const refused = await admitRun("acme", "run_1", 2);
+    expect(refused).toMatchObject({ ok: false, reason: expect.stringContaining("monthly budget in Settings") });
+    expect(await admitRun("other", "run_2", 2)).toMatchObject({ ok: true });
+  });
+});

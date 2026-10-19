@@ -55,11 +55,14 @@ export function parsePrices(value: string | undefined): ReadonlyMap<string, Mode
   return prices;
 }
 
-let configured: ReadonlyMap<string, ModelPrice> | null = null;
-
-function configuredPrices(): ReadonlyMap<string, ModelPrice> {
-  configured ??= parsePrices(process.env.BOT_MODEL_PRICES);
-  return configured;
+/** `BOT_MODEL_PRICES` as set in Settings over the environment, parsed again only when it changes. */
+let parsedFrom: { readonly text: string; readonly prices: ReadonlyMap<string, ModelPrice> } | null = null;
+async function configuredPricesNow(): Promise<ReadonlyMap<string, ModelPrice>> {
+  // Loaded lazily: this module is reached from workflow code, which may not bundle the store.
+  const { effectiveEnv } = await import("./settings/store");
+  const text = (await effectiveEnv().catch(() => process.env)).BOT_MODEL_PRICES ?? "";
+  if (parsedFrom === null || parsedFrom.text !== text) parsedFrom = { text, prices: parsePrices(text) };
+  return parsedFrom.prices;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +119,7 @@ function openRouterPrices(baseURL: string): Promise<ReadonlyMap<string, ModelPri
 
 /** The price for a model on this endpoint, or null when nothing prices it. */
 export async function priceFor(baseURL: string, modelId: string): Promise<ModelPrice | null> {
-  const own = configuredPrices();
+  const own = await configuredPricesNow();
   const exact = own.get(modelId);
   if (exact !== undefined) return exact;
   if (isOpenRouter(baseURL)) {
@@ -204,7 +207,7 @@ function rateFrom(name: string, value: string | undefined): number | null {
 }
 
 /** The computer's rates, or null when none is set: its runtime is then unpriced. */
-export function computerRates(env: NodeJS.ProcessEnv = process.env): ComputerRates | null {
+export function computerRates(env: Readonly<Record<string, string | undefined>> = process.env): ComputerRates | null {
   const rates: ComputerRates = {
     perHour: rateFrom("BOT_COMPUTER_USD_PER_HOUR", env.BOT_COMPUTER_USD_PER_HOUR),
     perCpuHour: rateFrom("BOT_COMPUTER_USD_PER_CPU_HOUR", env.BOT_COMPUTER_USD_PER_CPU_HOUR),
