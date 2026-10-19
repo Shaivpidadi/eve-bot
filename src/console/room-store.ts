@@ -13,7 +13,7 @@ const NO_REPLY_MS = 50_000;
 const HQ_ROOM_NAME = "desk";
 
 /** The glyph a notice wears; the transcript draws each with its lucide icon. */
-export type NoticeIcon = "alert" | "branch" | "brain" | "check" | "clock" | "dot" | "folder" | "mail" | "monitor" | "person" | "plug" | "x";
+export type NoticeIcon = "alert" | "branch" | "check" | "clock" | "dot" | "folder" | "mail" | "monitor" | "person" | "plug" | "x";
 
 export interface Notice {
   readonly icon: NoticeIcon;
@@ -26,6 +26,8 @@ export interface Notice {
   readonly face?: string;
   /** The job it is about, when it is about one. */
   readonly jobId?: string;
+  /** A small line rather than a notice, such as what was just remembered. */
+  readonly quiet?: true;
 }
 
 /**
@@ -866,7 +868,7 @@ export function buildTimeline(
       const remembered = event.kind === "memory.saved";
       const cut = event.text.indexOf(": ");
       if (remembered) {
-        out.push({ kind: "notice", key: event.id, at: event.at, icon: "brain", label: "Memory", detail: event.text });
+        out.push({ kind: "notice", key: event.id, at: event.at, icon: "dot", label: "Memory", detail: event.text, quiet: true });
         continue;
       }
       out.push({
