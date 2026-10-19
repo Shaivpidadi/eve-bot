@@ -102,9 +102,13 @@ jobs:
         env:
           TARGET: ${{ steps.pick.outputs.ref }}
           LABEL: ${{ steps.pick.outputs.label }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_ID: ${{ github.repository_owner_id }}
         run: |
-          git config user.name "eve-bot sync"
-          git config user.email "sync@eve-bot.dev"
+          # Authored as the copy's owner (GitHub's no-reply address for their account):
+          # Vercel does not deploy a private repository's commit by an author outside the team.
+          git config user.name "$OWNER"
+          git config user.email "$OWNER_ID+$OWNER@users.noreply.github.com"
           if git merge-base --is-ancestor "$TARGET" HEAD; then
             echo "Already has $LABEL." | tee -a "$GITHUB_STEP_SUMMARY"
             echo "result=current" >> "$GITHUB_OUTPUT"
