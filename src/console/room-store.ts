@@ -248,6 +248,12 @@ export class RoomStore {
         body: JSON.stringify({ message }),
       });
       if (!response.ok) throw new Error(await errorMessage(response, "Could not send"));
+      const sent: unknown = await response.json().catch(() => null);
+      const sessionId = typeof sent === "object" && sent !== null && typeof (sent as { sessionId?: unknown }).sessionId === "string" ? (sent as { sessionId: string }).sessionId : null;
+      // The message went into a different session than the one being read (after a
+      // branch, or once the server moved a stranded thread on): the open stream will
+      // never carry the reply, so read the room again from its start.
+      if (sessionId !== null && this.sessionId !== null && sessionId !== this.sessionId) this.switchSession();
       void this.follow();
       this.poke();
       this.expectReply(message);
@@ -426,6 +432,19 @@ export class RoomStore {
     }
     this.poke();
     return true;
+  }
+
+  /**
+   * The room moved to another session while this reader follows the old one.
+   * The stream reads the room's earlier sessions first, so starting over from
+   * its first event rebuilds the whole thread and then follows the new session.
+   */
+  private switchSession(): void {
+    this.controller?.abort();
+    this.controller = null;
+    this.following = false;
+    this.reset();
+    this.sessionId = null;
   }
 
   /** The thread was started over on the server: show it empty and follow whatever comes next. */
