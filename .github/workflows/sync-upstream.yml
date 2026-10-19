@@ -3,26 +3,44 @@
 # Deploying with the Vercel button copies this repository into your GitHub
 # account, and Vercel deploys from that copy. A copy is not a fork: GitHub's
 # "Sync fork" button is not there, and nothing pulls new releases in. This
-# workflow does. Once a week, and whenever you run it from the Actions tab, it
-# merges the original's main branch into yours and pushes, which makes Vercel
-# deploy the new version.
+# workflow does. Once a day it looks for a new release of the original (a
+# `v*` tag) and, once that release is six hours old, merges it into your
+# default branch and pushes, which makes Vercel deploy it. Run from the Actions
+# tab, or by "Update now" in the console, it takes the newest release at once.
+#
+# GitHub lets this workflow's own token change any file but the workflows in
+# .github/workflows, so a merge keeps the copy's versions of those. "Update
+# now" in the console, given a GitHub token that may change workflows (see
+# docs/updating.md), brings them up to date before it runs this.
 #
 # If you changed code in your copy and the merge conflicts, it leaves the
 # merge on a branch called upstream-sync and fails loudly, so you can finish
-# it by hand. To turn it off, set a repository variable BOT_SYNC_UPSTREAM to
-# "off". It never runs in the original repository.
+# it by hand. A repository variable BOT_SYNC_UPSTREAM sets what it follows:
+# "releases" (the default), "main" (every change, as it lands), a tag such as
+# "v0.5.0" (stay on that release), or "off". It never runs in the original.
 name: Sync with upstream
 
 on:
   schedule:
-    - cron: "23 7 * * 1"
+    - cron: "23 7 * * *"
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'What to update to: "release" (the newest), "main", or a tag such as v0.5.0'
+        required: false
+        default: release
 
 permissions:
   contents: write
 
 env:
   UPSTREAM: https://github.com/Shaivpidadi/eve-bot.git
+  # How old a release must be before a scheduled run takes it, so a bad one can be pulled first.
+  SETTLE_HOURS: "6"
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
 
 jobs:
   sync:
@@ -34,15 +52,61 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.repository.default_branch }}
 
-      - name: Merge the original's main
+      - name: Pick what to update to
+        id: pick
+        env:
+          ASKED: ${{ github.event.inputs.target }}
+          FOLLOWS: ${{ vars.BOT_SYNC_UPSTREAM }}
+          SCHEDULED: ${{ github.event_name == 'schedule' }}
+        run: |
+          git remote add upstream "$UPSTREAM"
+          git fetch --quiet upstream main "+refs/tags/v*:refs/upstream-tags/v*"
+          # Run by hand, what was asked for; on the schedule, what the copy follows.
+          want="${ASKED:-}"
+          [ -z "$want" ] && want="${FOLLOWS:-release}"
+          [ "$want" = "releases" ] && want=release
+          if [ "$want" = "main" ]; then
+            echo "ref=upstream/main" >> "$GITHUB_OUTPUT"
+            echo "label=main" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$want" = "release" ]; then
+            tag=$(git for-each-ref --sort=-version:refname --format='%(refname:strip=2)' refs/upstream-tags | head -1)
+            if [ -z "$tag" ]; then
+              echo "The original has no releases yet; nothing to do." | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "ref=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$SCHEDULED" = "true" ]; then
+              made=$(git for-each-ref --format='%(creatordate:unix)' "refs/upstream-tags/$tag")
+              age=$(( ($(date +%s) - made) / 3600 ))
+              if [ "$age" -lt "$SETTLE_HOURS" ]; then
+                echo "$tag is ${age}h old; it is taken once it is ${SETTLE_HOURS}h old." | tee -a "$GITHUB_STEP_SUMMARY"
+                echo "ref=" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+          else
+            tag="$want"
+            if ! git rev-parse --quiet --verify "refs/upstream-tags/$tag" >/dev/null; then
+              echo "The original has no release $tag." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+          fi
+          echo "ref=refs/upstream-tags/$tag^{commit}" >> "$GITHUB_OUTPUT"
+          echo "label=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Merge it
         id: merge
+        if: steps.pick.outputs.ref != ''
+        env:
+          TARGET: ${{ steps.pick.outputs.ref }}
+          LABEL: ${{ steps.pick.outputs.label }}
         run: |
           git config user.name "eve-bot sync"
           git config user.email "sync@eve-bot.dev"
-          git remote add upstream "$UPSTREAM"
-          git fetch upstream main
-          if git merge-base --is-ancestor upstream/main HEAD; then
-            echo "Already up to date with upstream." | tee -a "$GITHUB_STEP_SUMMARY"
+          if git merge-base --is-ancestor "$TARGET" HEAD; then
+            echo "Already has $LABEL." | tee -a "$GITHUB_STEP_SUMMARY"
             echo "result=current" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -50,7 +114,7 @@ jobs:
           # shared history. Its files are an exact snapshot of some upstream commit, so
           # graft its root onto that commit: git then has a real common ancestor, the
           # merge keeps any edits made in the copy, and files upstream deleted go away.
-          if ! git merge-base upstream/main HEAD >/dev/null 2>&1; then
+          if ! git merge-base "$TARGET" HEAD >/dev/null 2>&1; then
             root=$(git rev-list --max-parents=0 HEAD | tail -1)
             tree=$(git rev-parse "$root^{tree}")
             twin=$(git log --format='%H %T' upstream/main | awk -v t="$tree" '$2==t{print $1; exit}')
@@ -62,21 +126,37 @@ jobs:
               MERGE_FLAGS="--allow-unrelated-histories"
             fi
           fi
-          if git merge --no-edit ${MERGE_FLAGS:-} upstream/main -m "chore: sync with upstream eve-bot"; then
+          # Keeps the copy's own workflow files in the commit at HEAD, whose first parent is the copy as it was.
+          keep_workflows() {
+            git rev-parse -q --verify HEAD^2 >/dev/null || return 0
+            changed=$(git diff --name-only HEAD^1 HEAD -- .github/workflows)
+            [ -z "$changed" ] && return 0
+            for added in $(git diff --name-only --diff-filter=A HEAD^1 HEAD -- .github/workflows); do git rm -q -f "$added"; done
+            git checkout HEAD^1 -- .github/workflows 2>/dev/null || true
+            git -c core.editor=true commit -q --amend --no-edit
+            {
+              echo "Kept this copy's workflow files; GitHub does not let this workflow change them:"
+              echo "$changed" | sed 's/^/- /'
+              echo "\"Update now\" in the console updates them, given a GitHub token (see docs/updating.md)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+          if git merge --no-edit ${MERGE_FLAGS:-} "$TARGET" -m "chore: sync with upstream eve-bot $LABEL"; then
+            keep_workflows
             git push origin HEAD
-            echo "Merged upstream/main and pushed. Vercel will deploy it." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "Merged $LABEL and pushed. Vercel will deploy it." | tee -a "$GITHUB_STEP_SUMMARY"
             echo "result=merged" >> "$GITHUB_OUTPUT"
           else
             git merge --abort
             git checkout -B upstream-sync
-            git merge ${MERGE_FLAGS:-} upstream/main || true
+            git merge ${MERGE_FLAGS:-} "$TARGET" || true
             git add -A
-            git -c core.editor=true commit -m "chore: sync with upstream eve-bot (conflicts to resolve)" || true
+            git -c core.editor=true commit -m "chore: sync with upstream eve-bot $LABEL (conflicts to resolve)" || true
+            keep_workflows
             git push -f origin upstream-sync
             {
               echo "## Upstream changes conflict with edits in this copy"
               echo
-              echo "The merge is on the \`upstream-sync\` branch with conflict markers left in place."
+              echo "The merge of $LABEL is on the \`upstream-sync\` branch with conflict markers left in place."
               echo "Resolve them, then merge that branch into \`${{ github.event.repository.default_branch }}\`."
             } >> "$GITHUB_STEP_SUMMARY"
             echo "result=conflict" >> "$GITHUB_OUTPUT"

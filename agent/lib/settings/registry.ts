@@ -31,10 +31,15 @@ export type SettingArea =
   | "Email"
   | "Background work"
   | "Team"
-  | "Data controls";
+  | "Data controls"
+  | "Updates";
 
-/** Where a setting means anything: everywhere, on Vercel's computer, on a local one, or with the background worker deployed on. */
-export type SettingWhere = "always" | "vercel-computer" | "local-computer" | "worker";
+/**
+ * Where a setting means anything: everywhere, on Vercel's computer, on a local
+ * one, with the background worker deployed on, or on a copy Vercel builds from
+ * its own GitHub repository (which can update itself).
+ */
+export type SettingWhere = "always" | "vercel-computer" | "local-computer" | "worker" | "copy";
 
 export interface SettingDef {
   readonly env: string;
@@ -151,7 +156,21 @@ export const SETTINGS: readonly SettingDef[] = [
   { env: "BOT_ZDR", area: "Data controls", label: "Zero Data Retention", help: "Only AI Gateway providers that keep nothing serve calls (Pro and Enterprise). Free models offer none.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "Off" },
   { env: "BOT_INFERENCE_REGION", area: "Data controls", label: "Keep inference in", help: "Gateway fails a call it can't serve there rather than run it elsewhere.", scope: "deployment", tier: "live", kind: { type: "choice", options: [{ value: "us", label: "United States" }, { value: "eu", label: "Europe" }] }, fallback: "Anywhere" },
   { env: "BOT_EXPORT", area: "Data controls", label: "Export from the console", help: "Lets the owner download the workspace as an export file.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "Off" },
-  { env: "BOT_UPDATE_CHECK", area: "Data controls", label: "Check for updates", help: "The console asks GitHub whether a newer version is out.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "On" },
+
+  // ─── Updates ─────────────────────────────────────────────────────────────
+  { env: "BOT_UPDATE_CHECK", area: "Updates", label: "Check for updates", help: "The console asks GitHub whether a newer version is out.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "On" },
+  {
+    env: "BOT_UPDATE_TOKEN",
+    area: "Updates",
+    label: "GitHub token for updates",
+    help: "Lets Update now update this copy from here, workflows included. A fine-grained token for this repository only, with Actions, Contents and Workflows set to read and write.",
+    scope: "deployment",
+    tier: "live",
+    kind: { type: "secret" },
+    fallback: "Not set",
+    where: "copy",
+    sensitive: true,
+  },
 ];
 
 export const SETTINGS_BY_ENV: ReadonlyMap<string, SettingDef> = new Map(SETTINGS.map((def) => [def.env, def]));
