@@ -28,6 +28,8 @@ concurrency:
 
 jobs:
   build:
+    # Only in the original, as ci.yml: a copy's runs would spend its owner's Actions minutes.
+    if: github.repository == 'Shaivpidadi/eve-bot'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
