@@ -47,6 +47,13 @@ function keyBytes(base64url: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+/** Whether a subscription was made with this VAPID public key. */
+function sameKey(subscribed: ArrayBuffer | null, key: Uint8Array): boolean {
+  if (subscribed === null) return true;
+  const bytes = new Uint8Array(subscribed);
+  return bytes.length === key.length && bytes.every((byte, index) => byte === key[index]);
+}
+
 /** The console's service worker, waiting a little for it rather than for ever. */
 async function worker(): Promise<ServiceWorkerRegistration | null> {
   const registration = await navigator.serviceWorker.getRegistration("/bot");
@@ -75,7 +82,18 @@ export function NotificationsSection() {
       setDevices(body.devices as Device[]);
       setPublicKey(typeof body.publicKey === "string" ? body.publicKey : null);
       if (supported === "yes") {
-        const subscription = await (await worker())?.pushManager.getSubscription();
+        const registration = await worker();
+        let subscription = (await registration?.pushManager.getSubscription()) ?? null;
+        const key = typeof body.publicKey === "string" ? body.publicKey : null;
+        // Subscribed with a key the server no longer signs with: its pushes would be dropped unseen, so subscribe afresh.
+        if (registration && subscription !== null && key !== null && !sameKey(subscription.options.applicationServerKey, keyBytes(key))) {
+          await subscription.unsubscribe().catch(() => false);
+          subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) }).catch(() => null);
+          if (subscription !== null) await api("/bot/v1/push/devices", { method: "POST", body: JSON.stringify({ subscription: subscription.toJSON() }) });
+          setNote("This device was subscribed with an older key; it is subscribed again.");
+          const again: unknown = await (await api("/bot/v1/push")).json().catch(() => null);
+          if (isRecord(again) && Array.isArray(again.devices)) setDevices(again.devices as Device[]);
+        }
         setThisDevice(subscription ? await idOf(subscription.endpoint) : null);
       }
     } catch (caught) {

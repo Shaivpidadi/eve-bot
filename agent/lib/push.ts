@@ -81,13 +81,14 @@ export function vapidKeys(): Promise<{ publicKey: string; privateKey: string }> 
     const doc: VapidDoc = { publicKey: made.publicKey, sealedPrivateKey: await sealWith(SEAL_LABEL, made.privateKey), at: new Date().toISOString() };
     try {
       await writeDoc(VAPID_KEY, doc, null);
-      return made;
     } catch (error) {
       if (!isConflict(error)) throw error;
-      const landed = (await readDoc<VapidDoc>(VAPID_KEY))?.value;
-      if (landed === undefined) throw error;
-      return opened(landed);
     }
+    // Whichever pair the store kept, never the one made here: several instances can make one at once, and a
+    // device subscribed with one pair silently drops pushes signed with another.
+    const landed = (await readDoc<VapidDoc>(VAPID_KEY))?.value;
+    if (landed === undefined) throw new Error("The push key could not be saved.");
+    return opened(landed);
   })().catch((error: unknown) => {
     vapid = null;
     throw error;
