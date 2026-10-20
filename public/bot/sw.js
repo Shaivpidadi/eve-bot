@@ -40,8 +40,9 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     (async () => {
       await tell({ step: "received" });
-      // Someone looking at the console already sees a finished job there; only what needs them interrupts.
-      if (message.urgent !== true && message.test !== true && !safari) {
+      // Someone looking at the console already sees a finished job there; only what needs them interrupts
+      // (their "only when I'm away", on by default).
+      if (message.away === true && message.urgent !== true && message.test !== true && !safari) {
         const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
         if (open.some((client) => client.focused && client.visibilityState === "visible" && new URL(client.url).pathname.startsWith("/bot"))) {
           await tell({ step: "skipped" });

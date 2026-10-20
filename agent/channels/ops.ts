@@ -48,6 +48,7 @@ import { version as appVersion } from "../../package.json";
 import { handsFor } from "../lib/hands";
 import { store } from "../lib/store";
 import { usageReport } from "../lib/usage-report";
+import { readPrefs, savePrefs } from "../lib/push-prefs";
 import { deviceName, flushPushQueue, isBrowserSubscription, sendPush, subscribe, subscriptions, unsubscribe, vapidKeys } from "../lib/push";
 import { latestRun, startUpdate, UpdateError } from "../lib/updater";
 import { builtFrom, updateLink, versionReport } from "../lib/version";
@@ -1003,8 +1004,17 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     GET("/bot/v1/push", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      const [{ publicKey }, devices] = await Promise.all([vapidKeys(), subscriptions(gate.access.workspaceId, gate.access.user)]);
-      return json({ publicKey, devices: devices.map(({ id, device, at }) => ({ id, device, at })) });
+      const [{ publicKey }, devices, prefs] = await Promise.all([vapidKeys(), subscriptions(gate.access.workspaceId, gate.access.user), readPrefs(gate.access.workspaceId, gate.access.user)]);
+      return json({ publicKey, devices: devices.map(({ id, device, at }) => ({ id, device, at })), prefs });
+    }),
+
+    /** What reaches this person's devices: the kinds, quiet hours, and "only when I'm away" (see lib/push-prefs.ts). */
+    PUT("/bot/v1/push/prefs", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      if (body === null) return json({ error: "Send the preferences to change." }, 400);
+      return json({ prefs: await savePrefs(gate.access.workspaceId, gate.access.user, body) });
     }),
 
     /** Turns notifications on for the device that sends its browser's subscription. */

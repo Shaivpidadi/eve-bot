@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import webpush, { type PushSubscription, WebPushError } from "web-push";
 
 import { sealWith, unsealWith } from "./seal";
-import { deleteDoc, isConflict, listDocs, readDoc, writeDoc } from "./store";
+import { deleteDoc, isConflict, listDocs, readDoc, updateDoc, writeDoc } from "./store";
 
 /**
  * Push notifications to the console installed as an app (docs/plan/notifications.md).
@@ -21,6 +21,13 @@ const SEAL_LABEL = "bot-push";
 export const VAPID_KEY = "push/_vapid.json";
 const subscriptionKey = (workspaceId: string, id: string) => `push/${workspaceId}/${id}.json`;
 const queuedKey = (workspaceId: string, id: string) => `push-queue/${workspaceId}/${id}.json`;
+/** When the earliest queued push is due, so a pass with nothing due reads one small document instead of listing the queue. */
+const NEXT_DUE_KEY = "push-queue-next.json";
+
+/** Notes that something in the queue is due at `at`, if that is sooner than what is noted. */
+async function noteDue(at: string): Promise<void> {
+  await updateDoc<{ readonly at: string }>(NEXT_DUE_KEY, (current) => (current !== null && current.at <= at ? current : { at })).catch(() => undefined);
+}
 
 /** How long a push service keeps a notification for a device that is offline. */
 const TTL_SECONDS = 24 * 60 * 60;
@@ -40,6 +47,8 @@ export interface PushMessage {
   readonly urgent?: boolean;
   /** A test from Settings: shown even to someone looking at the console. */
   readonly test?: boolean;
+  /** In Chrome, not shown while the console is focused (the person's "only when I'm away"). */
+  readonly away?: boolean;
 }
 
 export interface Subscription {
@@ -68,6 +77,8 @@ interface Queued {
   readonly attempts: number;
   readonly nextAt: string;
   readonly at: string;
+  /** Kept through quiet hours rather than for a retry: several due at once go out as one summary. */
+  readonly held?: boolean;
 }
 
 let vapid: Promise<{ publicKey: string; privateKey: string }> | null = null;
@@ -209,17 +220,37 @@ async function queue(workspaceId: string, subscriptionId: string, message: PushM
   const id = `${subscriptionId}-${createHash("sha256").update(JSON.stringify(message)).digest("hex").slice(0, 12)}`;
   const item: Queued = { id, workspaceId, subscriptionId, message, attempts: attempts + 1, nextAt: new Date(Date.now() + wait).toISOString(), at: new Date().toISOString() };
   await writeDoc(queuedKey(workspaceId, id), item).catch(() => undefined);
+  await noteDue(item.nextAt);
 }
 
-/** Keeps `message` for every device in the workspace until `until` (the end of quiet hours), when the queue sends it. */
-export async function holdPush(workspaceId: string, message: PushMessage, until: Date): Promise<number> {
-  const held = await subscriptions(workspaceId);
+/**
+ * Keeps `message` for the workspace's devices (or `person`'s) until `until`,
+ * the end of quiet hours, when the queue sends it with the next pass: the
+ * console's poll, a recorded event, or the background worker.
+ */
+export async function holdPush(workspaceId: string, message: PushMessage, until: Date, person?: string): Promise<number> {
+  const held = await subscriptions(workspaceId, person);
   for (const subscription of held) {
     const id = `${subscription.id}-${createHash("sha256").update(JSON.stringify(message)).digest("hex").slice(0, 12)}`;
-    const item: Queued = { id, workspaceId, subscriptionId: subscription.id, message, attempts: 0, nextAt: until.toISOString(), at: new Date().toISOString() };
+    const item: Queued = { id, workspaceId, subscriptionId: subscription.id, message, attempts: 0, nextAt: until.toISOString(), at: new Date().toISOString(), held: true };
     await writeDoc(queuedKey(workspaceId, id), item).catch(() => undefined);
   }
+  if (held.length > 0) await noteDue(until.toISOString());
   return held.length;
+}
+
+/** How many held pushes for one device go out as one summary rather than one by one. */
+const SUMMARY_FROM = 3;
+
+/** One notification for several held overnight: who did what, newest last. */
+export function summaryOf(messages: readonly PushMessage[]): PushMessage {
+  const lines = messages.map((message) => message.title);
+  return {
+    title: `While you were away: ${messages.length} updates`,
+    body: lines.slice(0, 4).join(" · ") + (lines.length > 4 ? ` · and ${lines.length - 4} more` : ""),
+    url: "/bot",
+    tag: "while-away",
+  };
 }
 
 /**
@@ -235,18 +266,41 @@ export async function flushPushQueue(options: { readonly send?: Send; readonly n
   const now = options.now ?? Date.now();
   if (options.force !== true && now - lastFlush < FLUSH_EVERY_MS) return 0;
   lastFlush = now;
+  const next = (await readDoc<{ at: string }>(NEXT_DUE_KEY).catch(() => null))?.value ?? null;
+  if (next === null || Date.parse(next.at) > now) return 0;
+  // Cleared before the pass; whatever stays queued notes itself again below.
+  await deleteDoc(NEXT_DUE_KEY).catch(() => undefined);
   let delivered = 0;
+  // Due items by device, so a night's worth of held ones can go out as one.
+  const due = new Map<string, Queued[]>();
   for (const item of await listDocs<Queued>("push-queue/")) {
-    if (Date.parse(item.nextAt) > now) continue;
+    if (Date.parse(item.nextAt) > now) {
+      await noteDue(item.nextAt);
+      continue;
+    }
     await deleteDoc(queuedKey(item.workspaceId, item.id)).catch(() => undefined);
     // Not worth seeing any more once the push service would have dropped it too (counted from when it was due).
     if (now - Date.parse(item.nextAt) > TTL_SECONDS * 1000) continue;
-    const subscription = (await readDoc<Subscription>(subscriptionKey(item.workspaceId, item.subscriptionId)))?.value ?? null;
+    const key = `${item.workspaceId}/${item.subscriptionId}`;
+    due.set(key, [...(due.get(key) ?? []), item]);
+  }
+  for (const items of due.values()) {
+    const first = items[0]!;
+    const subscription = (await readDoc<Subscription>(subscriptionKey(first.workspaceId, first.subscriptionId)))?.value ?? null;
     if (subscription === null) continue;
-    const outcome = await sendOne(subscription, item.message, send);
-    if (outcome === "sent") delivered += 1;
-    else if (outcome === "gone") await deleteDoc(subscriptionKey(item.workspaceId, subscription.id)).catch(() => undefined);
-    else if (outcome === "retry") await queue(item.workspaceId, subscription.id, item.message, item.attempts);
+    const held = items.filter((item) => item.held === true).sort((left, right) => left.at.localeCompare(right.at));
+    const batches: { message: PushMessage; attempts: number }[] = [
+      ...(held.length >= SUMMARY_FROM ? [{ message: summaryOf(held.map((item) => item.message)), attempts: 0 }] : held.map((item) => ({ message: item.message, attempts: 0 }))),
+      ...items.filter((item) => item.held !== true).map((item) => ({ message: item.message, attempts: item.attempts })),
+    ];
+    for (const batch of batches) {
+      const outcome = await sendOne(subscription, batch.message, send);
+      if (outcome === "sent") delivered += 1;
+      else if (outcome === "gone") {
+        await deleteDoc(subscriptionKey(subscription.workspaceId, subscription.id)).catch(() => undefined);
+        break;
+      } else if (outcome === "retry") await queue(subscription.workspaceId, subscription.id, batch.message, batch.attempts);
+    }
   }
   return delivered;
 }

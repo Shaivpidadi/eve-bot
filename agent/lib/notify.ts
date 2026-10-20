@@ -17,7 +17,8 @@ import type { ActivityEvent, ActivityKind } from "./types";
  */
 
 export interface Alert {
-  readonly kind: "needs-you" | "done";
+  /** Needs you, a job that ended, or a Bot's own news (`nudge`): what a person can turn off (push-prefs.ts). */
+  readonly kind: "needs-you" | "done" | "news";
   readonly title: string;
   readonly body: string;
   /** The thread to open: the Bot's, or HQ's. */
@@ -30,8 +31,6 @@ export interface Alert {
 /** The kinds that can notify; anything else is never looked at twice. */
 export const NOTIFYING: ReadonlySet<ActivityKind> = new Set<ActivityKind>(["input.requested", "job.blocked", "job.done", "job.failed"]);
 
-const QUIET_FROM_HOUR = 22;
-const QUIET_TO_HOUR = 8;
 const BODY_MAX = 180;
 
 const clip = (text: string) => (text.length > BODY_MAX ? `${text.slice(0, BODY_MAX - 1).trimEnd()}…` : text);
@@ -87,15 +86,18 @@ function localTime(now: Date, timezone: string): { hour: number; minute: number 
   }
 }
 
-/** When quiet hours end, if `now` falls in them in `timezone`; null when they do not. */
-export function quietUntil(now: Date, timezone: string): Date | null {
+/**
+ * When quiet hours end, if `now` falls in them in `timezone`; null when they
+ * do not. `from` and `to` are whole hours, across midnight or not; equal, none.
+ */
+export function quietUntil(now: Date, timezone: string, from = 22, to = 8): Date | null {
+  if (from === to) return null;
   const { hour, minute } = localTime(now, timezone);
-  const quiet = hour >= QUIET_FROM_HOUR || hour < QUIET_TO_HOUR;
+  const quiet = from > to ? hour >= from || hour < to : hour >= from && hour < to;
   if (!quiet) return null;
-  // Minutes until 08:00 local, counted forward from now; a minute's rounding does not matter here.
+  // Minutes until `to` o'clock local, counted forward from now.
   const minutesNow = hour * 60 + minute;
-  const end = QUIET_TO_HOUR * 60;
-  const wait = (end - minutesNow + 24 * 60) % (24 * 60);
+  const wait = (to * 60 - minutesNow + 24 * 60) % (24 * 60);
   return new Date(now.getTime() + wait * 60_000);
 }
 
@@ -112,28 +114,101 @@ function repeated(workspaceId: string, tag: string, now: number): boolean {
 }
 
 /**
- * Sends the push an event makes to every device in its workspace, or holds it
- * through quiet hours. Never throws: a notification lost is better than an
- * event lost. The store, the Bots and the push sender are loaded only here.
+ * Sends an alert to each person in the workspace with a device on, as their
+ * preferences say (push-prefs.ts): the kinds they want, held through their
+ * quiet hours unless it needs them. Returns how many people it reached or
+ * holds for. The store and the push sender are loaded only here.
+ */
+export async function deliver(workspaceId: string, alert: Alert): Promise<number> {
+  const [{ holdPush, sendPush, subscriptions }, { readPrefs }] = await Promise.all([import("./push"), import("./push-prefs")]);
+  const people = [...new Set((await subscriptions(workspaceId)).map((subscription) => subscription.person))];
+  if (people.length === 0) return 0;
+  const [{ effectiveEnv }, { defaultTimezone }] = await Promise.all([import("./settings/store"), import("./schedule")]);
+  const timezone = defaultTimezone(await effectiveEnv(workspaceId).catch(() => process.env));
+  let reached = 0;
+  for (const person of people) {
+    const prefs = await readPrefs(workspaceId, person);
+    const wanted = alert.kind === "needs-you" ? prefs.needsYou : alert.kind === "done" ? prefs.done : prefs.fromBots;
+    if (!wanted) continue;
+    const message = { title: alert.title, body: alert.body, url: alert.url, tag: alert.tag, urgent: alert.urgent, away: prefs.onlyWhenAway };
+    const until = alert.urgent ? null : quietUntil(new Date(), timezone, prefs.quietFrom, prefs.quietTo);
+    if (until !== null) await holdPush(workspaceId, message, until, person);
+    else await sendPush(workspaceId, message, { person });
+    reached += 1;
+  }
+  return reached;
+}
+
+/**
+ * Sends the push an event makes, if it makes one. Never throws: a
+ * notification lost is better than an event lost.
  */
 export async function notifyFor(event: ActivityEvent): Promise<void> {
   if (!NOTIFYING.has(event.kind)) return;
   try {
-    const [{ getBot }, { holdPush, sendPush }] = await Promise.all([import("./bots"), import("./push")]);
+    const { getBot } = await import("./bots");
     const bot = event.botId === null ? null : await getBot(event.workspaceId, event.botId).catch(() => null);
     const alert = alertFor(event, event.botId === null ? null : (bot?.name ?? "A Bot"));
     if (alert === null || repeated(event.workspaceId, alert.tag, Date.now())) return;
-    const message = { title: alert.title, body: alert.body, url: alert.url, tag: alert.tag, urgent: alert.urgent };
-    if (!alert.urgent) {
-      const [{ effectiveEnv }, { defaultTimezone }] = await Promise.all([import("./settings/store"), import("./schedule")]);
-      const until = quietUntil(new Date(), defaultTimezone(await effectiveEnv(event.workspaceId).catch(() => process.env)));
-      if (until !== null) {
-        await holdPush(event.workspaceId, message, until);
-        return;
-      }
-    }
-    await sendPush(event.workspaceId, message);
+    await deliver(event.workspaceId, alert);
   } catch (error) {
     console.warn("[push] could not notify:", error instanceof Error ? error.message : String(error));
   }
+}
+
+// ---------------------------------------------------------------------------
+// A Bot's own news (N4)
+// ---------------------------------------------------------------------------
+
+/** How much news a workspace's Bots may send: an assistant that reaches out too often gets turned off. */
+export const NEWS_PER_HOUR = 3;
+export const NEWS_PER_DAY = 10;
+const NEWS_KEY = (workspaceId: string) => `push-sent/${workspaceId}.json`;
+
+interface NewsLog {
+  readonly sent: readonly { readonly at: string; readonly key: string }[];
+}
+
+export type NudgeResult =
+  | { readonly sent: true; readonly reached: number; readonly note: string }
+  | { readonly sent: false; readonly reason: string };
+
+/**
+ * A Bot or HQ tells the people in its workspace something new, unprompted:
+ * news a routine found, a change worth knowing now. The same news (by `key`,
+ * else its words) goes once a day; past the limits it waits for the next run.
+ */
+export async function nudge(input: { workspaceId: string; botId: string | null; who: string | null; title: string; message: string; key?: string }): Promise<NudgeResult> {
+  const { updateDoc } = await import("./store");
+  const key = (input.key?.trim() || `${input.title}\n${input.message}`).slice(0, 200);
+  const now = Date.now();
+  let refused: string | null = null;
+  await updateDoc<NewsLog>(NEWS_KEY(input.workspaceId), (current) => {
+    const sent = (current?.sent ?? []).filter((entry) => now - Date.parse(entry.at) < 24 * 60 * 60_000);
+    if (sent.some((entry) => entry.key === key)) refused = "The same news already went out in the last day.";
+    else if (sent.filter((entry) => now - Date.parse(entry.at) < 60 * 60_000).length >= NEWS_PER_HOUR) refused = `${NEWS_PER_HOUR} notifications already went out this hour; try on the next run.`;
+    else if (sent.length >= NEWS_PER_DAY) refused = `${NEWS_PER_DAY} notifications already went out today; try tomorrow.`;
+    return refused === null ? { sent: [...sent, { at: new Date(now).toISOString(), key }] } : { sent };
+  });
+  if (refused !== null) return { sent: false, reason: refused };
+  const name = input.who ?? "HQ";
+  const alert: Alert = {
+    kind: "news",
+    title: clip(`${name}: ${input.title}`),
+    body: clip(input.message),
+    url: threadUrl(input.botId),
+    tag: `news-${createTagHash(key)}`,
+    urgent: false,
+  };
+  const reached = await deliver(input.workspaceId, alert);
+  return reached === 0
+    ? { sent: true, reached: 0, note: "Nobody in this workspace has notifications on, or wants news from Bots; it was not sent." }
+    : { sent: true, reached, note: "Sent, or held until the person's quiet hours end." };
+}
+
+/** A short stable tag from a key, without a hash library (this module stays free of imports). */
+function createTagHash(key: string): string {
+  let hash = 5381;
+  for (let index = 0; index < key.length; index += 1) hash = ((hash << 5) + hash + key.charCodeAt(index)) | 0;
+  return (hash >>> 0).toString(36);
 }

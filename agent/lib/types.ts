@@ -221,7 +221,9 @@ export type ActivityKind =
   | "computer.failed"
   | "computer.takeover"
   | "computer.handback"
-  | "team.message";
+  | "team.message"
+  /** A Bot or HQ sent the people in the workspace a notification of its own (`notify`). */
+  | "push.sent";
 
 export interface ActivityEvent {
   readonly id: string;

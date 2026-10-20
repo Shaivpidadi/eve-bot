@@ -72,9 +72,86 @@ describe("recording an event", () => {
       // The same ask recorded again moments later (a takeover is) is not sent twice.
       await record({ workspaceId: "ws", kind: "input.requested", text: "Waiting on a human: Send the email?", botId: null });
       await record({ workspaceId: "ws", kind: "job.progress", text: "Opened the page", botId: null });
-      expect(sent).toEqual([{ title: "HQ needs you", body: "Send the email?", url: "/bot?thread=hq", tag: "ask-hq", urgent: true }]);
+      expect(sent).toEqual([{ title: "HQ needs you", body: "Send the email?", url: "/bot?thread=hq", tag: "ask-hq", urgent: true, away: true }]);
     } finally {
       vi.doUnmock("web-push");
     }
+  });
+});
+
+const keys = { p256dh: "BNcR".padEnd(87, "A"), auth: "tBHI".padEnd(22, "A") };
+
+/** web-push with its sender replaced, so what would go out is collected instead. */
+function fakeSender(sent: unknown[]) {
+  vi.doMock("web-push", async () => {
+    const real = await vi.importActual<{ default: Record<string, unknown> }>("web-push");
+    return { ...real, default: { ...real.default, sendNotification: async (_subscription: unknown, payload: string) => void sent.push(JSON.parse(payload)) } };
+  });
+}
+
+describe("each person's choices", () => {
+  it("decide what reaches whom, and hold the rest through their own quiet hours", async () => {
+    vi.stubEnv("BOT_TIMEZONE", "UTC");
+    const sent: { title: string }[] = [];
+    fakeSender(sent);
+    try {
+      const { subscribe } = await import("../agent/lib/push");
+      const { savePrefs } = await import("../agent/lib/push-prefs");
+      const { deliver } = await import("../agent/lib/notify");
+      await subscribe({ workspaceId: "ws", person: "ann", subscription: { endpoint: "https://push.example/ann", keys }, device: "iPhone" });
+      await subscribe({ workspaceId: "ws", person: "bob", subscription: { endpoint: "https://push.example/bob", keys }, device: "Mac" });
+      // Ann wants no news of jobs; Bob is in quiet hours all day long (from 0 to 23).
+      await savePrefs("ws", "ann", { done: false, quietFrom: 0, quietTo: 0 });
+      await savePrefs("ws", "bob", { quietFrom: 0, quietTo: 23 });
+      const done = { kind: "done", title: "Atlas finished", body: "b", url: "/bot", tag: "job-1", urgent: false } as const;
+      expect(await deliver("ws", done)).toBe(1);
+      expect(sent).toHaveLength(0);
+      // What needs them reaches both at once, quiet hours or not.
+      await deliver("ws", { ...done, kind: "needs-you", title: "Atlas needs you", urgent: true });
+      expect(sent.map((message) => message.title)).toEqual(["Atlas needs you", "Atlas needs you"]);
+    } finally {
+      vi.doUnmock("web-push");
+    }
+  });
+});
+
+describe("news from Bots", () => {
+  it("is sent once per key, and at most three an hour", async () => {
+    vi.stubEnv("BOT_TIMEZONE", "UTC");
+    const sent: { title: string }[] = [];
+    fakeSender(sent);
+    try {
+      const { subscribe } = await import("../agent/lib/push");
+      const { savePrefs } = await import("../agent/lib/push-prefs");
+      const { nudge } = await import("../agent/lib/notify");
+      await subscribe({ workspaceId: "ws", person: "ann", subscription: { endpoint: "https://push.example/ann", keys }, device: "iPhone" });
+      await savePrefs("ws", "ann", { quietFrom: 0, quietTo: 0 });
+      const news = (key: string) => nudge({ workspaceId: "ws", botId: "bot_a", who: "Newsie", title: "HN top story changed", message: "Now: Gemini 4", key });
+      expect(await news("hn:1")).toMatchObject({ sent: true, reached: 1 });
+      expect(await news("hn:1")).toMatchObject({ sent: false, reason: expect.stringContaining("same news") });
+      await news("hn:2");
+      await news("hn:3");
+      expect(await news("hn:4")).toMatchObject({ sent: false, reason: expect.stringContaining("this hour") });
+      expect(sent.map((message) => message.title)).toEqual(Array(3).fill("Newsie: HN top story changed"));
+    } finally {
+      vi.doUnmock("web-push");
+    }
+  });
+});
+
+describe("the morning", () => {
+  it("brings a night's held notifications as one, and costs nothing while none is due", async () => {
+    const sent: { title: string; body: string }[] = [];
+    const { subscribe, holdPush, flushPushQueue } = await import("../agent/lib/push");
+    const send = vi.fn(async (_subscription: unknown, payload: string) => void sent.push(JSON.parse(payload)));
+    await subscribe({ workspaceId: "ws", person: "ann", subscription: { endpoint: "https://push.example/ann", keys }, device: "iPhone" });
+    const morning = new Date(Date.now() + 60 * 60_000);
+    for (const title of ["Atlas finished A", "Ava finished B", "Atlas could not finish C"]) await holdPush("ws", { title, body: "", url: "/bot" }, morning);
+    const { store } = await import("../agent/lib/store");
+    const listing = vi.spyOn(store(), "list");
+    expect(await flushPushQueue({ send, force: true })).toBe(0);
+    expect(listing).not.toHaveBeenCalled();
+    expect(await flushPushQueue({ send, force: true, now: morning.getTime() + 1000 })).toBe(1);
+    expect(sent).toEqual([{ title: "While you were away: 3 updates", body: "Atlas finished A · Ava finished B · Atlas could not finish C", url: "/bot", tag: "while-away" }]);
   });
 });

@@ -66,13 +66,19 @@ silence when there is not. eve-bot should do the same, without a third-party pus
   is decided in the service worker (Chrome only; Safari always shows, as it revokes push for silent ones); links are
   `/bot?thread=<id>`. Checked live 20 Oct: a recorded "needs you" event was shown by a subscribed browser.
 
-### N4. Proactive `[to-do]`
+### N4. Proactive `[done]`
 - A `notify` tool for HQ and Bots: title, body, link, and a key so the same news is sent once.
 - A per-workspace limit per hour, and a routine option, "tell me only if something changed".
 - A morning brief that pushes only when there is something in it.
+- As built: `notify` for HQ and Bots (`agent/lib/notify-tool.ts`), 3 an hour and 10 a day per workspace, one per key a
+  day, recorded in the feed as `push.sent`. The morning brief is what quiet hours hold: three or more for a device go
+  out as one "While you were away". There is no wake-up at 08:00 itself (Hobby crons run daily, and workflows start
+  only from tools), so held pushes go with the first pass after quiet hours; a small "next due" document keeps passes
+  with nothing due from listing the queue.
 
-### N5. Settings → Notifications `[to-do]`
-- Per person: the kinds, quiet hours, the limit, "only when I'm away", the devices subscribed (with Remove).
+### N5. Settings → Notifications `[done]`
+- Per person: the kinds, quiet hours, "only when I'm away", the devices subscribed (with Remove). As built in
+  `agent/lib/push-prefs.ts`; the limit is the workspace's (N4) rather than each person's.
 - Docs: `docs/configuration.md`, and a short section in the README.
 
 ## Not in scope

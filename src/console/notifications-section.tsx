@@ -1,9 +1,11 @@
 "use client";
 
 import { BellIcon, BellOffIcon, SendIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
 import { api, errorMessage, isRecord, SignedOutError } from "./api";
 import { shortWhen } from "./format";
@@ -20,6 +22,18 @@ interface Device {
   readonly device: string;
   readonly at: string;
 }
+
+/** This person's choices (agent/lib/push-prefs.ts). */
+interface Prefs {
+  readonly needsYou: boolean;
+  readonly done: boolean;
+  readonly fromBots: boolean;
+  readonly quietFrom: number;
+  readonly quietTo: number;
+  readonly onlyWhenAway: boolean;
+}
+
+const HOURS = Array.from({ length: 24 }, (_, hour) => ({ value: String(hour), label: `${String(hour).padStart(2, "0")}:00` }));
 
 type Support = "yes" | "install-first" | "no";
 
@@ -68,6 +82,7 @@ export function NotificationsSection() {
   const [thisDevice, setThisDevice] = useState<string | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | "unknown">(() => (typeof Notification === "undefined" ? "unknown" : Notification.permission));
   const [busy, setBusy] = useState(false);
+  const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,6 +96,7 @@ export function NotificationsSection() {
       }
       setDevices(body.devices as Device[]);
       setPublicKey(typeof body.publicKey === "string" ? body.publicKey : null);
+      if (isRecord(body.prefs)) setPrefs(body.prefs as unknown as Prefs);
       if (supported === "yes") {
         const registration = await worker();
         let subscription = (await registration?.pushManager.getSubscription()) ?? null;
@@ -209,6 +225,19 @@ export function NotificationsSection() {
     }
   };
 
+  const change = async (next: Partial<Prefs>) => {
+    if (prefs === null) return;
+    setPrefs({ ...prefs, ...next });
+    try {
+      const response = await api("/bot/v1/push/prefs", { method: "PUT", body: JSON.stringify(next) });
+      const body: unknown = await response.json().catch(() => null);
+      if (response.ok && isRecord(body) && isRecord(body.prefs)) setPrefs(body.prefs as unknown as Prefs);
+      else setError(await errorMessage(response, "Could not save that."));
+    } catch (caught) {
+      if (!(caught instanceof SignedOutError)) setError("Could not save that.");
+    }
+  };
+
   const on = thisDevice !== null && (devices ?? []).some((device) => device.id === thisDevice);
 
   return (
@@ -269,6 +298,63 @@ export function NotificationsSection() {
           ))}
       </div>
       <Faint>Each device is turned on from itself. Removing one here stops notifications to it.</Faint>
+
+      {prefs === null ? null : (
+        <>
+          <h3 className="m-0 mt-2 text-[13px] font-medium">What reaches you</h3>
+          <div className="flex flex-col divide-y divide-border overflow-hidden rounded-[14px] border border-input bg-card text-[13px]">
+            <PrefRow label="A Bot needs you" help="An approval, a question, or a job waiting on you. Sent at once, even in quiet hours.">
+              <Switch checked={prefs.needsYou} aria-label="A Bot needs you" onCheckedChange={(next) => void change({ needsYou: next })} />
+            </PrefRow>
+            <PrefRow label="A job ends" help="Finished, or failed for good.">
+              <Switch checked={prefs.done} aria-label="A job ends" onCheckedChange={(next) => void change({ done: next })} />
+            </PrefRow>
+            <PrefRow label="News from Bots" help="Something a Bot or HQ thinks you would want to know, such as what a routine found. At most 3 an hour.">
+              <Switch checked={prefs.fromBots} aria-label="News from Bots" onCheckedChange={(next) => void change({ fromBots: next })} />
+            </PrefRow>
+            <PrefRow label="Quiet hours" help="In the workspace's timezone. Only what needs you comes through; the rest waits, and arrives together in the morning.">
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <HourSelect value={prefs.quietFrom} label="Quiet from" onChange={(hour) => void change({ quietFrom: hour })} />
+                to
+                <HourSelect value={prefs.quietTo} label="Quiet until" onChange={(hour) => void change({ quietTo: hour })} />
+              </span>
+            </PrefRow>
+            <PrefRow label="Only when I'm away" help="In Chrome, nothing but what needs you while you are looking at the console. Safari and iPhone always show them.">
+              <Switch checked={prefs.onlyWhenAway} aria-label="Only when I'm away" onCheckedChange={(next) => void change({ onlyWhenAway: next })} />
+            </PrefRow>
+          </div>
+          <Faint>Set the same start and end hour to have no quiet hours.</Faint>
+        </>
+      )}
     </PageBody>
+  );
+}
+
+function PrefRow({ label, help, children }: { label: string; help: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-4 px-4 py-3">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <b className="font-medium">{label}</b>
+        <span className="text-xs text-muted-foreground">{help}</span>
+      </div>
+      <div className="flex flex-none items-center">{children}</div>
+    </div>
+  );
+}
+
+function HourSelect({ value, label, onChange }: { value: number; label: string; onChange: (hour: number) => void }) {
+  return (
+    <Select items={HOURS} value={String(value)} onValueChange={(next) => next !== null && onChange(Number(next))}>
+      <SelectTrigger size="sm" className="w-[84px] bg-secondary text-[12.5px] dark:bg-secondary" aria-label={label}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {HOURS.map((hour) => (
+          <SelectItem key={hour.value} value={hour.value}>
+            {hour.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

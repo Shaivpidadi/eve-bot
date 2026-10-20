@@ -58,6 +58,8 @@ export async function record(input: {
 
   // A Bot that needs someone, or a job that ended, reaches their devices (see notify.ts); never fails the event.
   if (NOTIFYING.has(event.kind)) await import("./notify").then(({ notifyFor }) => notifyFor(event)).catch(() => undefined);
+  // Work going on is a pass too: pushes held through the night go out with the first of the morning (at most once a minute).
+  void import("./push").then(({ flushPushQueue }) => flushPushQueue()).catch(() => undefined);
 
   return event;
 }
