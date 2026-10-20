@@ -29,8 +29,28 @@ self.addEventListener("push", (event) => {
     ...(message.tag ? { tag: message.tag, renotify: true } : {}),
     ...(message.urgent === true ? { requireInteraction: true } : {}),
   };
+  // Open console pages hear of every push and how showing it went, for Settings, Notifications to report.
+  const tell = async (report) => {
+    const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of open) client.postMessage({ type: "bot-push", tag: message.tag || null, ...report });
+  };
   // A browser that rejects one of the options still shows the plain notification.
-  event.waitUntil(self.registration.showNotification(title, full).catch(() => self.registration.showNotification(title, { body: full.body, data })));
+  event.waitUntil(
+    (async () => {
+      await tell({ step: "received" });
+      try {
+        await self.registration.showNotification(title, full);
+        await tell({ step: "shown" });
+      } catch (first) {
+        try {
+          await self.registration.showNotification(title, { body: full.body, data });
+          await tell({ step: "shown", plain: String(first) });
+        } catch (error) {
+          await tell({ step: "failed", error: String(error) });
+        }
+      }
+    })(),
+  );
 });
 
 // Clicking opens what the notification is about: an open console is focused and taken there, else one is opened.

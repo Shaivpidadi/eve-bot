@@ -87,6 +87,22 @@ export function NotificationsSection() {
     void load();
   }, [load]);
 
+  // What the service worker reports of each push (public/bot/sw.js): whether it arrived, and whether it could be shown.
+  const [heard, setHeard] = useState<string | null>(null);
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const listen = (event: MessageEvent) => {
+      const data: unknown = event.data;
+      if (!isRecord(data) || data.type !== "bot-push") return;
+      const at = new Date().toLocaleTimeString();
+      if (data.step === "received") setHeard(`A push arrived at ${at}…`);
+      else if (data.step === "shown") setHeard(`A push arrived and was shown at ${at}.${typeof data.plain === "string" ? ` (Plainly: ${data.plain})` : ""}`);
+      else setHeard(`A push arrived at ${at} but could not be shown: ${typeof data.error === "string" ? data.error : "unknown"}`);
+    };
+    navigator.serviceWorker.addEventListener("message", listen);
+    return () => navigator.serviceWorker.removeEventListener("message", listen);
+  }, []);
+
   const turnOn = async () => {
     if (publicKey === null) return;
     setBusy(true);
@@ -141,7 +157,12 @@ export function NotificationsSection() {
       const response = await api("/bot/v1/push/test", { method: "POST" });
       const body = (await response.json().catch(() => null)) as { sent?: number; queued?: number; refused?: number; gone?: number } | null;
       if (!response.ok || body === null) setError(await errorMessage(response, "Could not send a test."));
-      else if ((body.sent ?? 0) > 0) setNote(`Sent to ${body.sent} device${body.sent === 1 ? "" : "s"}. It should arrive in a few seconds.`);
+      else if ((body.sent ?? 0) > 0) {
+        setNote(`Sent to ${body.sent} device${body.sent === 1 ? "" : "s"}. It should arrive in a few seconds.`);
+        setHeard(null);
+        // If this device never hears of it, the push was lost before reaching the browser.
+        window.setTimeout(() => setHeard((now) => now ?? "No push has reached this device in 20 seconds."), 20_000);
+      }
       else if ((body.queued ?? 0) > 0) setNote("The push service is busy; it will be tried again in a minute.");
       else setError("No device took it. Turn notifications on again on this device.");
       if ((body?.gone ?? 0) > 0) await load();
@@ -184,6 +205,7 @@ export function NotificationsSection() {
       ) : null}
       {error === null ? null : <p className="m-0 text-xs text-destructive">{error}</p>}
       {note === null ? null : <p className="m-0 text-xs text-brand">{note}</p>}
+      {heard === null ? null : <p className="m-0 text-xs text-muted-foreground">{heard}</p>}
 
       <div className="flex flex-col divide-y divide-border overflow-hidden rounded-[14px] border border-input bg-card text-[13px]">
         <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">

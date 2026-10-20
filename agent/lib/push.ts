@@ -24,6 +24,8 @@ const queuedKey = (workspaceId: string, id: string) => `push-queue/${workspaceId
 
 /** How long a push service keeps a notification for a device that is offline. */
 const TTL_SECONDS = 24 * 60 * 60;
+/** How long a just-subscribed device is not taken for gone. */
+const NEW_DEVICE_MS = 2 * 60_000;
 /** Waits before each retry of a push that failed for a passing reason; past the last, it is dropped. */
 const RETRY_AFTER_MS = [60_000, 5 * 60_000, 30 * 60_000];
 
@@ -183,7 +185,9 @@ export async function sendPush(
   const send = options.send ?? webpush.sendNotification;
   const counts = { sent: 0, gone: 0, queued: 0, refused: 0 };
   for (const subscription of await subscriptions(workspaceId, options.person)) {
-    const outcome = await sendOne(subscription, message, send);
+    let outcome = await sendOne(subscription, message, send);
+    // A device that subscribed moments ago can read as gone until its push service has caught up.
+    if (outcome === "gone" && Date.now() - Date.parse(subscription.at) < NEW_DEVICE_MS) outcome = "retry";
     if (outcome === "sent") counts.sent += 1;
     else if (outcome === "gone") {
       counts.gone += 1;

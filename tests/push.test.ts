@@ -59,8 +59,11 @@ describe("sending", () => {
     expect(await flushPushQueue({ send: sent, force: true })).toBe(0);
     expect(await flushPushQueue({ send: sent, force: true, now: Date.now() + 2 * 60_000 })).toBe(1);
 
-    // The device unsubscribed: forgotten.
+    // Just subscribed, it is not taken for gone yet; later, it is forgotten.
+    expect(await sendPush("ws", message, { send: failing(410) })).toMatchObject({ gone: 0, queued: 1 });
+    vi.useFakeTimers({ now: Date.now() + 3 * 60_000, toFake: ["Date"] });
     expect(await sendPush("ws", message, { send: failing(410) })).toMatchObject({ gone: 1 });
+    vi.useRealTimers();
     expect(await subscriptions("ws")).toHaveLength(0);
   });
 
