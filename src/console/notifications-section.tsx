@@ -152,6 +152,23 @@ export function NotificationsSection() {
     }
   };
 
+  /** A notification made right here, with no push service in between: if this shows and a pushed one does not, the push is lost on the way. */
+  const local = async () => {
+    setError(null);
+    setNote(null);
+    try {
+      const registration = await worker();
+      if (registration === null) {
+        setError("The app's service worker is not running. Reload the page and try again.");
+        return;
+      }
+      await registration.showNotification("EVE Bot", { body: "Shown by this device, without the push service.", icon: "/bot/icon-192.png", data: { url: "/bot" } });
+      setNote("Shown on this device. If you did not see it, this browser's notifications are off in your system's settings (on a Mac: System Settings, Notifications, Google Chrome) or Focus is on.");
+    } catch (caught) {
+      setError(caught instanceof Error ? `This device would not show it: ${caught.message}` : "This device would not show it.");
+    }
+  };
+
   const on = thisDevice !== null && (devices ?? []).some((device) => device.id === thisDevice);
 
   return (
@@ -181,6 +198,9 @@ export function NotificationsSection() {
               <>
                 <Button size="sm" variant="secondary" disabled={busy} onClick={() => void test()}>
                   <SendIcon /> Send a test
+                </Button>
+                <Button size="sm" variant="ghost" disabled={busy} title="Shows one from this device alone, to tell a lost push from blocked notifications" onClick={() => void local()}>
+                  Show one here
                 </Button>
                 <Button size="sm" variant="ghost" disabled={busy} onClick={() => void remove(thisDevice!)}>
                   <BellOffIcon /> Turn off

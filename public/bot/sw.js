@@ -21,17 +21,16 @@ self.addEventListener("push", (event) => {
     message = { body: event.data ? event.data.text() : "" };
   }
   const title = message.title || "EVE Bot";
-  event.waitUntil(
-    self.registration.showNotification(title, {
-      body: message.body || "",
-      icon: "/bot/icon-192.png",
-      tag: message.tag || undefined,
-      // A newer notification for the same thing still makes itself heard.
-      renotify: Boolean(message.tag),
-      requireInteraction: message.urgent === true,
-      data: { url: message.url || "/bot" },
-    }),
-  );
+  const data = { url: message.url || "/bot" };
+  const full = {
+    body: message.body || "",
+    icon: "/bot/icon-192.png",
+    data,
+    ...(message.tag ? { tag: message.tag, renotify: true } : {}),
+    ...(message.urgent === true ? { requireInteraction: true } : {}),
+  };
+  // A browser that rejects one of the options still shows the plain notification.
+  event.waitUntil(self.registration.showNotification(title, full).catch(() => self.registration.showNotification(title, { body: full.body, data })));
 });
 
 // Clicking opens what the notification is about: an open console is focused and taken there, else one is opened.
