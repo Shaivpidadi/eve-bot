@@ -48,6 +48,8 @@ import { version as appVersion } from "../../package.json";
 import { handsFor } from "../lib/hands";
 import { store } from "../lib/store";
 import { usageReport } from "../lib/usage-report";
+import { readPrefs, savePrefs } from "../lib/push-prefs";
+import { deviceName, flushPushQueue, isBrowserSubscription, sendPush, subscribe, subscriptions, unsubscribe, vapidKeys } from "../lib/push";
 import { latestRun, startUpdate, UpdateError } from "../lib/updater";
 import { builtFrom, updateLink, versionReport } from "../lib/version";
 
@@ -386,6 +388,8 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const after = new URL(request.url).searchParams.get("after");
       // The console polls this every few seconds, so teammates' notes to each other go out here.
       waitUntil(deliverNotes(sendInto(from, attachSession), { workspaceId: gate.access.workspaceId }).catch(() => 0));
+      // Pushes waiting for a retry go out with the console's poll too, so they need no background worker.
+      waitUntil(flushPushQueue().catch(() => 0));
       const board = await buildBoard(gate.access.workspaceId, {
         ...(after !== null && !Number.isNaN(Date.parse(after)) ? { after } : {}),
       });
@@ -994,6 +998,52 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       // Whether "Update now" can run the update from here: a copy, its owner, and a GitHub token in Settings.
       const token = (await effectiveEnv()).BOT_UPDATE_TOKEN?.trim();
       return json({ ...report, canUpdate: report.runsItself && gate.access.owner && Boolean(token) });
+    }),
+
+    /** Push notifications on this person's devices (see lib/push.ts): the key a browser subscribes with, and the devices on. */
+    GET("/bot/v1/push", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const [{ publicKey }, devices, prefs] = await Promise.all([vapidKeys(), subscriptions(gate.access.workspaceId, gate.access.user), readPrefs(gate.access.workspaceId, gate.access.user)]);
+      return json({ publicKey, devices: devices.map(({ id, device, at }) => ({ id, device, at })), prefs });
+    }),
+
+    /** What reaches this person's devices: the kinds, quiet hours, and "only when I'm away" (see lib/push-prefs.ts). */
+    PUT("/bot/v1/push/prefs", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      if (body === null) return json({ error: "Send the preferences to change." }, 400);
+      return json({ prefs: await savePrefs(gate.access.workspaceId, gate.access.user, body) });
+    }),
+
+    /** Turns notifications on for the device that sends its browser's subscription. */
+    POST("/bot/v1/push/devices", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      if (!isBrowserSubscription(body?.subscription)) return json({ error: "Send { subscription } as the browser gives it." }, 400);
+      const saved = await subscribe({ workspaceId: gate.access.workspaceId, person: gate.access.user, subscription: body.subscription, device: deviceName(request.headers.get("user-agent")) });
+      return json({ id: saved.id, device: saved.device });
+    }),
+
+    /** Turns notifications off for one of this person's devices. */
+    DELETE("/bot/v1/push/devices/:id", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      return (await unsubscribe(gate.access.workspaceId, gate.access.user, params.id ?? "")) ? json({ ok: true }) : json({ error: "No such device." }, 404);
+    }),
+
+    /** Sends a test notification to this person's devices. */
+    POST("/bot/v1/push/test", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const result = await sendPush(
+        gate.access.workspaceId,
+        { title: "EVE Bot", body: "Notifications work on this device. A Bot will reach you here when it needs you.", url: "/bot", tag: "test", test: true },
+        { person: gate.access.user },
+      );
+      return json(result);
     }),
 
     /** "Update now": brings this copy's workflows up to the newest release and runs its sync (see lib/updater.ts). Owner only. */

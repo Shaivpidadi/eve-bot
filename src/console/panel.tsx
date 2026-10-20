@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BellIcon,
   BrainIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -320,6 +321,7 @@ const ACTIVITY_ICON: Readonly<Record<string, LucideIcon>> = {
   "computer.restored": MonitorIcon,
   "computer.failed": TriangleAlertIcon,
   "team.message": MailIcon,
+  "push.sent": BellIcon,
 };
 
 /** A feed line's headline: the job it is about, when the line names one in quotes. */

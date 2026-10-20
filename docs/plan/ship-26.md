@@ -212,11 +212,11 @@ no co-author line. Each task names files, tests, and "done when". Statuses below
   connection, gate). Live: see V0.4.
 
 ### V5. Event-driven Bots via MCP Events (F5) `[parked]` (depends on V4)
-- `[to-do]` V5.1 Event subscriptions as a new routine kind: "when <event> on <connector>, <brief>", stored with the Bot.
-- `[to-do]` V5.2 Ingest: eve's `experimental_events.onEvent` on the connection → verify → `enqueue` into the Bot's room
+- `[parked]` V5.1 Event subscriptions as a new routine kind: "when <event> on <connector>, <brief>", stored with the Bot.
+- `[parked]` V5.2 Ingest: eve's `experimental_events.onEvent` on the connection → verify → `enqueue` into the Bot's room
   (durable, since Connect does not replay) → `flushOutboxSoon`.
-- `[to-do]` V5.3 Console: add/remove an event routine in the Bot's panel next to scheduled routines.
-- `[to-do]` V5.4 Budget and noise guards: per-routine rate limit, de-dup by event idempotency key, events count against
+- `[parked]` V5.3 Console: add/remove an event routine in the Bot's panel next to scheduled routines.
+- `[parked]` V5.4 Budget and noise guards: per-routine rate limit, de-dup by event idempotency key, events count against
   the workspace budget like any job.
 - **Tests:** unit for ingest (verify, de-dup, enqueue); live on production: an assigned Linear issue starts a job.
 - **Findings (16 Oct):** blocked upstream for Linear. Linear's MCP server advertises only `tools` (no events extension)

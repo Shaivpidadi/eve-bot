@@ -86,6 +86,8 @@ export async function workerTick(send: Send): Promise<{ readonly dispatch: Dispa
   const previous = await readHeartbeat();
   const dispatch = await dispatchDue((job, message) => send(job.workspaceId, job.room, message));
   const notes = await deliverNotes(send).catch(() => 0);
+  // Pushes that failed for a passing reason, tried again (see push.ts); loaded lazily, as the store is.
+  await import("./push").then(({ flushPushQueue }) => flushPushQueue()).catch(() => 0);
   await reapIdleScreens().catch(() => 0);
   const slow = previous?.slowAt == null || Date.now() - Date.parse(previous.slowAt) >= SLOW_EVERY_MS;
   if (slow) {

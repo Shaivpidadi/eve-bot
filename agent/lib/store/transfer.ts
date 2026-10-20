@@ -48,8 +48,11 @@ const isSealingKey = (key: string): boolean => /^computer\/[^/]+\/access-key\.js
 /** Settings saved in the console, which can hold sealed secrets (see `settings/store.ts`). */
 const isSettingsKey = (key: string): boolean => /^settings\/(?:_deployment|[^/]+\/settings)\.json$/.test(key);
 
-/** Keys that hold credentials: connector keys and OAuth tokens, sealed, settings with sealed secrets, and the key they are sealed with. */
-export const isSecretKey = (key: string): boolean => /^connectors\//.test(key) || /^oauth-pending\//.test(key) || isSettingsKey(key) || isSealingKey(key);
+/** Push notifications: the deployment's signing keys (sealed), and each device's subscription, which lets anyone holding it notify that device. */
+const isPushKey = (key: string): boolean => /^push(?:-queue)?\//.test(key);
+
+/** Keys that hold credentials: connector keys and OAuth tokens, sealed, settings with sealed secrets, push keys and subscriptions, and the key they are sealed with. */
+export const isSecretKey = (key: string): boolean => /^connectors\//.test(key) || /^oauth-pending\//.test(key) || isSettingsKey(key) || isPushKey(key) || isSealingKey(key);
 
 /** Whether `key` belongs to `workspace`: some path segment is its id. Deployment-wide keys (the computer) belong to none. */
 export const inWorkspace = (key: string, workspace: string): boolean => key.split("/").some((segment) => segment === workspace || segment === `${workspace}.json`);

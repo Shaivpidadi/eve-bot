@@ -226,6 +226,7 @@ rename, edit profile, duplicate, hide, delete.
   is moved to a fresh session after about a minute, the message is sent again,
   and the thread says so. The new session knows what is in Memory.
 - **Update now** appears in the footer when a newer version is out.
+- **Install the app** puts the console on your dock or Home Screen, and **Settings → Notifications** lets a Bot reach your phone when it needs you or finishes a job.
 
 Opening the console from another device over plain http puts the browser in an
 insecure context, and the live screen will not connect. Use `npm run dev:https`,

@@ -263,3 +263,22 @@ your copy's `vercel.json`, at the smallest size, and set `BOT_WORKER=on`:
 Daemons run only in production. To stop it, set `instances` to `{ "iad1": 0 }` or remove the block; leaving it
 declared with `BOT_WORKER` off still keeps one idle instance (and its memory) running.
 
+## Notifications
+
+The console installs as an app (Chrome, Edge, Safari; on iPhone and iPad from Share → Add to Home Screen, which is
+also the only place iOS lets it notify). Each person turns notifications on per device in **Settings →
+Notifications**, and chooses what reaches them:
+
+- **A Bot needs you:** an approval, a question, a job waiting on you. Sent at once, even in quiet hours.
+- **A job ends:** finished, or failed for good.
+- **News from Bots:** what HQ or a Bot sends with its `notify` tool, such as a routine's finding. At most 3 an hour and
+  10 a day per workspace, and the same news (by key) once a day.
+- **Quiet hours**, in the workspace's timezone (22:00–08:00 unless changed): only what needs you comes through. The rest
+  is held, and three or more held for a device arrive as one "While you were away". Held notifications go out with
+  the first pass after quiet hours: the console opening, a Bot at work, or the background worker if it is declared.
+- **Only when I'm away:** in Chrome, nothing but what needs you while the console is focused. Safari and iPhone always
+  show them (Safari takes push away from sites whose pushes show nothing).
+
+Nothing to configure on the server: the deployment makes its own Web Push keys the first time they are needed and
+keeps the private one sealed. Pressing a notification opens the Bot's thread; nothing is approved from one.
+

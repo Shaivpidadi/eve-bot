@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { BrandMark } from "./brands";
 
 import { api, errorMessage, SignedOutError } from "./api";
+import { InstallNote } from "./install-note";
 import { LiveAvatar } from "./live-avatar";
 import { shortWhen, withoutEmoji } from "./format";
 import { PromptDialog, type Prompt } from "./prompt-dialog";
@@ -471,6 +472,7 @@ export function Sidebar({
       <div className="relative flex flex-col gap-1 px-2.5 pt-1.5 pb-3">
         <HealthNote health={health} members={members} />
         <UpdateNote />
+        <InstallNote />
         {editingName !== null ? (
           <form
             className="mb-1"
