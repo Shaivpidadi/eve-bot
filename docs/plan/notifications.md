@@ -52,10 +52,11 @@ silence when there is not. eve-bot should do the same, without a third-party pus
 - The service worker shows the notification and, on click, focuses an open console or opens one at the link.
 - "Send a test" in Settings, and "Show one here" (a notification made on the device alone), with a line saying what
   became of the test: shown, arrived but not shown, or never arrived.
-- Checked 20 Oct: a test push arrived on iPhone (installed app). Chrome on the owner's Mac shows local notifications
-  but not pushed ones, while headless Chrome on the same Mac receives and shows them: open, see the diagnostic line.
+- Checked 20 Oct on iPhone (installed app) and Chrome on a Mac. The Mac first received pushes it never showed: two
+  server instances had each made a key pair on first use, and Chrome drops a push signed with a key other than the one
+  it subscribed with. The server now always signs with the stored pair, and a device on another key subscribes again.
 
-### N3. Needs you and Done `[in-progress]`
+### N3. Needs you and Done `[done]`
 - Rules on `record()` (`agent/lib/activity.ts`), the one place every event passes: `input.requested`, approvals,
   `job.blocked`, budget stops, `job.done` (with the files it made), `job.failed` for good.
 - Deep links to the approval, job or thread; a tag per job, so a newer push replaces an older one.
