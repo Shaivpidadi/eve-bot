@@ -41,8 +41,9 @@ async function tick() {
 
 const wait = (ms) => new Promise((resolve) => { const timer = setTimeout(resolve, ms); stop.signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true }); });
 
-// Shipped in every deployment's vercel.json, but off until BOT_WORKER=on: on
-// Hobby its store traffic would use up Vercel Blob's monthly operations in hours.
+// Declared only by an owner who adds it to vercel.json (docs/configuration.md), and
+// off until BOT_WORKER=on: on Hobby its store traffic would use up Vercel Blob's
+// monthly operations in hours.
 if (!/^(1|true|on|yes)$/i.test(process.env.BOT_WORKER?.trim() ?? "")) {
   console.log("[worker] off: set BOT_WORKER=on (Pro plans; see docs/configuration.md) and redeploy to turn it on");
   // Stay up (an exited daemon is restarted at once), asleep until Vercel stops it.

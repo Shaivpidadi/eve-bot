@@ -1,12 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "nextjs",
-  "daemons": {
-    "worker": {
-      "root": "daemon/",
-      "entrypoint": "Dockerfile",
-      "instances": { "iad1": 1 },
-      "terminationGracePeriodSeconds": 30
-    }
-  }
+  "framework": "nextjs"
 }

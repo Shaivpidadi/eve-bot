@@ -130,7 +130,7 @@ paid option: $30 buys $80 of usage on the models it covers.
 | `BOT_UPDATE_TOKEN` | a fine-grained GitHub token for a Deploy-button copy (Actions, Contents and Workflows, read and write), so **Update now** updates it from the console; best saved in Settings (Updates), sealed. See [updating.md](updating.md) |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
-| `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | Vercel Pro, production: `on` runs the background worker (`daemon/`, a [Vercel Daemon](https://vercel.com/docs/daemons) that `vercel.json` declares and that idles while this is off), which asks the app for the watchdog's work every `30` seconds with its OIDC token, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. About 3 Vercel Blob operations a pass, roughly $1–2 a month; **never on Hobby**, whose 2,000 monthly Blob operations it would use up within hours (Vercel then blocks the store for 30 days). Redeploy after turning it on or off; Settings can pause it or change its pace without one |
+| `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | Vercel Pro, production, once the worker is declared (see [The background worker](#the-background-worker)): `on` makes it ask the app for the watchdog's work every `30` seconds, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. Settings can pause it or change its pace without a redeploy |
 | `BOT_TICK_ON_START` | `off` stops a standalone server sweeping for stranded jobs a minute after it starts |
 | `BOT_WORKFLOW_WORLD` | a shared Workflow world package for a standalone server, such as `@workflow/world-postgres` (with `WORKFLOW_POSTGRES_URL`), so conversations survive rebuilds; experimental, see `docs/decisions/0002-workflow-world.md` |
 | `BOT_BUILD_ID` | overrides the build id leases are stamped with (see `docs/safety.md`, run fencing) |
@@ -231,6 +231,37 @@ background. A computer that can have neither fence refuses the shell rather
 than run it unfenced; `BOT_SHELL_ISOLATION=off` instead runs it as the
 browser's user with every command waiting for approval. `bot-computer status`
 reports the mode as `shell`.
+
+## The background worker
+
+`daemon/` holds a small worker that asks the app for the watchdog's work every 30 seconds with its OIDC token
+(`POST /bot/v1/internal/tick`), so due work, teammates' notes and idle browsers move with no console open. Without
+it the same work happens on the console's polls, the daily cron and the server's own passes; it is only slower when
+nobody has the console open.
+
+It is not declared by default. A [Vercel Daemon](https://vercel.com/docs/daemons) runs around the clock, and on Pro it
+is billed for its provisioned memory whether it works or not; on Hobby it would use up Vercel Blob's 2,000 monthly
+operations within hours (about 3 a pass), after which Vercel blocks the store for 30 days. To run it on Pro, add it to
+your copy's `vercel.json`, at the smallest size, and set `BOT_WORKER=on`:
+
+```json
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "daemons": {
+    "worker": {
+      "root": "daemon/",
+      "entrypoint": "Dockerfile",
+      "instances": { "iad1": 1 },
+      "resources": { "requests": { "memory": "1Gi" } },
+      "terminationGracePeriodSeconds": 30
+    }
+  }
+}
+```
+
+Daemons run only in production. To stop it, set `instances` to `{ "iad1": 0 }` or remove the block; leaving it
+declared with `BOT_WORKER` off still keeps one idle instance (and its memory) running.
 
 ## Notifications
 

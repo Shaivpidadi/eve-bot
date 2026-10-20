@@ -99,12 +99,12 @@ Prefer your Vercel login to a password? **Settings → Deployment Protection →
 Vercel Authentication → All Deployments**. Standard Protection is not enough;
 it leaves the production address public.
 
-Hobby plans work. On Pro, `BOT_WORKER=on` starts a background worker (a
-[Vercel Daemon](https://vercel.com/docs/daemons), already declared in
-`vercel.json`) that does the watchdog's work every 30 seconds, so due work,
-teammates' notes and idle browsers move with no console open; it costs about
-$1–2 a month in Blob operations. Leave it off on Hobby, where it would use up
-Vercel Blob's monthly operations within hours. Without it, `BOT_TICK_CRON="* * * * *"`
+Hobby plans work. On Pro you can add a background worker (a
+[Vercel Daemon](https://vercel.com/docs/daemons)) that does the watchdog's work
+every 30 seconds, so due work, teammates' notes and idle browsers move with no
+console open: see [docs/configuration.md](docs/configuration.md#the-background-worker).
+It is not declared by default, because a daemon is billed for its memory
+around the clock on Pro, working or not. Without it, `BOT_TICK_CRON="* * * * *"`
 on Pro runs the watchdog every minute instead of daily.
 
 ### Standalone
