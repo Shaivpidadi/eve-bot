@@ -35,8 +35,20 @@ There is no page at \`${path}\`.
 - Source and documentation: https://github.com/Shaivpidadi/eve-bot
 `;
 
+/**
+ * Someone signed in to this deployment's console has no use for its home page
+ * and Deploy button: the console's marker cookie (agent/lib/access.ts) or
+ * Vercel Authentication's own sends them to /bot. `/?site` still shows it.
+ */
+function signedIn(request: NextRequest): boolean {
+  return request.cookies.get("bot_signed_in")?.value === "1" || request.cookies.has("_vercel_jwt");
+}
+
 export function proxy(request: NextRequest): NextResponse {
   const path = request.nextUrl.pathname.replace(/\/+$/, "") || "/";
+  if (path === "/" && !request.nextUrl.searchParams.has("site") && signedIn(request) && !prefersMarkdown(request.headers.get("accept"))) {
+    return NextResponse.redirect(new URL("/bot", request.url), 307);
+  }
   if (prefersMarkdown(request.headers.get("accept"))) {
     if (isPublicPath(path)) return markdown(PAGE_MARKDOWN[path]);
     return markdown(NOT_FOUND(path), 404);
