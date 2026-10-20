@@ -45,6 +45,16 @@ const nextConfig: NextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
         ],
       },
+      {
+        // The console's service worker: never cached, so a new one is picked up at once, and allowed to
+        // control `/bot` itself as well as the paths under it (see src/app/bot/service-worker.tsx).
+        source: "/bot/sw.js",
+        headers: [
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/bot" },
+        ],
+      },
     ];
   },
 };
