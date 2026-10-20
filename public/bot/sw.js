@@ -26,7 +26,7 @@ self.addEventListener("push", (event) => {
     body: message.body || "",
     icon: "/bot/icon-192.png",
     data,
-    ...(message.tag ? { tag: message.tag, renotify: true } : {}),
+    ...(message.tag ? { tag: message.tag } : {}),
     ...(message.urgent === true ? { requireInteraction: true } : {}),
   };
   // Open console pages hear of every push and how showing it went, for Settings, Notifications to report.
@@ -48,6 +48,8 @@ self.addEventListener("push", (event) => {
           return;
         }
       }
+      // One with the same tag would be replaced silently (Safari has no `renotify`); closing it first makes this one alert.
+      if (message.tag) for (const old of await self.registration.getNotifications({ tag: message.tag })) old.close();
       try {
         await self.registration.showNotification(title, full);
         await tell({ step: "shown" });
