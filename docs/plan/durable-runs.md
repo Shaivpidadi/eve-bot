@@ -315,7 +315,7 @@ connectors and backups, and open jobs are picked up by the watchdog there.
   not (live runs, the computer unless its backup is current), and the two commands.
 - **Done when:** the doc exists and the link check passes.
 
-## D3. Thin hands `[in-progress]`
+## D3. Thin hands `[done]` (D3.3 and D3.4 parked)
 
 The brain needs five things from a machine: run a command, move files,
 show a screen, drive a browser, hand a screen to a person. Today those are
@@ -374,13 +374,13 @@ commands.
 - **Files:** `agent/lib/hands/mac-ssh.ts`, `agent/lib/computer-config.ts`
   (`BOT_COMPUTER=mac-ssh`, `BOT_MAC_SSH=user@host`, `BOT_MAC_SSH_KEY`), a custom eve
   `SandboxBackend` in `agent/sandbox/mac.ts`, `docs/research/mac-hands.md` for the findings.
-- `[to-do]` D3.3.1 The backend: `create` opens an SSH control master with the `ssh` CLI (no
+- `[parked]` D3.3.1 The backend: `create` opens an SSH control master with the `ssh` CLI (no
   new dependency), `run` executes `bash -lc` under a per-run process group, files move with
   `cat` over the same connection; `/workspace` maps to `$HOME/eve-workspace`.
-- `[to-do]` D3.3.2 Capabilities: `screen: false, browser: false, handover: false, fence: "none"`.
+- `[parked]` D3.3.2 Capabilities: `screen: false, browser: false, handover: false, fence: "none"`.
   Without a fence the shell runs only with `BOT_SHELL_ISOLATION=off` semantics (every
   command gated), which the kind declares.
-- `[to-do]` D3.3.3 A job that needs no browser (a file transform, a script) finishes on the
+- `[parked]` D3.3.3 A job that needs no browser (a file transform, a script) finishes on the
   Mac; the computer backup takes and restores its archive under the new kind.
 - **Tests:** the contract test with `HANDS_MAC=user@host`; unit: SSH argument building,
   process-group kill.
@@ -392,7 +392,7 @@ commands.
 
 Parked with D3.3; the `Hands` interface (D3.1, D3.2) stays in place.
 
-- `[to-do]` D3.4.1 `docs/decisions/0003-hands.md`: the interface, the kinds, what a Mac
+- `[parked]` D3.4.1 `docs/decisions/0003-hands.md`: the interface, the kinds, what a Mac
   browser would need (Chrome over DevTools, a VNC screen, a macOS fence), and whether to
   do it.
 - **Done when:** the record is written and linked from the README's docs table.
@@ -428,7 +428,7 @@ Vercel, so this is a spike with a written answer, not a feature.
   Postgres for standalone, or wait for eve. If adopted, the setup script gains the option.
 - **Done when:** the decision is written and linked.
 
-## D5. Rewind `[in-progress]`
+## D5. Rewind `[done]`
 
 Beyond "continue from the last recorded step" (D1): a point in the job's
 journal a person can choose, with the computer's files put back as they
