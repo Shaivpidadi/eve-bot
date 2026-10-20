@@ -26,6 +26,9 @@ env:
 
 jobs:
   check:
+    # Only in the original: a Deploy-button copy is private, so every run would spend its owner's Actions minutes,
+    # and Vercel already builds each of its pushes.
+    if: github.repository == 'Shaivpidadi/eve-bot'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
