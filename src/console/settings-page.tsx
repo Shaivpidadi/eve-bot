@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 import { api, errorMessage, SignedOutError } from "./api";
 import { ModelsSection } from "./models-page";
+import { NotificationsSection } from "./notifications-section";
 import { Faint, PageBody, PageError, PageFrame, PageLoading, PageNote } from "./usage-page";
 
 /**
@@ -52,7 +53,7 @@ interface Report {
   readonly settings: readonly Setting[];
 }
 
-const AREAS = ["Spend", "Team computer", "Browser", "Memory & decisions", "Email", "Background work", "Team", "Data controls", "Updates", "Models"] as const;
+const AREAS = ["Spend", "Team computer", "Browser", "Memory & decisions", "Email", "Background work", "Team", "Data controls", "Updates", "Notifications", "Models"] as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
@@ -98,7 +99,7 @@ export function SettingsPage({ area, onArea, onClose }: { area: string | null; o
     }
   }, []);
 
-  const areas = useMemo(() => AREAS.filter((name) => name === "Models" || (report?.settings ?? []).some((setting) => setting.area === name)), [report]);
+  const areas = useMemo(() => AREAS.filter((name) => name === "Models" || name === "Notifications" || (report?.settings ?? []).some((setting) => setting.area === name)), [report]);
   const current = area !== null && (areas as readonly string[]).includes(area) ? area : (areas[0] ?? "Models");
 
   return (
@@ -119,7 +120,8 @@ export function SettingsPage({ area, onArea, onClose }: { area: string | null; o
           {areas.map((name) => (
             <TabsContent key={name} value={name}>
               {name === "Models" ? <ModelsSection /> : null}
-              {name === "Models" && !report.settings.some((setting) => setting.area === name) ? null : (
+              {name === "Notifications" ? <NotificationsSection /> : null}
+              {name === "Notifications" || (name === "Models" && !report.settings.some((setting) => setting.area === name)) ? null : (
                 <PageBody className="max-w-[760px]">
                   {report.owner || name === "Models" ? null : (
                     <PageNote>These are your workspace&apos;s settings. The rest of the deployment&apos;s are set by its owner.</PageNote>
