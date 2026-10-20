@@ -2,7 +2,7 @@ import { DELETE, GET, PATCH, POST, PUT, SessionStrandedError, defineChannel } fr
 import { parseInputResponses } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
 
-import { authenticate, sessionCookie, setStoredName, tokensConfigured, type Access, type Gate, workspaceForToken } from "../lib/access";
+import { authenticate, hasSignedInCookie, sessionCookie, setStoredName, signedInCookie, tokensConfigured, type Access, type Gate, workspaceForToken } from "../lib/access";
 import { record } from "../lib/activity";
 import { readArtifact } from "../lib/artifacts";
 import { buildBoard } from "../lib/board";
@@ -110,8 +110,11 @@ function policyPatch(value: unknown): Record<string, "read" | "write"> | null {
 }
 
 /** The console is the Next.js app; sign-in outcomes send the browser back to its pages. */
-const seeOther = (location: string, headers: Record<string, string> = {}) =>
-  new Response(null, { status: 303, headers: { location, ...headers } });
+const seeOther = (location: string, cookies: readonly string[] = []) => {
+  const headers = new Headers({ location });
+  for (const cookie of cookies) headers.append("set-cookie", cookie);
+  return new Response(null, { status: 303, headers });
+};
 
 /**
  * Moves a wedged room to a fresh session and lets go of the old one, bounded,
@@ -348,11 +351,11 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         token = "";
       }
       if (token === "" || workspaceForToken(token) === null) return seeOther("/bot/login?error=invalid");
-      return seeOther("/bot", { "set-cookie": sessionCookie(token, request) });
+      return seeOther("/bot", [sessionCookie(token, request), signedInCookie(true, request)]);
     }),
 
     POST("/bot/v1/session/end", async (request) =>
-      seeOther("/bot/login", { "set-cookie": sessionCookie(null, request) }),
+      seeOther("/bot/login", [sessionCookie(null, request), signedInCookie(false, request)]),
     ),
 
     /** Reaches the app only when nothing stands in front of it; see `lib/protection.ts`. */
@@ -393,7 +396,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const board = await buildBoard(gate.access.workspaceId, {
         ...(after !== null && !Number.isNaN(Date.parse(after)) ? { after } : {}),
       });
-      return json({ ...board, user: gate.access.user, profile: gate.access.profile });
+      const response = json({ ...board, user: gate.access.user, profile: gate.access.profile });
+      // Someone signed in before the home page knew to send them here gets the marker now (see signedInCookie).
+      if (!hasSignedInCookie(request)) response.headers.append("set-cookie", signedInCookie(true, request));
+      return response;
     }),
 
     /**

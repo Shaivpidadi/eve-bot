@@ -214,6 +214,21 @@ export async function authenticate(request: Request): Promise<Gate> {
   return { ok: true, access: await accessFor(request, workspaceId, developmentDefault()) };
 }
 
+/**
+ * A marker on the whole site that someone is signed in to the console, so the
+ * home page sends them straight to /bot (`src/proxy.ts`). It holds no token:
+ * the console cookie stays on /bot alone. Set and cleared with it.
+ */
+export const SIGNED_IN_COOKIE = "bot_signed_in";
+
+export function signedInCookie(on: boolean, request: Request): string {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `${SIGNED_IN_COOKIE}=${on ? "1" : ""}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${on ? COOKIE_MAX_AGE_S : 0}${secure}`;
+}
+
+/** Whether the request carries that marker. */
+export const hasSignedInCookie = (request: Request): boolean => new RegExp(`(?:^|;\\s*)${SIGNED_IN_COOKIE}=1(?:;|$)`).test(request.headers.get("cookie") ?? "");
+
 /** Sets the console cookie, or clears it when `token` is null. */
 export function sessionCookie(token: string | null, request: Request): string {
   const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
