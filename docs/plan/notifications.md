@@ -32,7 +32,7 @@ silence when there is not. eve-bot should do the same, without a third-party pus
 
 ## Phases
 
-### N1. The console installs as an app `[in-progress]`
+### N1. The console installs as an app `[done]`
 - A web app manifest for the console (`/bot/manifest.webmanifest`): name, icons (including maskable), `start_url`
   and `scope` `/bot`, standalone display, theme colors. Linked from the console only, with credentials, so a
   deployment behind Vercel Authentication can still be installed.
@@ -42,21 +42,28 @@ silence when there is not. eve-bot should do the same, without a third-party pus
 - "Install the app" in the sidebar's footer where the browser offers it (`beforeinstallprompt`), and on iPhone
   Safari a short how-to (Share → Add to Home Screen). Dismissible; never shown inside the installed app.
 - **Done when:** the console installs from Chrome on macOS and from Safari on iPhone, opens in its own window at
-  `/bot`, and signs in.
+  `/bot`, and signs in. Installed and signed in on iPhone, 20 Oct.
 
-### N2. Push basics `[to-do]`
+### N2. Push basics `[done]`
 - VAPID keys made once and sealed in the store; the public key served to the console.
 - Subscribe and unsubscribe from the console; subscriptions stored per person and workspace
   (`push/<ws>/<id>.json`), dropped when a push service answers 404 or 410.
 - Sending through the durable outbox, so a push survives a function ending and is retried.
 - The service worker shows the notification and, on click, focuses an open console or opens one at the link.
-- "Send a test" in Settings.
+- "Send a test" in Settings, and "Show one here" (a notification made on the device alone), with a line saying what
+  became of the test: shown, arrived but not shown, or never arrived.
+- Checked 20 Oct: a test push arrived on iPhone (installed app). Chrome on the owner's Mac shows local notifications
+  but not pushed ones, while headless Chrome on the same Mac receives and shows them: open, see the diagnostic line.
 
-### N3. Needs you and Done `[to-do]`
+### N3. Needs you and Done `[in-progress]`
 - Rules on `record()` (`agent/lib/activity.ts`), the one place every event passes: `input.requested`, approvals,
   `job.blocked`, budget stops, `job.done` (with the files it made), `job.failed` for good.
 - Deep links to the approval, job or thread; a tag per job, so a newer push replaces an older one.
 - Skipped when a focused console tab already shows it; held in quiet hours unless it needs the person.
+- As built: rules in `agent/lib/notify.ts`, called from `record()` for four kinds only; a job a person sent back
+  themselves, a failed turn and steps never notify; the same push within 30 seconds goes once; "skipped when looking"
+  is decided in the service worker (Chrome only; Safari always shows, as it revokes push for silent ones); links are
+  `/bot?thread=<id>`. Checked live 20 Oct: a recorded "needs you" event was shown by a subscribed browser.
 
 ### N4. Proactive `[to-do]`
 - A `notify` tool for HQ and Bots: title, body, link, and a key so the same news is sent once.

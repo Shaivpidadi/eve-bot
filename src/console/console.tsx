@@ -95,7 +95,16 @@ const hashFor = (page: Page, item: string | null) => (item === null ? `#${page}`
 
 export function Console() {
   const { board, online, refresh } = useBoard();
-  const [selectedId, setSelectedId] = useState(() => read("bot.selected") ?? HQ_ID);
+  // A notification opens a thread by `?thread=<id>` (see agent/lib/notify.ts); otherwise the last one open.
+  const [selectedId, setSelectedId] = useState(() => new URLSearchParams(window.location.search).get("thread") ?? read("bot.selected") ?? HQ_ID);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("thread")) return;
+    write("bot.selected", selectedId);
+    url.searchParams.delete("thread");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    // Only the address the console opened with carries one.
+  }, []);
   const [panelOpen, setPanelOpen] = useState(
     () => (read("bot.panel") ?? (window.innerWidth > 1080 ? "open" : "closed")) === "open",
   );

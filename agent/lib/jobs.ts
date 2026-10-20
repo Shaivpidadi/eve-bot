@@ -1012,6 +1012,8 @@ export async function sendBack(
       botId: job.botId,
       jobId,
       text: `Sent back "${job.title}" for changes: ${note}`,
+      // The person did this themselves; nothing to notify them of (see notify.ts).
+      data: { sentBack: true },
     });
   }
   return job;

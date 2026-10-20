@@ -38,6 +38,8 @@ export interface PushMessage {
   readonly tag?: string;
   /** Needs the person now: delivered at once even to a device saving battery. */
   readonly urgent?: boolean;
+  /** A test from Settings: shown even to someone looking at the console. */
+  readonly test?: boolean;
 }
 
 export interface Subscription {
@@ -208,6 +210,17 @@ async function queue(workspaceId: string, subscriptionId: string, message: PushM
   await writeDoc(queuedKey(workspaceId, id), item).catch(() => undefined);
 }
 
+/** Keeps `message` for every device in the workspace until `until` (the end of quiet hours), when the queue sends it. */
+export async function holdPush(workspaceId: string, message: PushMessage, until: Date): Promise<number> {
+  const held = await subscriptions(workspaceId);
+  for (const subscription of held) {
+    const id = `${subscription.id}-${createHash("sha256").update(JSON.stringify(message)).digest("hex").slice(0, 12)}`;
+    const item: Queued = { id, workspaceId, subscriptionId: subscription.id, message, attempts: 0, nextAt: until.toISOString(), at: new Date().toISOString() };
+    await writeDoc(queuedKey(workspaceId, id), item).catch(() => undefined);
+  }
+  return held.length;
+}
+
 /**
  * How often a server looks at the retry queue: the console's poll calls this
  * every few seconds, and each look is a billed store listing.
@@ -225,8 +238,8 @@ export async function flushPushQueue(options: { readonly send?: Send; readonly n
   for (const item of await listDocs<Queued>("push-queue/")) {
     if (Date.parse(item.nextAt) > now) continue;
     await deleteDoc(queuedKey(item.workspaceId, item.id)).catch(() => undefined);
-    // Not worth seeing any more once the push service would have dropped it too.
-    if (now - Date.parse(item.at) > TTL_SECONDS * 1000) continue;
+    // Not worth seeing any more once the push service would have dropped it too (counted from when it was due).
+    if (now - Date.parse(item.nextAt) > TTL_SECONDS * 1000) continue;
     const subscription = (await readDoc<Subscription>(subscriptionKey(item.workspaceId, item.subscriptionId)))?.value ?? null;
     if (subscription === null) continue;
     const outcome = await sendOne(subscription, item.message, send);

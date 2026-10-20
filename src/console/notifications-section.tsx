@@ -96,6 +96,7 @@ export function NotificationsSection() {
       if (!isRecord(data) || data.type !== "bot-push") return;
       const at = new Date().toLocaleTimeString();
       if (data.step === "received") setHeard(`A push arrived at ${at}…`);
+      else if (data.step === "skipped") setHeard(`A push arrived at ${at}; not shown, as you are looking at the console.`);
       else if (data.step === "shown") setHeard(`A push arrived and was shown at ${at}.${typeof data.plain === "string" ? ` (Plainly: ${data.plain})` : ""}`);
       else setHeard(`A push arrived at ${at} but could not be shown: ${typeof data.error === "string" ? data.error : "unknown"}`);
     };

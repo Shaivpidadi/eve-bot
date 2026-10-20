@@ -34,10 +34,20 @@ self.addEventListener("push", (event) => {
     const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const client of open) client.postMessage({ type: "bot-push", tag: message.tag || null, ...report });
   };
+  // Safari (on iPhone, iPad and the Mac) takes away push from a site whose pushes show nothing.
+  const safari = /Safari\//.test(self.navigator.userAgent) && !/Chrome|Chromium|Edg\//.test(self.navigator.userAgent);
   // A browser that rejects one of the options still shows the plain notification.
   event.waitUntil(
     (async () => {
       await tell({ step: "received" });
+      // Someone looking at the console already sees a finished job there; only what needs them interrupts.
+      if (message.urgent !== true && message.test !== true && !safari) {
+        const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        if (open.some((client) => client.focused && client.visibilityState === "visible" && new URL(client.url).pathname.startsWith("/bot"))) {
+          await tell({ step: "skipped" });
+          return;
+        }
+      }
       try {
         await self.registration.showNotification(title, full);
         await tell({ step: "shown" });

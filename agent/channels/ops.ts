@@ -1030,7 +1030,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (!gate.ok) return denied(gate);
       const result = await sendPush(
         gate.access.workspaceId,
-        { title: "EVE Bot", body: "Notifications work on this device. A Bot will reach you here when it needs you.", url: "/bot", tag: "test" },
+        { title: "EVE Bot", body: "Notifications work on this device. A Bot will reach you here when it needs you.", url: "/bot", tag: "test", test: true },
         { person: gate.access.user },
       );
       return json(result);

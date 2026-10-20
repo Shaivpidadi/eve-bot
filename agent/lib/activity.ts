@@ -1,4 +1,5 @@
 import { newId, timeKey } from "./ids";
+import { NOTIFYING } from "./notify";
 import { readDoc, store, writeDoc } from "./store";
 import type { ActivityEvent, ActivityKind } from "./types";
 import { liveEnv } from "./settings/store";
@@ -54,6 +55,9 @@ export async function record(input: {
   const writes = (writesSincePrune.get(input.workspaceId) ?? 0) + 1;
   writesSincePrune.set(input.workspaceId, writes >= PRUNE_EVERY ? 0 : writes);
   if (writes >= PRUNE_EVERY) await pruneActivity(input.workspaceId, retain());
+
+  // A Bot that needs someone, or a job that ended, reaches their devices (see notify.ts); never fails the event.
+  if (NOTIFYING.has(event.kind)) await import("./notify").then(({ notifyFor }) => notifyFor(event)).catch(() => undefined);
 
   return event;
 }
