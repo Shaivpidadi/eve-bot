@@ -39,7 +39,7 @@ import { posterUrl } from "./computer/browser-app";
 import { bytes, clock, PRESENCE_LABEL, scheduleText, shortWhen, withoutEmoji } from "./format";
 import { RoutineDialog } from "./routine-dialog";
 import type { ActivityEvent, Hover, Member, Routine } from "./types";
-import { modelsOf, tokens, usd } from "../../agent/lib/usage-format";
+import { modelsOf, tokens, tokensReported, usd } from "../../agent/lib/usage-format";
 import type { Engine } from "../../agent/lib/engines";
 
 /**
@@ -57,10 +57,16 @@ function UsageSection({ member }: { member: Member }) {
         <ListRow icon={DotIcon} title={models.length === 0 ? "Model not reported" : models.length === 1 ? models[0]![0] : `${models.length} models`}>
           {models.length > 1 ? models.map(([model, steps]) => `${model} ×${steps}`).join(" · ") : `${usage.steps} model ${usage.steps === 1 ? "step" : "steps"}`}
         </ListRow>
-        <ListRow icon={DotIcon} title={`${tokens(usage.inputTokens)} in · ${tokens(usage.outputTokens)} out`}>
-          {usage.cacheReadTokens > 0 ? `${tokens(usage.cacheReadTokens)} read from cache` : "no cache reads"}
-          {(usage.cacheWriteTokens ?? 0) > 0 ? ` · ${tokens(usage.cacheWriteTokens ?? 0)} written` : ""}
-        </ListRow>
+        {tokensReported(usage) ? (
+          <ListRow icon={DotIcon} title={`${tokens(usage.inputTokens)} in · ${tokens(usage.outputTokens)} out`}>
+            {usage.cacheReadTokens > 0 ? `${tokens(usage.cacheReadTokens)} read from cache` : "no cache reads"}
+            {(usage.cacheWriteTokens ?? 0) > 0 ? ` · ${tokens(usage.cacheWriteTokens ?? 0)} written` : ""}
+          </ListRow>
+        ) : (
+          <ListRow icon={DotIcon} title="Tokens not reported">
+            Claude Code and Codex report each call&apos;s cost, not its tokens
+          </ListRow>
+        )}
         <ListRow icon={DotIcon} title={usd(usage.costUsd)}>
           {usage.costUsd === 0 && usage.steps > 0 ? "provider reported no cost; set model prices in Settings, Spend, on a custom endpoint" : `as ${modelsOf(usage) ?? "the provider"} priced it`}
         </ListRow>
