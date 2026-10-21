@@ -241,6 +241,21 @@ export class RoomStore {
 
   getSnapshot = (): RoomSnapshot => this.snapshot;
 
+  /** Whether this thread's session has been asked for ahead of its first message. */
+  private prewarmed = false;
+
+  /**
+   * The person started typing in a thread with no session yet: the server gets
+   * one ready (`POST …/prewarm`), so the durable run is up by the time they
+   * send. Once per thread until it is started over; best effort, since the
+   * first message makes the session anyway.
+   */
+  prewarm(): void {
+    if (this.prewarmed || this.sessionId !== null) return;
+    this.prewarmed = true;
+    void api(`/bot/v1/rooms/${encodeURIComponent(this.room)}/prewarm`, { method: "POST" }).catch(() => undefined);
+  }
+
   async send(message: string): Promise<boolean> {
     this.optimistic.push(message);
     this.loaded = true;
@@ -455,6 +470,7 @@ export class RoomStore {
   restart(): void {
     // The current follower is on the old session's stream; drop it before reading again.
     this.controller?.abort();
+    this.prewarmed = false;
     this.controller = null;
     this.following = false;
     this.reset();

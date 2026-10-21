@@ -531,6 +531,30 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /**
+     * Gets the room's session ready while the person is still typing its first
+     * message (eve's `create()`): the durable run and its inbox are up by the
+     * time the message is sent, so a new or started-over thread answers sooner.
+     * It runs no turn, and everything a session does when it starts (the
+     * thread's history, a branch's conversation) still happens with the first
+     * message. A room that already has a session is left as it is. Best effort:
+     * a room it cannot prepare is prepared by its first message, as before.
+     */
+    POST("/bot/v1/rooms/:room/prewarm", async (request, { from, params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const room = await resolveRoom(gate.access, params.room);
+      if (room instanceof Response) return room;
+      try {
+        const { created, session } = await from(await addressOf(gate.access.workspaceId, room)).create({ auth: principal(gate.access, room) });
+        return json({ room, sessionId: session.id, created });
+      } catch (error) {
+        // A stranded or vanished owner: the first message moves the room to a fresh session, as it always has.
+        if (SessionStrandedError.is(error) || sessionIsGone(error)) return json({ room, sessionId: null, created: false });
+        throw error;
+      }
+    }),
+
+    /**
      * The watchdog, pulled by the console: the thread accepted a message and
      * never started a turn. Moves the room to a fresh session, keeps what the
      * person saw, and sends the message again. Refused while the thread is
