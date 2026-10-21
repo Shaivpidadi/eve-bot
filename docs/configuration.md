@@ -153,6 +153,8 @@ built, what is not, and what the live checks showed.
 | `BOT_ENGINES` | `claude-code`, `codex`, or both (`claude-code,codex`) turns those engines on for this deployment. Read at build: unset (the default), the build is exactly as without the feature |
 | `BOT_CLAUDE_CODE_MODEL` | the AI Gateway model a Claude Code Bot runs on (an `anthropic/…` model); the library's default when unset |
 | `BOT_CODEX_MODEL` | the AI Gateway model a Codex Bot runs on (one that speaks OpenAI's Responses API); `openai/gpt-5.4-mini` when unset |
+| `BOT_ENGINE_BUILTINS` | `1` gives these Bots the CLI's own tools: a shell and file editing (Claude Code's Bash, Read, Edit and Write, never WebFetch; Codex's shell and `apply_patch`), in the job's Sandbox on its own scratch Drive. Off when unset |
+| `BOT_ENGINE_NETWORK` | the Sandbox's outbound network: unset is none at all, `allow-all` is everything, a comma list of domains (`registry.npmjs.org,*.github.com`) is only those. Model calls never need it |
 
 **Billing.** Both engines make their model calls through AI Gateway, with the
 same `AI_GATEWAY_API_KEY` (or OIDC token) eve uses, so they are billed as
@@ -163,10 +165,15 @@ by Vercel as Sandbox time and storage.
 
 What such a Bot gets, and does not:
 
-- Its own Vercel Sandbox for each job, with no network at all, deleted when the
-  job ends. Not the team's computer: no browser, no shared files.
-- Three tools only: read the job, log a step, record the result. No shell,
-  no file editing, no email, no connectors yet.
+- Its own Vercel Sandbox for each job, with no network unless
+  `BOT_ENGINE_NETWORK` opens it, deleted when the job ends. Not the team's
+  computer: no browser, no shared files.
+- Its tools: read the job, log a step, record the result, and propose an
+  email, which a person approves or declines in the Bot's thread before
+  eve-bot sends it, once. A shell and file editing only with
+  `BOT_ENGINE_BUILTINS=1`; each such call is logged before it runs and never
+  re-run after a crash, and Claude Code runs its commands under bubblewrap in
+  the VM (a turn fails if that cannot start).
 - The job's spend limit (`BOT_JOB_COST_LIMIT_USD`) as a cap the session itself
   enforces, and the workspace budget checked at every look at the job (about
   every 20 seconds): its spend is read from the session's log, charged to the

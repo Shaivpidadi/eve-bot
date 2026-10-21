@@ -18,7 +18,7 @@ import type { ClaudeCodeOptions } from "durable-harness/claude-code";
 import type { SandboxOptions, SandboxWorkspace } from "durable-harness/sandbox";
 import type { HostTool } from "durable-harness/tools";
 
-import { HARNESS_INSTRUCTIONS, harnessSandbox } from "./harness-options";
+import { harnessBuiltins, harnessInstructions, harnessSandbox } from "./harness-options";
 import { HOST_TOOLS } from "./host-tools";
 
 /** The agent's kernel name: its sessions' runs are named after it, so it must never change. */
@@ -36,12 +36,20 @@ export function claudeCodeOptions(
   return {
     name: CLAUDE_CODE_AGENT_NAME,
     ...(model ? { model } : {}),
-    instructions: HARNESS_INSTRUCTIONS,
+    instructions: harnessInstructions(env),
     tools: HOST_TOOLS as unknown as HostTool[],
-    builtins: false,
+    builtins: harnessBuiltins(env) ? CLAUDE_CODE_BUILTINS : false,
     workspace: sandbox({ ...harnessSandbox(env), env: TRACE_ENV }),
   };
 }
+
+/**
+ * Claude Code's own tools with `BOT_ENGINE_BUILTINS=1`: the library's pinned
+ * set without NotebookEdit and WebFetch. A page WebFetch reads is the likeliest
+ * way in for a prompt injection, and the shell already reaches what the
+ * owner's network allows.
+ */
+export const CLAUDE_CODE_BUILTINS: readonly string[] = ["Bash", "Read", "Edit", "Write"];
 
 /**
  * Set, empty, for the CLI. Inside eve a trace is always active, and Claude's

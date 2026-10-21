@@ -65,6 +65,31 @@ describe("a Claude Code session's settings", () => {
   });
 });
 
+describe("the CLI's own tools and the VM's network", () => {
+  it("stay off and shut unless the owner opens them", async () => {
+    const { harnessBuiltins, harnessNetwork, harnessInstructions } = await import("../agent/lib/engines/harness-options");
+    expect(harnessBuiltins({})).toBe(false);
+    expect(harnessBuiltins({ BOT_ENGINE_BUILTINS: "1" })).toBe(true);
+    expect(harnessNetwork({})).toBe("deny-all");
+    expect(harnessNetwork({ BOT_ENGINE_NETWORK: "allow-all" })).toBe("allow-all");
+    expect(harnessNetwork({ BOT_ENGINE_NETWORK: "registry.npmjs.org, *.GitHub.com, not a domain" })).toEqual({ allow: ["registry.npmjs.org", "*.github.com"] });
+    expect(harnessNetwork({ BOT_ENGINE_NETWORK: "nonsense" })).toBe("deny-all");
+    expect(harnessInstructions({})).toMatch(/no shell, no files and no network/);
+    expect(harnessInstructions({ BOT_ENGINE_BUILTINS: "1", BOT_ENGINE_NETWORK: "registry.npmjs.org" })).toMatch(/shell and file tools .* network to registry\.npmjs\.org only/);
+  });
+
+  it("reach both engines' agents", async () => {
+    const { claudeCodeOptions } = await import("../agent/lib/engines/claude-code");
+    const { codexOptions } = await import("../agent/lib/engines/codex");
+    const sandbox = vi.fn((options: unknown) => ({ kind: "sandbox", options }) as never);
+    const env = { BOT_ENGINE_BUILTINS: "1", BOT_ENGINE_NETWORK: "registry.npmjs.org" };
+    expect(claudeCodeOptions(sandbox, env).builtins).toEqual(["Bash", "Read", "Edit", "Write"]);
+    expect(codexOptions(sandbox, env).builtins).toBe(true);
+    expect(codexOptions(sandbox, {}).builtins).toBe(false);
+    expect(sandbox).toHaveBeenCalledWith(expect.objectContaining({ network: { allow: ["registry.npmjs.org"] } }));
+  });
+});
+
 describe("a Claude Code Bot's brief", () => {
   it("carries the job and the working agreement, but never the run token", async () => {
     const { renderHarnessBrief } = await import("../agent/lib/engines/brief");

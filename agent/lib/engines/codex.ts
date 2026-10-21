@@ -13,7 +13,7 @@ import type { CodexOptions } from "durable-harness/codex";
 import type { SandboxOptions, SandboxWorkspace } from "durable-harness/sandbox";
 import type { HostTool } from "durable-harness/tools";
 
-import { HARNESS_INSTRUCTIONS, harnessSandbox } from "./harness-options";
+import { harnessBuiltins, harnessInstructions, harnessSandbox } from "./harness-options";
 import { HOST_TOOLS } from "./host-tools";
 
 /** The agent's kernel name: its sessions' runs are named after it, so it must never change. */
@@ -28,9 +28,9 @@ export function codexOptions(
   return {
     name: CODEX_AGENT_NAME,
     model: env.BOT_CODEX_MODEL?.trim() || DEFAULT_CODEX_MODEL,
-    instructions: HARNESS_INSTRUCTIONS,
+    instructions: harnessInstructions(env),
     tools: HOST_TOOLS as unknown as HostTool[],
-    builtins: false,
+    builtins: harnessBuiltins(env),
     workspace: sandbox(harnessSandbox(env)),
   };
 }
