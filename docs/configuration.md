@@ -138,6 +138,35 @@ paid option: $30 buys $80 of usage on the models it covers.
 | `BOT_QA` | `1` opens the QA suite's fault routes (crash a job's run, replace the computer) on this deployment; leave unset in production |
 | `BOT_STANDUP_CRON` / `BOT_STANDUP_ROOM` | when the daily standup runs (`0 13 * * 1-5`, in UTC) and where it posts: HQ's `desk` by default, or a Bot's room (`bot-<id>`) |
 
+## Bots on Claude Code (experimental, off)
+
+A Bot can run its jobs on Claude Code instead of eve, through Vercel's
+`durable-harness`. This is an experiment, off unless the owner turns it on, and
+not ready for production: see `docs/plan/harness-engines.md` for what is built,
+what is not, and what has not been tested against a live Sandbox yet.
+
+| Variable | Does |
+| --- | --- |
+| `BOT_ENGINES` | `claude-code` turns the engine on for this deployment. Read at build: with it unset (the default) the build is exactly as without the feature. Then HQ can move a Bot to it (`update_bot`, owner's workspace only) |
+| `BOT_CLAUDE_CODE_MODEL` | the AI Gateway model a Claude Code Bot runs on; the library's default when unset |
+
+What a Claude Code Bot gets, and does not:
+
+- Its own Vercel Sandbox for each job, with no network at all, deleted when the
+  job ends. Not the team's computer: no browser, no shared files.
+- Three tools only: read the job, log a step, record the result. No shell,
+  no file editing, no email, no connectors yet.
+- A spend cap per job at `BOT_JOB_COST_LIMIT_USD`, enforced by the session.
+  Its spend does not show on the Usage page yet, and only one such job runs
+  at a time in a workspace.
+- Refused where it would drop a data control: with `BOT_ZDR` or
+  `BOT_INFERENCE_REGION` set, or on your own model endpoint
+  (`BOT_MODEL_BASE_URL`).
+
+Each job also costs Sandbox time and Drive storage on the Vercel account, on
+top of the model. On Hobby, Sandbox usage counts against the same quota as
+the team's computer.
+
 ## Observability: Vercel Agent Runs
 
 On a Vercel deployment, every HQ, Bot and job session appears in **Agent
