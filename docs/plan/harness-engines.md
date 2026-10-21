@@ -190,19 +190,32 @@ The day estimates are guesses, not measurements.
 - **H1 done**, plus Codex (**H4 done**): `BOT_ENGINES=claude-code,codex`, one agent per engine, spend read from each
   engine's own stream (`hw.spend`, `codex.spend`) and charged at every look, with the run stopped when the budget
   halts it (the one-at-a-time stopgap is gone).
-- **H2: email done, connectors not.** `send_email` proposes through the ledger, keeps the draft beside it, pushes
-  "needs you", and shows a card in the Bot's thread; approving sends it once through the eve Bot's own path
-  (`lib/email-send.ts`) after checking the draft's hash and that the job was not cancelled; the session hears the
-  answer while it is the job's run. Connector writes as gated HostTools are still to do: they need an MCP client in
-  the Function and the connector gate's policy, which only eve's connection layer has today.
-- **H3 in part.** Done: the engine choice when hiring (eve by default) and on the profile, the board's engines, the
-  proposal card, spend on the job card and the Usage page. Not done: the thread from `liveEntries` (a harness job
-  shows its logged steps and result, as an eve job's card does, but not the model's text as it streams), and an
-  Agent Runs link (its URL is not documented).
+- **H2 done.** `send_email` proposes through the ledger, keeps the draft beside it, pushes "needs you", and shows a
+  card in the Bot's thread; approving sends it once through the eve Bot's own path (`lib/email-send.ts`) after
+  checking the draft's hash and that the job was not cancelled; the session hears the answer while it is the job's
+  run. Connectors (`lib/engines/connector-calls.ts`) work the same way: `connector_tools` lists them,
+  `connector_read` (safe) runs a read the gate lets through, and `connector_change` (never) proposes whatever the
+  gate would ask about, as a card that eve-bot carries out once, exactly as shown, when a person approves. The gate's
+  rules moved to a module free of eve's connection code (`lib/connector-gate.ts`), so both kinds of Bot decide alike,
+  from the live record on every call; the calls go out from the Function with the record's own credentials. An
+  approval is refused once the connector's settings changed since the ask. Under the "all" gate every call asks:
+  such a Bot has no eve session for a first-use approval to last in. Tested against a stand-in MCP server; not yet
+  against a real one.
+- **H3 done.** The engine choice when hiring (eve by default) and on the profile, the board's engines, the proposal
+  card, spend on the job card and the Usage page (a cost and "tokens not reported", since the engines report no
+  tokens), and the model's own words in the Bot's thread: each look at the session (about every 20 seconds) reads
+  the text it wrote from the live stream and puts it in the thread once, as one message (seen live on Codex, Oct 21:
+  two jobs, $0.007 each; the first showed a look's stretches shuffled, now one message). Sessions are traced to
+  Vercel Agent Runs, metadata only, once per process where the queue route runs on Vercel, and the profile links to
+  the project's Agent Runs (Vercel documents no link to one session).
+- **Built-ins, as an owner opt-in.** `BOT_ENGINE_BUILTINS=1` turns on Claude Code's Bash, Read, Edit and Write
+  (never WebFetch) or Codex's shell and `apply_patch`; `BOT_ENGINE_NETWORK` opens the VM's network (`allow-all`, or
+  a list of domains). Both off by default, so decision 3 stays the owner's.
 - **H5 done as docs.** A deployment cannot tell its plan, so engines are not refused on Hobby by code; the docs say
   to leave `BOT_ENGINES` unset there.
-- **Still unverified:** a deployment on Vercel with `BOT_ENGINES` on (the queue route through Vercel World, and the
-  build's function sizes). It needs a deployment of this branch, which needs a push.
+- **Still unverified:** a deployment on Vercel with `BOT_ENGINES` on (the queue route through Vercel World, the
+  build's function sizes, Agent Runs traces), built-ins live, and connectors against a real server. The first needs
+  a deployment of this branch, which needs a push.
 
 ## 7. Decisions for Shaishav
 
