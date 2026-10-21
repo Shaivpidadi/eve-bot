@@ -3,9 +3,12 @@
  * built-ins, plan section 4.3), served by durable-harness as an MCP server in
  * the Function, never in the Sandbox.
  *
- * Four tools: the three a job cannot do without (read the job, log a step,
- * record the result), and `send_email`, which never sends: it asks a person,
- * and eve-bot sends it once they approve (`./proposals`). Each one is fenced the way the teammate's
+ * The three a job cannot do without (read the job, log a step, record the
+ * result); `send_email`, which never sends: it asks a person, and eve-bot
+ * sends it once they approve (`./proposals`); and the team's connectors
+ * (`./connector-calls`): list them, read through them, and change something
+ * through them, which asks a person wherever the connector's gate would ask
+ * for an eve Bot. Each one is fenced the way the teammate's
  * are: the session is the job's run only while the job's lease names it
  * (`run_job` binds the two when it starts the session), so a session that
  * was cancelled, or outlived its lease, writes nothing.
@@ -14,10 +17,12 @@
  * config, written by `run_job` when it started the session, never from the
  * model: a model cannot point these tools at another job.
  *
- * Replay, as durable-harness asks every tool to declare it: `job_brief` and
- * `log_progress` are safe to run twice (a repeated journal line is dropped by
- * `appended`), `finish_job` and `send_email` run at most once (and a second
- * `send_email` of the same email in the run is the same proposal anyway).
+ * Replay, as durable-harness asks every tool to declare it: `job_brief`,
+ * `log_progress`, `connector_tools` and `connector_read` are safe to run
+ * twice (a repeated journal line is dropped by `appended`; a read changes
+ * nothing), `finish_job`, `send_email` and `connector_change` run at most once
+ * (and a second ask for the same action in the run is the same proposal
+ * anyway).
  *
  * Nothing here imports durable-harness: these are plain objects in its
  * `HostTool` shape, so they load (and are tested) without it.
@@ -235,5 +240,130 @@ export const sendEmail: HarnessTool = {
   },
 };
 
+const ConnectorToolsInput = z.object({
+  connector: z.string().max(80).optional().describe("A connector's name, for its tools' descriptions and inputs. Leave it out to list the connectors."),
+});
+
+const ConnectorCallInput = z.object({
+  connector: z.string().min(1).max(80).describe("The connector's name, from connector_tools."),
+  tool: z.string().min(1).max(120).describe("The tool's name, from connector_tools."),
+  arguments: z.record(z.string(), z.unknown()).describe("The tool's input, as its inputSchema says."),
+});
+
+/** The run check every connector tool makes first, and the job it is for. */
+async function connectorRun(io: HarnessToolIO) {
+  const config = sessionConfigOf(io.ctx.config);
+  if (config === null) return { ok: false as const, message: NotBound };
+  const check = await checkRun(config.workspaceId, config.jobId, io.ctx.runId);
+  if (!check.ok) return { ok: false as const, message: answer({ ok: false, message: describeRunRefusal(check.reason, config.jobId) }) };
+  return { ok: true as const, workspaceId: config.workspaceId, job: check.job };
+}
+
+export const connectorTools: HarnessTool = {
+  name: "connector_tools",
+  label: "See the connectors",
+  description:
+    "List the team's connectors (apps such as an issue tracker or a calendar) and the tools you may use on each, whether each one reads or changes something, and when a person is asked. Name a connector to get its tools' descriptions and input schemas.",
+  inputSchema: schema(ConnectorToolsInput),
+  replay: "safe",
+  async execute(input, io) {
+    const run = await connectorRun(io);
+    if (!run.ok) return run.message;
+    const parsed = ConnectorToolsInput.safeParse(input);
+    if (!parsed.success) return answer({ ok: false, message: parsed.error.issues.map((issue) => issue.message).join("; ") });
+    const calls = await import("./connector-calls");
+    if (parsed.data.connector === undefined) {
+      const connectors = await calls.connectorsFor(run.workspaceId);
+      return answer({ ok: true, connectors, ...(connectors.length === 0 ? { message: "No connectors are set up for this team." } : {}) });
+    }
+    const live = await calls.findConnector(run.workspaceId, parsed.data.connector);
+    if (live === null || !live.enabled) return answer({ ok: false, message: `No connector "${parsed.data.connector}" is on. Call connector_tools with no connector to list them.` });
+    try {
+      return answer({ ok: true, connector: live.name, tools: await calls.toolsOf(live) });
+    } catch (error) {
+      return answer({ ok: false, message: `${live.label} did not answer: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  },
+};
+
+export const connectorRead: HarnessTool = {
+  name: "connector_read",
+  label: "Read through a connector",
+  description:
+    "Call a connector tool that only reads (its effect is \"read\" in connector_tools), and get its answer. For anything that changes something, or on a connector that asks before every call, use connector_change.",
+  inputSchema: schema(ConnectorCallInput),
+  replay: "safe",
+  async execute(input, io) {
+    const run = await connectorRun(io);
+    if (!run.ok) return run.message;
+    const parsed = ConnectorCallInput.safeParse(input);
+    if (!parsed.success) return answer({ ok: false, message: parsed.error.issues.map((issue) => issue.message).join("; ") });
+    const calls = await import("./connector-calls");
+    const live = await calls.findConnector(run.workspaceId, parsed.data.connector);
+    const decision = calls.decide(live, parsed.data.tool);
+    if (decision.kind === "refuse") return answer({ ok: false, message: decision.reason });
+    if (decision.kind === "ask" || decision.effect !== "read") {
+      return answer({ ok: false, message: `${parsed.data.tool} is not a read this connector runs unasked. Use connector_change; a person is asked when the connector says so.` });
+    }
+    try {
+      const result = await calls.callTool(live!, parsed.data.tool, parsed.data.arguments);
+      return answer({ ok: !result.isError, result: result.text });
+    } catch (error) {
+      return answer({ ok: false, message: `${live!.label} did not answer: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  },
+};
+
+export const connectorChange: HarnessTool = {
+  name: "connector_change",
+  label: "Change something through a connector",
+  description:
+    "Call a connector tool that changes something (or any tool on a connector that asks before every call). Where the connector asks a person first, this never calls it: the person sees the exact call and approves or declines, and eve-bot makes it once they approve; you hear back with its answer. Otherwise it is called now. Call it once per change.",
+  inputSchema: schema(ConnectorCallInput),
+  replay: "never",
+  async execute(input, io) {
+    const run = await connectorRun(io);
+    if (!run.ok) return run.message;
+    const parsed = ConnectorCallInput.safeParse(input);
+    if (!parsed.success) return answer({ ok: false, message: parsed.error.issues.map((issue) => issue.message).join("; ") });
+    const calls = await import("./connector-calls");
+    const live = await calls.findConnector(run.workspaceId, parsed.data.connector);
+    const decision = calls.decide(live, parsed.data.tool);
+    if (decision.kind === "refuse" || live === null) return answer({ ok: false, message: decision.kind === "refuse" ? decision.reason : "No such connector." });
+    if (decision.kind === "go") {
+      // The connector asks nobody: called now, and this tool never runs twice.
+      try {
+        const result = await calls.callTool(live, parsed.data.tool, parsed.data.arguments);
+        await record({ workspaceId: run.workspaceId, kind: "job.progress", botId: run.job.botId, jobId: run.job.id, text: `Ran ${live.label} ${parsed.data.tool}.` });
+        return answer({ ok: !result.isError, status: result.isError ? "failed" : "done", result: result.text });
+      } catch (error) {
+        return answer({ ok: false, status: "unknown", message: `${live.label} gave no clear answer, so it may or may not have run: ${error instanceof Error ? error.message : String(error)}. Check before trying again.` });
+      }
+    }
+    const { permissionVersion } = await import("../connectors");
+    const { proposeConnectorCall } = await import("./proposals");
+    const proposed = await proposeConnectorCall({
+      workspaceId: run.workspaceId,
+      jobId: run.job.id,
+      botId: run.job.botId,
+      runToken: run.job.lease?.token ?? io.ctx.runId,
+      sessionId: io.ctx.runId,
+      requester: run.job.requestedBy,
+      payload: { connectorId: live.id, connector: live.name, label: live.label, tool: parsed.data.tool, arguments: parsed.data.arguments, jobId: run.job.id },
+      permissionVersion: permissionVersion(live),
+    });
+    if (proposed.decided !== null) {
+      return answer({ ok: true, status: proposed.decided.outcome, message: `A person already ${proposed.decided.outcome === "approved" ? "approved" : "declined"} this exact call. Do not ask for it again.` });
+    }
+    return answer({
+      ok: true,
+      status: "awaiting_approval",
+      actionId: proposed.actionId,
+      message:
+        "A person was asked. If they approve, eve-bot makes this call exactly as written and you hear its answer. Do not ask for it again, and never make it any other way. Carry on; if you finish first, say in your result that it is waiting for approval.",
+    });
+  },
+};
+
 /** Every tool a Claude Code or Codex Bot has. */
-export const HOST_TOOLS: readonly HarnessTool[] = [jobBrief, logProgress, finishJob, sendEmail];
+export const HOST_TOOLS: readonly HarnessTool[] = [jobBrief, logProgress, finishJob, sendEmail, connectorTools, connectorRead, connectorChange];

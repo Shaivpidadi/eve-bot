@@ -59,6 +59,9 @@ describe("a Claude Code session's settings", () => {
       ["log_progress", "safe"],
       ["finish_job", "never"],
       ["send_email", "never"],
+      ["connector_tools", "safe"],
+      ["connector_read", "safe"],
+      ["connector_change", "never"],
     ]);
     expect(sandbox).toHaveBeenCalledWith(expect.objectContaining({ network: "deny-all", budget: { turnUsd: 3, sessionUsd: 3 } }));
     expect(claudeCodeOptions(sandbox, { BOT_CLAUDE_CODE_MODEL: "anthropic/claude-sonnet-4.5" }).model).toBe("anthropic/claude-sonnet-4.5");
@@ -431,5 +434,123 @@ describe("an email a harness Bot asks to send", () => {
     await claim("lease_A");
     await jobs.bindRun(WORKSPACE, job.id, "lease_A", "sess_A");
     expect(await call(tools.sendEmail, email, "sess_A")).toMatchObject({ ok: false, status: "draft" });
+  });
+});
+
+describe("a connector a harness Bot uses", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.stubEnv("BOT_STORE", "memory");
+  });
+
+  /** The connector's MCP server, counting the tool calls that reached it. */
+  function server() {
+    const called: { name: string; arguments: unknown; auth: string | null }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const message = JSON.parse(String(init?.body)) as { id?: number; method: string; params?: { name: string; arguments: unknown } };
+        if (message.id === undefined) return new Response(null, { status: 202 });
+        let result: unknown = {};
+        if (message.method === "tools/list") {
+          result = {
+            tools: [
+              { name: "get_issue", description: "Read one issue.", inputSchema: { type: "object", properties: { id: { type: "string" } } } },
+              { name: "create_issue", description: "File an issue.", inputSchema: { type: "object" } },
+            ],
+          };
+        } else if (message.method === "tools/call") {
+          called.push({ name: message.params!.name, arguments: message.params!.arguments, auth: new Headers(init?.headers).get("authorization") });
+          result = { content: [{ type: "text", text: message.params!.name === "get_issue" ? "ENG-1: Login broken" : "Filed ENG-2" }] };
+        }
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }), { headers: { "content-type": "application/json" } });
+      }),
+    );
+    return called;
+  }
+
+  async function withConnector(gate: "none" | "writes" | "all") {
+    const connectors = await import("../agent/lib/connectors");
+    const added = await connectors.addConnector(WORKSPACE, "owner", { label: "Tracker", url: "https://mcp.example/mcp", key: { kind: "bearer", secret: "key-one" }, gate });
+    if (!added.ok) throw new Error(added.error);
+    const context = await setup();
+    await context.claim("lease_A");
+    await context.jobs.bindRun(WORKSPACE, context.job.id, "lease_A", "sess_A");
+    return { ...context, connectors, connector: added.connector };
+  }
+
+  it("lists the connectors and their tools, with what each does", async () => {
+    server();
+    const { tools, call } = await withConnector("writes");
+    const listed = await call(tools.connectorTools, {}, "sess_A");
+    expect(listed).toMatchObject({
+      ok: true,
+      connectors: [{ connector: "tracker", asks: "before every change", tools: [{ name: "get_issue", effect: "read" }, { name: "create_issue", effect: "write" }] }],
+    });
+    expect(await call(tools.connectorTools, { connector: "tracker" }, "sess_A")).toMatchObject({ ok: true, tools: [{ name: "get_issue", description: "Read one issue." }, { name: "create_issue" }] });
+  });
+
+  it("reads at once with the connector's own key, and refuses a change as a read", async () => {
+    const called = server();
+    const { tools, call } = await withConnector("writes");
+    expect(await call(tools.connectorRead, { connector: "tracker", tool: "get_issue", arguments: { id: "ENG-1" } }, "sess_A")).toEqual({ ok: true, result: "ENG-1: Login broken" });
+    expect(called).toEqual([{ name: "get_issue", arguments: { id: "ENG-1" }, auth: "Bearer key-one" }]);
+    expect(await call(tools.connectorRead, { connector: "tracker", tool: "create_issue", arguments: {} }, "sess_A")).toMatchObject({ ok: false, message: expect.stringMatching(/connector_change/) });
+    expect(called).toHaveLength(1);
+  });
+
+  it("never makes a gated change itself: a person approves it, eve-bot makes it once, and the session hears the answer", async () => {
+    const called = server();
+    const { tools, call, job } = await withConnector("writes");
+    const asked = (await call(tools.connectorChange, { connector: "tracker", tool: "create_issue", arguments: { title: "Login broken" } }, "sess_A")) as { actionId: string; status: string };
+    expect(asked.status).toBe("awaiting_approval");
+    expect(called).toHaveLength(0);
+    const { patchBot } = await import("../agent/lib/bots");
+    await patchBot(WORKSPACE, job.botId, (current) => ({ ...current, engine: "codex" }));
+    const { decideProposal, getProposal } = await import("../agent/lib/engines/proposals");
+    const told: string[] = [];
+    const tell = vi.fn(async (_engine: string, sessionId: string, text: string) => void told.push(`${sessionId}: ${text}`));
+    expect(await decideProposal({ workspaceId: WORKSPACE, actionId: asked.actionId, by: "ann", approve: true, settings: {}, tell })).toMatchObject({ ok: true, status: "done" });
+    expect(called).toEqual([{ name: "create_issue", arguments: { title: "Login broken" }, auth: "Bearer key-one" }]);
+    expect(told).toEqual([expect.stringMatching(/^sess_A: A person approved your request to run create_issue on Tracker\. Ran create_issue on Tracker\. It answered: Filed ENG-2/)]);
+    expect(await getProposal(WORKSPACE, asked.actionId)).toMatchObject({ kind: "connector", result: "Filed ENG-2", decided: { outcome: "approved", status: "done" } });
+    const { getAction } = await import("../agent/lib/actions");
+    expect(await getAction(WORKSPACE, asked.actionId)).toMatchObject({ kind: "connector.call", state: "succeeded", approver: "ann" });
+    expect(await decideProposal({ workspaceId: WORKSPACE, actionId: asked.actionId, by: "bob", approve: true, settings: {} })).toMatchObject({ ok: false, status: 409 });
+    expect(called).toHaveLength(1);
+  });
+
+  it("makes nothing when the connector's settings changed since the ask, or the tool was switched off", async () => {
+    const called = server();
+    const { tools, call, connectors, connector } = await withConnector("writes");
+    const { decideProposal } = await import("../agent/lib/engines/proposals");
+    const first = (await call(tools.connectorChange, { connector: "tracker", tool: "create_issue", arguments: { title: "A" } }, "sess_A")) as { actionId: string };
+    await connectors.updateConnector(WORKSPACE, connector.id, { description: "Issues" });
+    await connectors.updateConnector(WORKSPACE, connector.id, { gate: "all" });
+    expect(await decideProposal({ workspaceId: WORKSPACE, actionId: first.actionId, by: "ann", approve: true, settings: {} })).toMatchObject({ ok: false, error: expect.stringMatching(/settings changed/) });
+    const second = (await call(tools.connectorChange, { connector: "tracker", tool: "create_issue", arguments: { title: "B" } }, "sess_A")) as { actionId: string };
+    await connectors.updateConnector(WORKSPACE, connector.id, { tools: { create_issue: false } });
+    expect(await decideProposal({ workspaceId: WORKSPACE, actionId: second.actionId, by: "ann", approve: true, settings: {} })).toMatchObject({ ok: false, status: 409 });
+    expect(called).toHaveLength(0);
+  });
+
+  it("asks before every call under the \"all\" gate, reads too, and asks nobody under \"none\"", async () => {
+    const called = server();
+    const { tools, call, connectors, connector } = await withConnector("all");
+    expect(await call(tools.connectorRead, { connector: "tracker", tool: "get_issue", arguments: {} }, "sess_A")).toMatchObject({ ok: false });
+    expect(await call(tools.connectorChange, { connector: "tracker", tool: "get_issue", arguments: {} }, "sess_A")).toMatchObject({ status: "awaiting_approval" });
+    await connectors.updateConnector(WORKSPACE, connector.id, { gate: "none" });
+    expect(await call(tools.connectorChange, { connector: "tracker", tool: "create_issue", arguments: { title: "C" } }, "sess_A")).toMatchObject({ ok: true, status: "done", result: "Filed ENG-2" });
+    expect(called.map((entry) => entry.name)).toEqual(["create_issue"]);
+  });
+
+  it("does nothing for a session that is not the job's run", async () => {
+    const called = server();
+    const { tools, call } = await withConnector("none");
+    expect(await call(tools.connectorChange, { connector: "tracker", tool: "create_issue", arguments: {} }, "sess_other")).toMatchObject({ ok: false });
+    expect(await call(tools.connectorRead, { connector: "tracker", tool: "get_issue", arguments: {} }, "sess_other")).toMatchObject({ ok: false });
+    expect(called).toHaveLength(0);
   });
 });

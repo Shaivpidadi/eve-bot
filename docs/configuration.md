@@ -170,7 +170,14 @@ What such a Bot gets, and does not:
   computer: no browser, no shared files.
 - Its tools: read the job, log a step, record the result, and propose an
   email, which a person approves or declines in the Bot's thread before
-  eve-bot sends it, once. A shell and file editing only with
+  eve-bot sends it, once.
+- The team's connectors, under each connector's gate as for any Bot, read
+  live on every call: reads run at once, and whatever the gate would ask
+  about appears as a card in the Bot's thread, which eve-bot carries out,
+  exactly as shown and once, when a person approves. Under the "all" gate
+  every call asks (such a Bot has no eve session for a first-use approval to
+  last in), and an approval given before the connector's settings changed
+  runs nothing. A shell and file editing only with
   `BOT_ENGINE_BUILTINS=1`; each such call is logged before it runs and never
   re-run after a crash, and Claude Code runs its commands under bubblewrap in
   the VM (a turn fails if that cannot start).
