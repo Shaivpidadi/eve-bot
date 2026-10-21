@@ -32,8 +32,8 @@ const ICONS: Readonly<Record<string, LucideIcon>> = {
 /** How each engine reads in the hire dialog: what it is, and what it means for the Bot. */
 const ENGINE_CHOICE: Readonly<Record<Engine, { label: string; note: string }>> = {
   eve: { label: "eve (default)", note: "Works on the team's computer: its browser, shell and shared files." },
-  "claude-code": { label: "Claude Code", note: "Each job gets a sandbox of its own, with no browser or network yet. Billed through AI Gateway, per job." },
-  codex: { label: "Codex", note: "Each job gets a sandbox of its own, with no browser or network yet. Billed through AI Gateway, per job." },
+  "claude-code": { label: "Claude Code", note: "Each job gets a sandbox of its own, deleted when it ends: no browser, none of the team's files. Billed through AI Gateway, per job." },
+  codex: { label: "Codex", note: "Each job gets a sandbox of its own, deleted when it ends: no browser, none of the team's files. Billed through AI Gateway, per job." },
 };
 
 export function HireDialog({

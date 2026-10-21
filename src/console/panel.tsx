@@ -693,6 +693,9 @@ function ScreenPreview({
   );
 }
 
+/** The project's Agent Runs, through the dashboard's team and project picker (Vercel documents no link to one session). */
+const AGENT_RUNS = "https://vercel.com/d?to=%2F%5Bteam%5D%2F%5Bproject%5D%2Fobservability%2Fagent-runs&title=Agent+Runs";
+
 const ENGINE_NAME: Readonly<Record<Engine, string>> = { eve: "eve (the team's computer)", "claude-code": "Claude Code", codex: "Codex" };
 
 function SettingsPanel({
@@ -896,8 +899,17 @@ function SettingsPanel({
               <p className="m-0 mt-1 text-[11.5px] text-faint">
                 {profile.engine === "eve"
                   ? "The team's computer: its browser, shell and shared files."
-                  : `A sandbox of its own for each job, with no browser or network yet. From its next job on.${engines.includes(profile.engine) ? "" : " Not available here now, so its jobs will not start."}`}
+                  : `A sandbox of its own for each job, deleted when it ends: no browser, none of the team's files. From its next job on.${engines.includes(profile.engine) ? "" : " Not available here now, so its jobs will not start."}`}
               </p>
+              {profile.engine === "eve" ? null : (
+                <p className="m-0 mt-1 text-[11.5px] text-faint">
+                  On Vercel, each job&apos;s session is in{" "}
+                  <a className="underline underline-offset-2 hover:text-foreground" href={AGENT_RUNS} target="_blank" rel="noreferrer">
+                    Agent Runs
+                  </a>
+                  .
+                </p>
+              )}
             </Section>
           ) : null}
         </>

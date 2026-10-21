@@ -10,5 +10,8 @@ import { claudeCode } from "durable-harness/claude-code";
 import { sandbox } from "durable-harness/sandbox";
 
 import { claudeCodeOptions } from "../../../agent/lib/engines/claude-code";
+import { registerAgentRuns } from "./agent-runs";
+
+registerAgentRuns();
 
 export const claudeCodeAgent = claudeCode(claudeCodeOptions(sandbox));

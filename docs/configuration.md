@@ -187,6 +187,12 @@ new Sandbox waits until the next cycle, the team's computer included. Nothing
 in a deployment can tell which plan it is on, so this is on you: leave
 `BOT_ENGINES` unset on Hobby.
 
+On a Vercel deployment, each such job's session is in **Agent Runs** too
+(the same tracing rule turns it on): its turns, model and tool calls, timing
+and spend. Metadata only: no brief, reply or tool input or output is recorded.
+A Bot's profile links there; Vercel has no link to one session yet, so open it
+from the list.
+
 Locally, sessions run on the local Workflow World (`.workflow-data`), but each
 job's Sandbox is still on Vercel, so a local server needs the project's
 credentials (`vercel env pull` for a `VERCEL_OIDC_TOKEN`, or `VERCEL_TOKEN`,

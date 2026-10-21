@@ -10,5 +10,8 @@ import { codex } from "durable-harness/codex";
 import { sandbox } from "durable-harness/sandbox";
 
 import { codexOptions } from "../../../agent/lib/engines/codex";
+import { registerAgentRuns } from "./agent-runs";
+
+registerAgentRuns();
 
 export const codexAgent = codex(codexOptions(sandbox));
