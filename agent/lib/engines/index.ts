@@ -8,13 +8,16 @@
  * world only through the few eve-bot tools it is given. Both bill through AI
  * Gateway, like eve's own calls: no Claude or ChatGPT subscription is used.
  *
- * `BOT_ENGINES` is an environment variable only, never a Settings page
- * switch: it decides at build time whether the harness's queue route is built
- * at all (see `next.config.ts`), so a deployment that leaves it unset builds
- * and runs exactly as before. Off by default.
+ * `BOT_ENGINES` is set on the Settings page (Engines) or in the environment,
+ * and applies with the next build: it decides whether the harness's queue
+ * route is built at all (see `next.config.ts`), so a deployment that leaves it
+ * unset builds and runs exactly as before. Off by default.
  *
  * This module is plain data and checks: nothing here loads durable-harness.
  */
+
+// First: the build's Settings values over the environment, before anything below reads it (see settings/built.ts).
+import "../settings/built";
 
 /** What can run a Bot's jobs. `eve` is the default and needs no switch. */
 export const ENGINES = ["eve", "claude-code", "codex"] as const;

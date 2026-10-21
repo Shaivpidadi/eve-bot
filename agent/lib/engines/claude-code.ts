@@ -14,6 +14,8 @@
  * The model is `BOT_CLAUDE_CODE_MODEL` if set, else the library's default
  * (`claude-sonnet-4-5` in H0). One agent holds one model (plan section 4.6).
  */
+// First: the build's Settings values over the environment, before anything below reads it (see settings/built.ts).
+import "../settings/built";
 import type { ClaudeCodeOptions } from "durable-harness/claude-code";
 import type { SandboxOptions, SandboxWorkspace } from "durable-harness/sandbox";
 import type { HostTool } from "durable-harness/tools";

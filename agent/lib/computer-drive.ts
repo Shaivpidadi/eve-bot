@@ -1,3 +1,5 @@
+// First: the build's Settings values over the environment, before anything below reads it (see settings/built.ts).
+import "./settings/built";
 import { Drive, Sandbox as VercelSandbox } from "@vercel/sandbox";
 
 import { COMPUTER_NAME } from "./computer";

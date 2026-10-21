@@ -1,3 +1,5 @@
+// First: the build's Settings values over the environment, before anything below reads it (see settings/built.ts).
+import "./settings/built";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { defaultSettingsMiddleware, gateway, type LanguageModel, wrapLanguageModel } from "ai";
 

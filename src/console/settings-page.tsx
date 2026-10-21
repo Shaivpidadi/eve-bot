@@ -51,9 +51,11 @@ interface Report {
   readonly editable: boolean;
   readonly owner: boolean;
   readonly settings: readonly Setting[];
+  /** The owner saved a Vercel deploy hook, so a setting that waits for a build can be applied from here. */
+  readonly canRebuild?: boolean;
 }
 
-const AREAS = ["Spend", "Team computer", "Browser", "Memory & decisions", "Email", "Background work", "Team", "Data controls", "Updates", "Notifications", "Models"] as const;
+const AREAS = ["Spend", "Team computer", "Browser", "Memory & decisions", "Email", "Background work", "Team", "Data controls", "Engines", "Updates", "Notifications", "Models"] as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
@@ -99,6 +101,22 @@ export function SettingsPage({ area, onArea, onClose }: { area: string | null; o
     }
   }, []);
 
+  const [rebuilt, setRebuilt] = useState<string | null>(null);
+  const rebuild = useCallback(async () => {
+    setBusy("rebuild");
+    try {
+      const response = await api("/bot/v1/settings/rebuild", { method: "POST" });
+      if (response.ok) {
+        setRebuilt("Vercel is building it now. The change applies when that build is live, in a few minutes.");
+        setError(null);
+      } else setError(await errorMessage(response, "Could not ask for a rebuild."));
+    } catch (caught) {
+      if (!(caught instanceof SignedOutError)) setError("Could not ask for a rebuild.");
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
   const areas = useMemo(() => AREAS.filter((name) => name === "Models" || name === "Notifications" || (report?.settings ?? []).some((setting) => setting.area === name)), [report]);
   const current = area !== null && (areas as readonly string[]).includes(area) ? area : (areas[0] ?? "Models");
 
@@ -132,7 +150,13 @@ export function SettingsPage({ area, onArea, onClose }: { area: string | null; o
                     {report.settings
                       .filter((setting) => setting.area === name)
                       .map((setting) => (
-                        <Field key={setting.env} setting={setting} busy={busy === setting.env} onSave={(value) => save(setting.env, value)} />
+                        <Field
+                          key={setting.env}
+                          setting={setting}
+                          busy={busy === setting.env}
+                          onSave={(value) => save(setting.env, value)}
+                          rebuild={report.canRebuild === true ? { busy: busy === "rebuild", done: rebuilt, run: rebuild } : null}
+                        />
                       ))}
                   </div>
                   <Faint>A change applies within about 30 seconds unless it says otherwise. Reset goes back to the environment&apos;s value.</Faint>
@@ -158,7 +182,18 @@ function Source({ setting }: { setting: Setting }) {
   return <span className={cn("text-[11.5px]", setting.source === "setting" ? "text-brand" : "text-faint")}>{text}</span>;
 }
 
-function Field({ setting, busy, onSave }: { setting: Setting; busy: boolean; onSave: (value: unknown) => Promise<boolean> }) {
+function Field({
+  setting,
+  busy,
+  onSave,
+  rebuild,
+}: {
+  setting: Setting;
+  busy: boolean;
+  onSave: (value: unknown) => Promise<boolean>;
+  /** Rebuild now, where the owner saved a deploy hook; null otherwise. */
+  rebuild: { readonly busy: boolean; readonly done: string | null; readonly run: () => Promise<void> } | null;
+}) {
   const disabled = !setting.editable || busy;
   return (
     <div className="flex flex-col gap-2 px-4 py-3 text-[13px] sm:flex-row sm:items-start sm:gap-4">
@@ -166,7 +201,14 @@ function Field({ setting, busy, onSave }: { setting: Setting; busy: boolean; onS
         <b className="font-medium">{setting.label}</b>
         {setting.help === "" ? null : <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{setting.help}</span>}
         {setting.pending ? (
-          <span className="text-[11.5px] text-warning">Saved; the running agent was built before it. Applies with the next deploy, or the next npm start here.</span>
+          <span className="text-[11.5px] text-warning">
+            {rebuild?.done ?? "Saved; the running agent was built before it. Applies with the next deploy, or the next npm start here."}
+            {rebuild !== null && rebuild.done === null ? (
+              <button type="button" className="ml-1.5 cursor-pointer underline underline-offset-2 hover:text-foreground" disabled={rebuild.busy} onClick={() => void rebuild.run()}>
+                Rebuild now
+              </button>
+            ) : null}
+          </span>
         ) : TIER_NOTE[setting.tier] === null ? null : (
           <span className="text-[11.5px] text-faint">{TIER_NOTE[setting.tier]}</span>
         )}

@@ -7,6 +7,7 @@
  * which `eve build` writes first.
  */
 import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 
 import nextEnv from "@next/env";
 
@@ -17,9 +18,25 @@ import { overlaySettings, savedSettings } from "./settings.mjs";
 // must see the same environment the server will. Next.js loads .env itself.
 if (!process.env.VERCEL) nextEnv.loadEnvConfig(process.cwd(), false);
 
-// Caps and the computer's backend saved in Settings win over the environment's,
-// as they do everywhere else; eve fixes them in what it builds.
-overlaySettings(savedSettings("plan")?.overlay);
+// Caps, the computer's backend and the engines saved in Settings win over the
+// environment's, as they do everywhere else; eve fixes them in what it builds.
+const overlay = savedSettings("plan")?.overlay ?? {};
+overlaySettings(overlay);
+
+// A deployment's functions never see this process's environment, so the same
+// values go into the build itself (agent/lib/settings/built.ts lays them over
+// the server's environment when it loads). Put back as it was afterwards.
+const BUILT = "agent/lib/settings/built.ts";
+const pristine = readFileSync(BUILT, "utf8");
+const restore = () => writeFileSync(BUILT, pristine);
+if (Object.keys(overlay).length > 0) {
+  const filled = pristine.replace(/const BUILT: Readonly<Record<string, string>> = \{\};/, `const BUILT: Readonly<Record<string, string>> = ${JSON.stringify(overlay)};`);
+  if (filled === pristine) {
+    console.error(`[bot] ${BUILT} no longer has the line the build fills in; the saved settings would not reach the server.`);
+    process.exit(1);
+  }
+  writeFileSync(BUILT, filled);
+}
 
 // Since eve 0.79, `eve build` prepares the computer's sandbox (a Vercel snapshot,
 // a Docker image) and a production server will not build a missing one, so a
@@ -30,8 +47,12 @@ const steps = process.env.VERCEL ? [["next", "build"]] : [eveBuild, ["next", "bu
 
 for (const [bin, ...args] of steps) {
   const result = spawnSync(bin, args, { stdio: "inherit", shell: process.platform === "win32" });
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  if (result.status !== 0) {
+    restore();
+    process.exit(result.status ?? 1);
+  }
 }
+restore();
 
 // So the running agent, and the Settings page, know what this build used.
 savedSettings("record");

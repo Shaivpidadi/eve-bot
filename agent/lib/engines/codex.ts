@@ -9,6 +9,8 @@
  * on). Its CLI is the build pinned in the Sandbox's image; nothing extra is
  * installed for it.
  */
+// First: the build's Settings values over the environment, before anything below reads it (see settings/built.ts).
+import "../settings/built";
 import type { CodexOptions } from "durable-harness/codex";
 import type { SandboxOptions, SandboxWorkspace } from "durable-harness/sandbox";
 import type { HostTool } from "durable-harness/tools";
