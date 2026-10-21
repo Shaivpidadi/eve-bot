@@ -520,9 +520,10 @@ export async function archivePaths(io: ComputerIo, paths: readonly string[], tim
       PART_PRIVATE,
       "umask 077",
       `rm -f ${PART_ARCHIVE}`,
-      `existing=""; for p in ${relative}; do [ -e "/$p" ] && existing="$existing $p"; done`,
-      '[ -n "$existing" ] || { echo none; exit 0; }',
-      `tar -czf ${PART_ARCHIVE} --ignore-failed-read -C / $existing || [ $? -eq 1 ]`,
+      // Kept as the positional parameters, so a path with spaces (a Bot's folder is its name) stays one path.
+      `set --; for p in ${relative}; do [ -e "/$p" ] && set -- "$@" "$p"; done`,
+      '[ "$#" -gt 0 ] || { echo none; exit 0; }',
+      `tar -czf ${PART_ARCHIVE} --ignore-failed-read -C / "$@" || [ $? -eq 1 ]`,
       "echo done",
     ].join("\n"),
     { timeoutMs },
