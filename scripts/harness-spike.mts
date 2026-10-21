@@ -56,6 +56,21 @@ if (!credentials && !process.env.VERCEL_PROJECT_ID && process.env.VERCEL_OIDC_TO
 
 class Crash extends Error {}
 
+// The chaos crash is thrown from a timer, where nothing catches it: in one
+// local process that would end the process, and with it the spike. A
+// function that dies leaves its turn to the queue, which delivers it again
+// to a fresh drive; caught here, the crashed drive stalls the same way and
+// the local World's queue redelivers the turn.
+let crashes = 0;
+process.on("uncaughtException", (error) => {
+  if (error instanceof Crash) {
+    crashes += 1;
+    return;
+  }
+  console.error("spike crashed:", error);
+  process.exit(1);
+});
+
 /** Runs of the `never` tool, by run id and note. */
 const stamps = new Map<string, number>();
 /** The run ids tools saw. */
@@ -194,7 +209,7 @@ async function check1and2(): Promise<void> {
   await agent.sessions.chaos(sessionId, { at: "tool", afterMs: 1_000 });
   await agent.sessions.send(sessionId, 'Call the stamp tool once with note "h0", then end your turn.');
   const ended = await turnEnd(sessionId);
-  notes.push(`session 1 turn: ${ended}`);
+  notes.push(`session 1 turn: ${ended} (chaos crashes landed: ${crashes})`);
   // Let the tail catch up with what the drive wrote.
   await new Promise((resolve) => setTimeout(resolve, 3_000));
   stop.abort();

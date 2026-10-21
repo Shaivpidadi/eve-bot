@@ -153,6 +153,22 @@ He gave the go on Oct 20, for local branches only. Each step ends with a check.
 - **H0. Spike on an eve-bot branch (review).** Two halves.
   - *Offline, no spend:* install `durable-harness` and the Claude Agent SDK at their exact pins, wrap the config with `withDurableHarness`, and check that `npm ls`, typecheck, tests and the build stay clean next to `withEve`, and how big the functions get.
   - *Live, needs his yes on spend:* a script that starts one Claude Code session with no built-ins, `deny-all` network and one `never` HostTool, then answers four questions, each pass or fail: (1) killed mid-turn, did the `never` tool run exactly once? (2) does `sessions.close` stop a running turn? If not, the fallback is `deleteSessionSandbox` on cancel. (3) can spend be read from the log mid-run? That decides between heartbeat checks and a cap on concurrent harness jobs. (4) does the queue route deliver next to eve's service on a real deployment? Cost: Gateway credits and Sandbox time on his account.
+- **H0 results (Oct 21, live, on eve-eve-bot's account, $0.016 for two Claude Code sessions).** Run 4 stopped
+  because the chaos crash is thrown from a timer and ended the one local process; the spike now catches that one
+  crash, so the crashed drive stalls as a dead function's would and the local queue delivers the turn again.
+  - (1) a HostTool's `io.ctx.runId` is the session id: **pass**.
+  - (2) a live `idle` means the turn ended in the log: **pass**.
+  - crashed inside a `never` tool, it ran exactly once after the turn resumed: **pass**.
+  - (3) `sessions.close` stops a running turn: **fail in part**. Nothing more is written to the log, but a tool
+    already running in the Function is not aborted. So stopping keeps deleting the Sandbox, and the run fence
+    refuses whatever the old tool writes.
+  - (4) spend is readable mid-run: **pass**, from the log's journal streams. Claude Code writes `hw.spend`, Codex
+    writes `codex.spend` (H4 spike), so the heartbeat reads the engine's own stream and the one-at-a-time stopgap
+    goes.
+  - (5) the queue route on a deployment: not run yet; needs a deployment of the branch with `BOT_ENGINES` set.
+- **H4 results (Oct 21, live, $0.004).** `scripts/harness-spike-codex.mts`: one Codex session on
+  `openai/gpt-5.4-mini`, no built-ins, `deny-all`: a turn ran, the tool's run id was the session id, the `never`
+  tool ran once, spend in `codex.spend`.
 - **H1. Engine field, dark (about 1 day).** `Bot.engine`, the owner setting, and run_job's branch behind the switch. No built-ins. Only `job_brief`, `log_progress` and `finish_job` as HostTools. *Check:* tests; a Claude Code Bot finishes a file-only job end to end on his deployment, and cancelling it fences it off.
 - **H2. Gates (longer than the first 2 to 3 day guess) (review).** `send_email` and connector writes as gated HostTools through the actions ledger, with the "Needs you" push, a console route and card for approving a ledger proposal, and eve-bot running the approved action itself through `applyAction`. *Check:* a replayed tool doesn't send twice; an approval for changed input is refused; a cancelled run's approval is refused. Same cases as M1's tests.
 - **H3. Console (about 2 days).** Engine choice in the hire dialog, the thread rendered from `liveEntries`, the Agent Runs link and spend on the usage page. *Check:* QA run (`npm run qa`), plus a manual pass on desktop and phone.
