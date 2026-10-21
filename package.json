@@ -19,6 +19,7 @@
     "test": "vitest run",
     "jev:report": "npx --yes tsx scripts/jev-report.mjs",
     "qa": "node qa/run.mjs",
+    "qa:transfer": "node qa/transfer.mjs",
     "metrics": "npx --yes tsx scripts/metrics.mjs"
   },
   "dependencies": {

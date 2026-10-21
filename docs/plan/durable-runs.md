@@ -297,9 +297,16 @@ connectors and backups, and open jobs are picked up by the watchdog there.
 - **Eval results (13 Oct 2026, the local dev store, fs → fs):** 209 keys (205 documents, 4 binary
   objects, 757 KB gzipped). 206 byte-identical, 3 changed as designed (one open job's lease,
   two rooms' sessions), 0 missing, 1 added (the `job.moved` feed line). Fidelity 1.0 for
-  everything that is meant to move. Dry run wrote 0 files. Re-dispatch time `[to-do]`: needs a
-  server with a model. The QA `transfer.mjs` check `[to-do]` (needs a scratch deployment
-  to reset); the unit round trip covers the same ground against the memory driver.
+  everything that is meant to move. Dry run wrote 0 files.
+- **Eval results (21 Oct 2026, a Vercel preview → a local store):** `npm run qa:transfer`
+  (`qa/transfer.mjs`) seeded a Bot, a memory and a running job on a scratch preview of
+  eve-bot-test, exported the workspace over HTTP mid-run (199 KB), imported it into a fresh
+  local store (461 keys, 3 open jobs, 19 rooms given fresh sessions), and started a local
+  server on it from a worktree of the same commit: the Bot, the memory and the job arrived,
+  the job's thread said it moved, and it started again **2 s** after the server came up
+  (3 s on the run before). It goes deployment → laptop, the direction a reset is not needed
+  for; laptop → Vercel is the same import into Blob, which the scripts cannot reach from a
+  laptop's development OIDC token.
 - **Done when:** a workspace moves Vercel → laptop → Vercel with nothing lost but live runs.
 
 ### D2.3 Route for hosted deployments `[done]`
