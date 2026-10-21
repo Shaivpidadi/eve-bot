@@ -106,6 +106,8 @@ export interface Job {
    * nothing twice.
    */
   harnessCharged?: Readonly<Record<string, number>>;
+  /** For a job on a harness engine: where each session's live stream was last read into the Bot's thread. */
+  harnessHeard?: Readonly<Record<string, string>>;
   /** When the job becomes eligible to run. */
   runAt: string;
   /** Repeat interval in minutes, or `null` for a one-shot job. */

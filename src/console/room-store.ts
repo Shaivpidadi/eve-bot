@@ -911,6 +911,11 @@ export function buildTimeline(
       }
       continue;
     }
+    // A Claude Code or Codex Bot's own words while it works (lib/engines/sessions.ts tellThread).
+    if (event.kind === "job.progress" && event.data?.said === true) {
+      out.push({ kind: "bot", key: event.id, at: event.at, text: event.text });
+      continue;
+    }
     const last = out[out.length - 1];
     if (last?.kind === "steps" && last.jobId === event.jobId) {
       out[out.length - 1] = { ...last, events: [...last.events, event] };

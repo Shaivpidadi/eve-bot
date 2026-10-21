@@ -251,10 +251,50 @@ describe("run_job's side of a harness session", () => {
 
   it("tells a finished turn, a failed one and one still working apart", async () => {
     const { lookAtHarnessRun } = await import("../agent/lib/engines/sessions");
-    expect(await lookAtHarnessRun("claude-code", "s", null, fakeSessions({ live: [{ type: "text", delta: "hi" }, { type: "idle" }] }).deps)).toEqual({ kind: "ended", ok: true, spend: [] });
-    expect(await lookAtHarnessRun("claude-code", "s", null, fakeSessions({ live: [{ type: "error", message: "budget" }] }).deps)).toEqual({ kind: "ended", ok: false, error: "budget", spend: [] });
+    expect(await lookAtHarnessRun("claude-code", "s", null, fakeSessions({ live: [{ type: "text", delta: "hi" }, { type: "idle" }] }).deps)).toEqual({
+      kind: "ended",
+      ok: true,
+      spend: [],
+      said: ["hi"],
+      partial: "",
+      heard: "c2",
+    });
+    expect(await lookAtHarnessRun("claude-code", "s", null, fakeSessions({ live: [{ type: "error", message: "budget" }] }).deps)).toMatchObject({ kind: "ended", ok: false, error: "budget", spend: [] });
     expect(await lookAtHarnessRun("claude-code", "s", null, fakeSessions({ status: "failed" }).deps)).toMatchObject({ kind: "ended", ok: false });
-    expect(await lookAtHarnessRun("claude-code", "s", "c0", fakeSessions({ live: [{ type: "text", delta: "still" }] }).deps)).toEqual({ kind: "working", cursor: "c1", spend: [] });
+    expect(await lookAtHarnessRun("claude-code", "s", "c0", fakeSessions({ live: [{ type: "text", delta: "still" }] }).deps)).toEqual({
+      kind: "working",
+      cursor: "c1",
+      spend: [],
+      said: [],
+      partial: "still",
+      heard: "c1",
+    });
+  });
+
+  it("hears the model's words in stretches a tool call closes, finishing the one the last look caught midway", async () => {
+    const { lookAtHarnessRun } = await import("../agent/lib/engines/sessions");
+    const live = [
+      { type: "text", delta: "ing the brief." },
+      { type: "tool_start", name: "job_brief" },
+      { type: "tool_end", name: "job_brief" },
+      { type: "text", delta: "Done, " },
+      { type: "text", delta: "writing it up" },
+    ];
+    expect(await lookAtHarnessRun("claude-code", "s", "c0", fakeSessions({ live }).deps, "Read")).toMatchObject({ said: ["Reading the brief."], partial: "Done, writing it up" });
+    // A session that ended before the next look still says what it had begun.
+    expect(await lookAtHarnessRun("claude-code", "s", "c5", fakeSessions({ status: "completed" }).deps, "All done.")).toMatchObject({ said: ["All done."], heard: "c5#end" });
+  });
+
+  it("puts the model's words in the Bot's thread once, however often a look runs", async () => {
+    const { job } = await setup();
+    const { tellThread } = await import("../agent/lib/engines/sessions");
+    const { recentActivity } = await import("../agent/lib/activity");
+    const told = { workspaceId: WORKSPACE, jobId: job.id, botId: "bot_1", sessionId: "sess_H", heard: "c4", said: ["Reading the brief."] };
+    await tellThread(told);
+    await tellThread(told);
+    await tellThread({ ...told, heard: "c9", said: ["All done."] });
+    const said = (await recentActivity(WORKSPACE, { limit: 100 })).filter((event) => event.data?.said === true).map((event) => event.text);
+    expect(said.sort()).toEqual(["All done.", "Reading the brief."]);
   });
 
   it("stops a session by closing it and deleting its Sandbox, even when one of them fails", async () => {

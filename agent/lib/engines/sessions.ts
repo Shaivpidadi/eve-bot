@@ -45,6 +45,15 @@ export type HarnessLook = (
 ) & {
   /** Every model call the session's log has priced so far, in order. */
   readonly spend: readonly SpendRecord[];
+  /**
+   * What the model wrote since `cursor`, one entry per stretch of text (a tool
+   * call or the turn's end closes one), and the stretch still being written
+   * when the look ended, for the next look to finish.
+   */
+  readonly said: readonly string[];
+  readonly partial: string;
+  /** Where the live stream was read to: the same `said` is never heard twice from here. */
+  readonly heard: string | null;
 };
 
 /** The slice of durable-harness's `DurableSessions` used here, so tests can stand one in. */
@@ -156,35 +165,88 @@ export async function startHarnessRun(
   return { ok: true, sessionId };
 }
 
-/** Whether the session's turn is still going: its run's status, then what its live stream said since `cursor`. */
-export async function lookAtHarnessRun(engine: HarnessEngine, sessionId: string, cursor: string | null, deps?: HarnessDeps): Promise<HarnessLook> {
+/**
+ * Whether the session's turn is still going: its run's status, then what its
+ * live stream said since `cursor`, the model's text included.
+ */
+export async function lookAtHarnessRun(
+  engine: HarnessEngine,
+  sessionId: string,
+  cursor: string | null,
+  deps?: HarnessDeps,
+  /** The text the last look caught mid-stretch, which this one goes on with. */
+  carried = "",
+): Promise<HarnessLook> {
   const { sessions } = deps ?? (await load(engine));
   const state = await sessions.inspect(sessionId);
   const spend = spendOf(engine, state);
-  if (state.status === "failed") return { kind: "ended", ok: false, error: state.failure?.message ?? "The session failed.", spend };
-  if (state.status === "cancelled") return { kind: "ended", ok: false, error: "The session was cancelled.", spend };
-  if (state.status === "completed") return { kind: "ended", ok: true, spend };
+  // Text the last look left unfinished is finished by the end; heard as a stretch of its own.
+  const quiet = carried.trim() === "" ? { spend, said: [], partial: "", heard: cursor } : { spend, said: [carried.trim()], partial: "", heard: `${cursor ?? ""}#end` };
+  if (state.status === "failed") return { kind: "ended", ok: false, error: state.failure?.message ?? "The session failed.", ...quiet };
+  if (state.status === "cancelled") return { kind: "ended", ok: false, error: "The session was cancelled.", ...quiet };
+  if (state.status === "completed") return { kind: "ended", ok: true, ...quiet };
 
   // H0 check 2: a turn's end is an `idle` event on the live stream.
   const stop = new AbortController();
   const timer = setTimeout(() => stop.abort(), LOOK_MS);
   let last = cursor;
+  const said: string[] = [];
+  let text = carried;
+  const close = (): void => {
+    if (text.trim() !== "") said.push(text.trim());
+    text = "";
+  };
   try {
     for await (const entry of sessions.liveEntries(sessionId, { ...(cursor === null ? {} : { cursor }), signal: stop.signal, resume: false })) {
       last = entry.cursor;
-      const type = typeof entry.value === "object" && entry.value !== null ? (entry.value as { type?: unknown }).type : undefined;
-      if (type === "error") {
-        const message = (entry.value as { message?: unknown }).message;
-        return { kind: "ended", ok: false, error: typeof message === "string" ? message : "The turn failed.", spend };
+      const value = typeof entry.value === "object" && entry.value !== null ? (entry.value as { type?: unknown; delta?: unknown; message?: unknown }) : {};
+      if (value.type === "text" && typeof value.delta === "string") text += value.delta;
+      else if (value.type === "tool_start") close();
+      else if (value.type === "error") {
+        close();
+        return { kind: "ended", ok: false, error: typeof value.message === "string" ? value.message : "The turn failed.", spend, said, partial: "", heard: last };
+      } else if (value.type === "idle") {
+        close();
+        return { kind: "ended", ok: true, spend, said, partial: "", heard: last };
       }
-      if (type === "idle") return { kind: "ended", ok: true, spend };
     }
   } catch {
     // The look timed out or the stream closed: nothing ended that we saw.
   } finally {
     clearTimeout(timer);
   }
-  return { kind: "working", cursor: last, spend };
+  return { kind: "working", cursor: last, spend, said, partial: text, heard: last };
+}
+
+/** The most one stretch of a Bot's words keeps in its thread. */
+const SAID_LIMIT = 4_000;
+
+/**
+ * Puts what the model wrote into the Bot's thread, as its own words while the
+ * job runs. Once per stretch of the stream: the job notes how far its thread
+ * has heard the session, so a look that runs again adds nothing twice (a look
+ * cut short between the two writes loses its words rather than repeating them).
+ */
+export async function tellThread(input: {
+  readonly workspaceId: string;
+  readonly jobId: string;
+  readonly botId: string;
+  readonly sessionId: string;
+  readonly heard: string | null;
+  readonly said: readonly string[];
+}): Promise<void> {
+  if (input.said.length === 0 || input.heard === null) return;
+  let fresh = false;
+  await patchJob(input.workspaceId, input.jobId, (current) => {
+    fresh = current.harnessHeard?.[input.sessionId] !== input.heard;
+    return fresh ? { ...current, harnessHeard: { ...current.harnessHeard, [input.sessionId]: input.heard! } } : current;
+  }).catch(() => null);
+  if (!fresh) return;
+  const { record } = await import("../activity");
+  for (const words of input.said) {
+    const text = words.length > SAID_LIMIT ? `${words.slice(0, SAID_LIMIT - 1)}\u2026` : words;
+    await record({ workspaceId: input.workspaceId, kind: "job.progress", botId: input.botId, jobId: input.jobId, text, data: { said: true } }).catch(() => undefined);
+  }
 }
 
 /**

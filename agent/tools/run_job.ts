@@ -250,11 +250,11 @@ async function runCycle(
   // workflow, so `working` never settles on its own; each look below asks the
   // session instead, and every way out of the run stops it.
   const engine: Engine = claim.engine ?? "eve";
-  let harness: { readonly engine: HarnessEngine; readonly sessionId: string; cursor: string | null; charged: number } | null = null;
+  let harness: { readonly engine: HarnessEngine; readonly sessionId: string; cursor: string | null; charged: number; partial: string } | null = null;
   let settledEarly: Settled | null = null;
   if (engine !== "eve") {
     const started = await startHarness(engine, workspaceId, jobId, claim.token, claim.brief);
-    if (started.ok) harness = { engine, sessionId: started.sessionId, cursor: null, charged: 0 };
+    if (started.ok) harness = { engine, sessionId: started.sessionId, cursor: null, charged: 0, partial: "" };
     else settledEarly = { ok: false, error: started.error };
   }
   // What the session spent is charged as it goes (each look) and once more when it stops.
@@ -323,8 +323,9 @@ async function runCycle(
       continue;
     }
     if (harness !== null) {
-      const { look, charged, halt: overBudget } = await lookAtHarness(harness.engine, harness.cursor, spendOf(harness));
+      const { look, charged, halt: overBudget } = await lookAtHarness(harness.engine, harness.cursor, harness.partial, spendOf(harness));
       harness.charged = charged;
+      harness.partial = look.partial;
       // Spend is read from the session's log at every look (H0), so a run over the budget stops here, mid-turn.
       if (overBudget !== null) {
         await halt();
@@ -792,14 +793,19 @@ interface HarnessCharge {
   readonly charged: number;
 }
 
-/** One look at the session's turn, charging what it spent since the last. */
-async function lookAtHarness(engine: HarnessEngine, cursor: string | null, charge: HarnessCharge) {
+/**
+ * One look at the session's turn: charges what it spent since the last, and
+ * puts what the model wrote into the Bot's thread. `partial` is the text the
+ * last look caught mid-stretch, which this one goes on with.
+ */
+async function lookAtHarness(engine: HarnessEngine, cursor: string | null, partial: string, charge: HarnessCharge) {
   "use step";
-  const { chargeHarnessSpend, lookAtHarnessRun } = await import("../lib/engines/sessions");
-  const look = await lookAtHarnessRun(engine, charge.sessionId, cursor);
+  const { chargeHarnessSpend, lookAtHarnessRun, tellThread } = await import("../lib/engines/sessions");
+  const look = await lookAtHarnessRun(engine, charge.sessionId, cursor, undefined, partial);
   const { charged, halted } = await chargeHarnessSpend({ ...charge, spend: look.spend });
+  await tellThread({ ...charge, heard: look.heard, said: look.said }).catch(() => undefined);
   // The reason as words, from here: the workflow body must not reach into the budget module itself.
-  return { look: { ...look, spend: [] }, charged, halt: halted ? BUDGET_HALT_REASON : null };
+  return { look: { ...look, spend: [], said: [] }, charged, halt: halted ? BUDGET_HALT_REASON : null };
 }
 
 /** Charges what is left, then stops the session for good (closes it, deletes its Sandbox and Drive). */
