@@ -6,9 +6,12 @@
  * `.output/` (HQ, the Bots, the console API, and the schedule runner), and the
  * Next.js console, whose build rewrote `/eve/v1` and `/bot/v1` to the agent on
  * 127.0.0.1:4274 (`EVE_NEXT_PRODUCTION_PORT`, which must match at build time).
- * Both read `.env` the way Next.js does. When either stops, so does the other,
- * and the agent stops the team's computer on the way out and reattaches to it
- * on the next start.
+ * Since eve 0.82, `next start` starts that agent itself (`withEve`), with the
+ * console's environment, and stops it when the console stops; starting a
+ * second one here as well left two fighting for the port. So this script
+ * prepares the environment (`.env`, saved settings, a build when one is due)
+ * and starts the console. The agent stops the team's computer on the way out
+ * and reattaches to it on the next start.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -49,7 +52,8 @@ if (needed || templateMissing) {
         : "[bot] Building the agent..."
       : "[bot] Building the agent with the team computer's template...",
   );
-  const built = spawnSync(join(process.cwd(), "node_modules", ".bin", "eve"), ["build"], { stdio: "inherit" });
+  // eve's own entry, run by this Node, as on every platform (`.bin/eve` is a `.cmd` on Windows).
+  const built = spawnSync(process.execPath, [join(process.cwd(), "node_modules", "eve", "bin", "eve.js"), "build"], { stdio: "inherit" });
   if (built.status === 0) savedSettings("record");
   else if (needed) {
     console.error("[bot] The agent did not build; see above.");
@@ -92,21 +96,16 @@ if (process.env.BOT_TICK_ON_START !== "off") {
   }, 60_000).unref();
 }
 
+// The console, which starts the agent (above) with this environment.
 const children = [
-  spawn(process.execPath, [agentEntry], {
+  spawn(process.execPath, [join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", host, "-p", consolePort], {
     stdio: "inherit",
     env: {
       ...process.env,
-      NODE_ENV: process.env.NODE_ENV ?? "production",
-      HOST: "127.0.0.1",
-      NITRO_HOST: "127.0.0.1",
-      PORT: agentPort,
-      NITRO_PORT: agentPort,
+      // NODE_ENV is what tells the agent it is serving rather than being developed (see above).
+      NODE_ENV: "production",
+      EVE_NEXT_PRODUCTION_PORT: agentPort,
     },
-  }),
-  spawn(process.execPath, [join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", host, "-p", consolePort], {
-    stdio: "inherit",
-    env: { ...process.env, NODE_ENV: "production" },
   }),
 ];
 
@@ -131,7 +130,7 @@ function stop(code, signal = "SIGTERM") {
 for (const child of children) {
   child.on("exit", (code, signal) => {
     if (stopping) return;
-    console.error(`[bot] ${child === children[0] ? "agent" : "console"} exited (${signal ?? code}); stopping.`);
+    console.error(`[bot] The console exited (${signal ?? code}); stopping.`);
     stop(code ?? 1);
   });
 }
