@@ -20,6 +20,7 @@ import { HQ_ROOM, roomForBot } from "./rooms";
 import { getRoomState, type AnsweredInput, type Branch, type RoomState } from "./roomstate";
 import type { ActivityEvent, Bot, Job } from "./types";
 import { liveEnv } from "./settings/store";
+import { type Engine, engineChoices, engineOf } from "./engines";
 
 /**
  * What the console shows: one roster entry per teammate with its presence, and
@@ -125,6 +126,8 @@ export interface Member {
     readonly hiredAt: string;
     /** Name of the Bot that created this one, when a Bot did. */
     readonly createdBy: string | null;
+    /** What runs its jobs. */
+    readonly engine: Engine;
     /** Its hello and first jobs, for its empty thread. */
     readonly intro: Bot["intro"];
   } | null;
@@ -149,6 +152,8 @@ export interface Board {
   readonly health: Health;
   /** Whether the console may offer the workspace as an export file (`BOT_EXPORT`). */
   readonly exportable: boolean;
+  /** What a Bot here may run on: always eve, and the engines the owner turned on (`lib/engines`). */
+  readonly engines: readonly Engine[];
 }
 
 export const HQ_MEMBER_ID = "hq";
@@ -263,6 +268,7 @@ export async function buildBoard(
     },
     budget,
     exportable: exportEnabled(liveEnv()),
+    engines: engineChoices(workspaceId),
     health: jobHealth(open, {
       now,
       pausedBotIds: new Set(bots.filter((bot) => bot.status !== "active").map((bot) => bot.id)),
@@ -394,6 +400,7 @@ function botMember(
       stats: bot.stats,
       hiredAt: bot.hiredAt,
       createdBy: bot.createdBy?.name ?? null,
+      engine: engineOf(bot),
       intro: bot.intro ?? null,
     },
   };

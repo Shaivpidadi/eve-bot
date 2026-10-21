@@ -662,11 +662,58 @@ export async function probeMcp(url: string, headers: Record<string, string>): Pr
   }
 }
 
+/** How long one tool call on a connector's server may take. */
+const CALL_TIMEOUT_MS = 60_000;
+
+/**
+ * One request to a connector's server, the way eve's connections make it
+ * (Streamable HTTP): opens a session with the live record's credentials, asks,
+ * and hangs up. For Claude Code and Codex Bots, whose connector tools run
+ * outside eve (`engines/connector-calls.ts`); the caller decides first whether
+ * the call may go ahead at all. Throws with the server's reason.
+ */
+export async function connectorRequest(connector: Connector, method: "tools/list" | "tools/call", params: Record<string, unknown>, timeoutMs = CALL_TIMEOUT_MS): Promise<unknown> {
+  let headers: Record<string, string>;
+  let init: { session: string | null };
+  try {
+    headers = await connectorHeaders(connector);
+    init = await rpc(connector.url, headers, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "bot-connectors", version: "1" } },
+    });
+  } catch (error) {
+    throw new ConnectorRequestError(error instanceof Error ? error.message : String(error), "not_sent");
+  }
+  await rpc(connector.url, headers, { jsonrpc: "2.0", method: "notifications/initialized" }, init.session).catch(() => undefined);
+  try {
+    return (await rpc(connector.url, headers, { jsonrpc: "2.0", id: 2, method, params }, init.session, timeoutMs)).result;
+  } catch (error) {
+    // The server's own error reply proves it did not act; anything else (a timeout, a dropped line, a 5xx) leaves it unknown.
+    throw new ConnectorRequestError(error instanceof Error ? error.message : String(error), error instanceof McpErrorReply ? "refused" : "unknown");
+  }
+}
+
+/** Why a connector request failed, and what that proves: `not_sent` and `refused` mean the server did nothing. */
+export class ConnectorRequestError extends Error {
+  constructor(
+    message: string,
+    readonly outcome: "not_sent" | "refused" | "unknown",
+  ) {
+    super(message);
+  }
+}
+
+/** The server answered the request with a JSON-RPC error. */
+class McpErrorReply extends Error {}
+
 async function rpc(
   url: string,
   headers: Record<string, string>,
   message: { jsonrpc: "2.0"; id?: number; method: string; params?: unknown },
   session?: string | null,
+  timeoutMs = PROBE_TIMEOUT_MS,
 ): Promise<{ result: unknown; session: string | null }> {
   const response = await fetch(url, {
     method: "POST",
@@ -677,7 +724,7 @@ async function rpc(
       ...(session ? { "mcp-session-id": session } : {}),
     },
     body: JSON.stringify(message),
-    signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const nextSession = response.headers.get("mcp-session-id") ?? session ?? null;
   if (response.status === 401 || response.status === 403) throw new Error("The server turned the key down.");
@@ -691,7 +738,7 @@ async function rpc(
   const reply = type.includes("text/event-stream")
     ? await readEvent(response, message.id)
     : ((await response.json()) as { result?: unknown; error?: { message?: string } });
-  if (reply?.error) throw new Error(reply.error.message ?? "The server reported an error.");
+  if (reply?.error) throw new McpErrorReply(reply.error.message ?? "The server reported an error.");
   if (reply === null || !("result" in reply)) throw new Error("The server did not answer like an MCP server.");
   return { result: reply.result, session: nextSession };
 }

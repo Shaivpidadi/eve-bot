@@ -2,11 +2,14 @@
 
 import type { InputOption, InputRequest, InputResolution } from "eve/client";
 
+import { useCallback, useEffect, useState } from "react";
+
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
+import { api, errorMessage, isRecord, SignedOutError } from "./api";
 import { humanTool } from "./room-store";
 
 const APPROVAL_OPTIONS: readonly InputOption[] = [
@@ -232,6 +235,110 @@ export function AskCard({
         : null}
       {noteBox}
       {foot}
+    </Card>
+  );
+}
+
+type Decided = { readonly outcome: "approved" | "denied"; readonly by: string; readonly status: string } | null;
+
+type Proposal =
+  | {
+      readonly kind: "email";
+      readonly actionId: string;
+      readonly email: { readonly to: readonly string[]; readonly cc: readonly string[]; readonly subject: string; readonly text: string };
+      readonly decided: Decided;
+    }
+  | {
+      readonly kind: "connector";
+      readonly actionId: string;
+      readonly call: { readonly label: string; readonly tool: string; readonly arguments: Readonly<Record<string, unknown>> };
+      readonly result: string | null;
+      readonly decided: Decided;
+    };
+
+/**
+ * An email, or a change through a connector, a Claude Code or Codex Bot asked
+ * for (agent/lib/engines/proposals.ts). Such a Bot has no eve approval card, so
+ * this one reads its proposal and answers it: eve-bot does it exactly as
+ * shown when the person says so, once.
+ */
+export function ProposalCard({ actionId }: { actionId: string }) {
+  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const response = await api(`/bot/v1/proposals/${encodeURIComponent(actionId)}`);
+      const body: unknown = await response.json().catch(() => null);
+      if (response.ok && isRecord(body) && isRecord(body.proposal)) setProposal(body.proposal as unknown as Proposal);
+    } catch (caught) {
+      if (!(caught instanceof SignedOutError)) setError("Could not load this request.");
+    }
+  }, [actionId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const decide = async (approve: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await api(`/bot/v1/proposals/${encodeURIComponent(actionId)}`, { method: "POST", body: JSON.stringify({ approve }) });
+      if (!response.ok) setError(await errorMessage(response, "Could not answer this request."));
+      await load();
+    } catch (caught) {
+      if (!(caught instanceof SignedOutError)) setError("Could not answer this request.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (proposal === null) return error === null ? null : <p className="m-0 my-2 text-xs text-destructive">{error}</p>;
+  const { decided } = proposal;
+  const email = proposal.kind === "email" ? proposal.email : null;
+  const done = decided?.outcome === "approved" && (email === null ? decided.status === "done" : decided.status === "sent");
+  const state = decided === null ? "Needs you" : decided.outcome === "denied" ? "Discarded" : done ? (email === null ? "Done" : "Sent") : email === null ? "Not done" : "Not sent";
+  return (
+    <Card className="my-2 w-full max-w-[440px] gap-0 self-start py-0 text-[12.5px]">
+      {email !== null ? (
+        <>
+          <Head title="Email ready to send" state={state} done={decided !== null} />
+          <Field label="To" value={email.to.join(", ")} />
+          {email.cc.length > 0 ? <Field label="Cc" value={email.cc.join(", ")} /> : null}
+          <Field label="Subject" value={email.subject} />
+          <div className={BODY}>{email.text}</div>
+        </>
+      ) : proposal.kind === "connector" ? (
+        <>
+          <Head title={`Change in ${proposal.call.label}`} state={state} done={decided !== null} />
+          <Field label="Tool" value={proposal.call.tool} />
+          <div className={cn(BODY, "font-mono text-[11.5px]")}>{JSON.stringify(proposal.call.arguments, null, 2)}</div>
+          {proposal.result === null ? null : <div className={cn(BODY, "text-muted-foreground")}>{proposal.result}</div>}
+        </>
+      ) : null}
+      <div className={FOOT}>
+        {decided === null ? (
+          <>
+            <Button size="sm" disabled={busy} onClick={() => void decide(true)}>
+              {email === null ? "Run it" : "Send email"}
+            </Button>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => void decide(false)}>
+              Discard
+            </Button>
+          </>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            {decided.outcome === "denied"
+              ? `Discarded by ${decided.by}`
+              : done
+                ? `${email === null ? "Done" : "Sent"}, approved by ${decided.by}`
+                : `Approved by ${decided.by}, but not ${email === null ? "done" : "sent"} (${decided.status})`}
+          </span>
+        )}
+        {error === null ? null : <span className="basis-full text-xs text-destructive">{error}</span>}
+      </div>
     </Card>
   );
 }

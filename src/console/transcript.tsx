@@ -41,7 +41,7 @@ import {
   TraceTitle,
 } from "@/components/ui/trace";
 
-import { AskCard } from "./ask-card";
+import { AskCard, ProposalCard } from "./ask-card";
 import { Avatar } from "./avatar";
 import { clock, dividerWhen, needsDivider } from "./format";
 import { api } from "./api";
@@ -285,6 +285,9 @@ export function Transcript({
           );
           break;
         }
+        case "proposal":
+          rows.push(<ProposalCard key={item.key} actionId={item.actionId} />);
+          break;
         case "ask": {
           const request = room.asks.get(item.requestId);
           if (request === undefined) break;

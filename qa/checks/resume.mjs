@@ -75,6 +75,12 @@ function resumeCheck({ viaTick }) {
       const closes = end.events.filter((entry) => entry.kind === "job.done");
       expect(closes.length <= 1, true, "the job closed once", { closes });
       expect(final?.resumedFrom, (n) => n >= (before.journal ?? []).length, "the second run started from the journal", { resumedFrom: final?.resumedFrom, continued });
+      // The card reads the journal as the timeline (D1.6.3): in the order it happened, with what the crashed run wrote kept as it was, ahead of the rest.
+      const journal = final?.journal ?? [];
+      const times = journal.map((line) => Date.parse(line.at));
+      expect(times.every((at, index) => index === 0 || at >= times[index - 1]), true, "the journal reads in time order", { journal });
+      const kept = (before.journal ?? []).map((line) => `${line.at} ${line.kind} ${line.text}`);
+      expect(JSON.stringify(journal.slice(0, kept.length).map((line) => `${line.at} ${line.kind} ${line.text}`)), JSON.stringify(kept), "the crashed run's steps open the timeline, unchanged", { before: before.journal, journal });
       // The file itself says whether step 1 was redone: once means "first" then "second", and nothing else.
       const content = await call(`/bot/v1/computer/files/content?path=${encodeURIComponent(file)}`);
       const lines = typeof content.body === "string" ? content.body.trim().split("\n").map((line) => line.trim()) : null;

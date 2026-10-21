@@ -57,17 +57,38 @@ describe("models", () => {
     expect(custom.reasoningFor("high", "medium")).toEqual({ reasoning: "high" });
   });
 
-  it("caps tokens per session on a custom endpoint only, with defaults, overrides, and off", async () => {
+  it("caps tokens per session on a custom endpoint, with defaults, overrides, and off; eve's input default on Gateway", async () => {
     const gateway = await import("../agent/lib/models");
-    expect(gateway.tokenLimits("hq")).toEqual({});
+    expect(gateway.tokenLimits("hq")).toEqual({ input: 40_000_000, output: false });
     vi.resetModules();
     vi.stubEnv("BOT_MODEL_BASE_URL", "http://localhost:11434/v1");
     vi.stubEnv("BOT_JOB_OUTPUT_TOKEN_LIMIT", "250000");
     vi.stubEnv("BOT_HQ_INPUT_TOKEN_LIMIT", "off");
     vi.stubEnv("BOT_HQ_OUTPUT_TOKEN_LIMIT", "not-a-number");
     const custom = await import("../agent/lib/models");
-    expect(custom.tokenLimits("job")).toEqual({ maxInputTokensPerSession: 10_000_000, maxOutputTokensPerSession: 250_000 });
-    expect(custom.tokenLimits("hq")).toEqual({ maxInputTokensPerSession: false, maxOutputTokensPerSession: 2_000_000 });
+    expect(custom.tokenLimits("job")).toEqual({ input: 10_000_000, output: 250_000 });
+    expect(custom.tokenLimits("hq")).toEqual({ input: false, output: 2_000_000 });
+  });
+
+  it("stops a session's window at its spend, or at its token caps, counting only new input", async () => {
+    const window = (over: Partial<{ inputTokens: number; cacheReadTokens: number; outputTokens: number; costUsd: number }>) => ({
+      window: { inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, ...over },
+    });
+    const gateway = await import("../agent/lib/models");
+    const job = gateway.sessionUsage("job", 5);
+    expect(job(window({ costUsd: 4.99 }))).toBe(false);
+    expect(job(window({ costUsd: 5 }))).toBe(true);
+    // Cache reads are the session replaying itself, not new input.
+    expect(job(window({ inputTokens: 45_000_000, cacheReadTokens: 30_000_000 }))).toBe(false);
+    expect(job(window({ inputTokens: 45_000_000, cacheReadTokens: 1_000_000 }))).toBe(true);
+    // A cap that is no number leaves only the token caps.
+    expect(gateway.sessionUsage("hq", Number.NaN)(window({ costUsd: 1_000 }))).toBe(false);
+    vi.resetModules();
+    vi.stubEnv("BOT_MODEL_BASE_URL", "http://localhost:11434/v1");
+    const custom = await import("../agent/lib/models");
+    // An unpriced local model reports no cost: its output cap is what stops it.
+    expect(custom.sessionUsage("job", 5)(window({ outputTokens: 500_000 }))).toBe(true);
+    expect(custom.sessionUsage("job", 5)(window({ outputTokens: 499_999 }))).toBe(false);
   });
 });
 

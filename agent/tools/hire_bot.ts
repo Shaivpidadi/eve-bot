@@ -2,9 +2,26 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { findBot, getBot, hireBot } from "../lib/bots";
+import { ENGINE_LABELS, ENGINES, type Engine, engineRefusal, enginesOn } from "../lib/engines";
 import { operator } from "../lib/session";
 import { writeIntro } from "../lib/intro";
 import { within } from "../lib/cancel";
+
+/**
+ * Offered only where the owner turned an engine on (`BOT_ENGINES`), so HQ's
+ * tools read exactly as before everywhere else. Every Bot runs on eve unless
+ * the person asks for another.
+ */
+const engineField = enginesOn()
+  ? {
+      engine: z
+        .enum(ENGINES)
+        .optional()
+        .describe(
+          `What runs its jobs: ${ENGINES.map((engine) => `"${engine}" for ${ENGINE_LABELS[engine]}`).join(", ")}. Leave it out for eve; only when the person asks for another.`,
+        ),
+    }
+  : {};
 
 export default defineTool({
   description:
@@ -21,6 +38,7 @@ export default defineTool({
       ),
     emoji: z.string().max(8).optional(),
     skills: z.array(z.string().max(40)).max(12).optional(),
+    ...engineField,
   }),
   label: {
     start: ({ name, role }) => `Hire ${name} — ${role}`,
@@ -35,6 +53,11 @@ export default defineTool({
         bot: existing,
       };
     }
+    const engine = (input as { engine?: Engine }).engine;
+    if (engine !== undefined) {
+      const refused = engineRefusal(engine, { workspaceId: who.workspaceId });
+      if (refused !== null) return { hired: false as const, reason: refused };
+    }
     // In a Bot's own thread, the operator is asking that Bot to grow the team.
     const creator = who.botId === null ? null : await getBot(who.workspaceId, who.botId);
     const bot = await hireBot({
@@ -45,6 +68,7 @@ export default defineTool({
       persona: input.persona,
       ...(input.emoji ? { emoji: input.emoji } : {}),
       ...(input.skills ? { skills: input.skills } : {}),
+      ...(engine === undefined ? {} : { engine }),
       ...(creator === null ? {} : { createdBy: { botId: creator.id, name: creator.name } }),
     });
     // Its hello and first jobs for its empty thread; a slow or failed write never holds up the hire.

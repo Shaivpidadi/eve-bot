@@ -256,12 +256,15 @@ export function endpointModel(endpoint: ModelEndpoint, id: string): LanguageMode
  * Token caps for a session on a custom endpoint, the backstop for a model
  * nothing prices. A runaway loop on a free local model costs electricity, not
  * dollars, but it still ties up the team's computer; these stop it. On AI
- * Gateway the USD caps do that job and eve's own defaults apply.
+ * Gateway the USD caps do that job.
  */
 const TOKEN_LIMITS = {
   hq: { input: ["BOT_HQ_INPUT_TOKEN_LIMIT", 40_000_000], output: ["BOT_HQ_OUTPUT_TOKEN_LIMIT", 2_000_000] },
   job: { input: ["BOT_JOB_INPUT_TOKEN_LIMIT", 10_000_000], output: ["BOT_JOB_OUTPUT_TOKEN_LIMIT", 500_000] },
 } as const satisfies Record<string, Record<"input" | "output", readonly [string, number]>>;
+
+/** eve's own default, kept where no custom endpoint sets ours: 40M new input tokens per window. */
+const EVE_DEFAULT_INPUT = 40_000_000;
 
 function tokenLimit([name, fallback]: readonly [string, number]): number | false {
   const value = process.env[name]?.trim();
@@ -271,15 +274,35 @@ function tokenLimit([name, fallback]: readonly [string, number]): number | false
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-export function tokenLimits(role: keyof typeof TOKEN_LIMITS): {
-  readonly maxInputTokensPerSession?: number | false;
-  readonly maxOutputTokensPerSession?: number | false;
-} {
-  if (customEndpoint() === null) return {};
-  return {
-    maxInputTokensPerSession: tokenLimit(TOKEN_LIMITS[role].input),
-    maxOutputTokensPerSession: tokenLimit(TOKEN_LIMITS[role].output),
-  };
+/** The token caps in force for a role: ours on a custom endpoint, eve's default input cap on AI Gateway. */
+export function tokenLimits(role: keyof typeof TOKEN_LIMITS): { readonly input: number | false; readonly output: number | false } {
+  if (customEndpoint() === null) return { input: EVE_DEFAULT_INPUT, output: false };
+  return { input: tokenLimit(TOKEN_LIMITS[role].input), output: tokenLimit(TOKEN_LIMITS[role].output) };
+}
+
+/** One window's usage, as eve's `limits.sessionUsage` is given it. */
+interface WindowUsage {
+  readonly inputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly outputTokens: number;
+  readonly costUsd?: number;
+}
+
+/**
+ * eve's `limits.sessionUsage` for a role: the session stops starting model
+ * calls once its current window (since the last approved continuation) spent
+ * `costLimitUsd`, or reached the role's token caps. Input counts new input
+ * only (cache reads are the session replaying its own history), as eve's own
+ * default does. A cost the provider does not report counts as none, so the
+ * token caps are what bound an unpriced model.
+ */
+export function sessionUsage(role: keyof typeof TOKEN_LIMITS, costLimitUsd: number): (usage: { readonly window: WindowUsage }) => boolean {
+  const { input, output } = tokenLimits(role);
+  const usd = Number.isFinite(costLimitUsd) && costLimitUsd > 0 ? costLimitUsd : null;
+  return ({ window }) =>
+    (usd !== null && (window.costUsd ?? 0) >= usd) ||
+    (input !== false && window.inputTokens - window.cacheReadTokens >= input) ||
+    (output !== false && window.outputTokens >= output);
 }
 
 /** HQ's model: a Gateway model name, or a model on the custom endpoint with its context window. */

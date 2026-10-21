@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { addToLedger, addUsage, dayOf, EMPTY_LEDGER, NO_USAGE, UNREPORTED_MODEL, usageOfStep } from "../agent/lib/usage";
-import { describeUsage, tokens, usd } from "../agent/lib/usage-format";
+import { describeUsage, tokenTotal, tokens, usd } from "../agent/lib/usage-format";
 
 const step = (input: number, output: number, cost: number, model: string | null = "gateway/anthropic/claude-sonnet-5") =>
   usageOfStep({ usage: { inputTokens: input, outputTokens: output, cacheReadTokens: 10, cacheWriteTokens: 5, costUsd: cost } }, model);
@@ -67,6 +67,10 @@ describe("usage", () => {
     expect(usd(0)).toBe("$0");
     expect(describeUsage(step(46_500, 400, 0.003134, "alibaba/qwen3.8-flash"))).toBe("alibaba/qwen3.8-flash · 46.9k tokens · $0.003");
     expect(describeUsage(undefined)).toBeNull();
+    // A Claude Code or Codex Bot's calls report a cost and no tokens: not "0 tokens".
+    expect(describeUsage(step(0, 0, 0.041, "claude-sonnet-4-5"))).toBe("claude-sonnet-4-5 · $0.04");
+    expect(tokenTotal(step(0, 0, 0.041, "claude-sonnet-4-5"))).toBe("—");
+    expect(tokenTotal(step(0, 0, 0, "local"))).toBe("0");
   });
 });
 

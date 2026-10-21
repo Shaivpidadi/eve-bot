@@ -9,7 +9,7 @@ import { effectiveEnv } from "./settings/store";
 /**
  * What the workspace may spend, and what it has, per calendar month.
  *
- * The per-session caps (`maxTokenCostUsdPerSession`) bound one session; they
+ * The per-session caps (`limits.sessionUsage`) bound one session; they
  * reset with every fresh session, every routine cycle and every retry, and
  * know nothing of the calls made outside a session (Jev, memory). This is the
  * aggregate: one document per workspace and UTC month, `budget/<ws>/<YYYY-MM>.json`,

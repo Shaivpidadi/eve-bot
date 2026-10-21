@@ -22,12 +22,16 @@ export interface RewindOutcome {
 
 const DONE: readonly Action["state"][] = ["succeeded", "delivery_unknown", "executing"];
 
-/** Emails (and later, other outward actions) the job sent at or after `cutoff`: these stay done. */
+/** Emails and connector changes the job made at or after `cutoff`: these stay done. */
 export function keptActions(actions: readonly Action[], jobId: string, cutoff: string): string[] {
   return actions
     .filter((action) => action.jobId === jobId && action.createdAt >= cutoff && DONE.includes(action.state))
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-    .map((action) => `${action.kind === "email.send" ? "Sent an email" : action.kind} to ${action.target.join(", ")} (${action.state === "succeeded" ? "sent" : "possibly sent"}, ${action.createdAt.slice(0, 16).replace("T", " ")} UTC)`);
+    .map((action) => {
+      const email = action.kind === "email.send";
+      const state = action.state === "succeeded" ? (email ? "sent" : "done") : email ? "possibly sent" : "possibly done";
+      return `${email ? "Sent an email to" : "Changed through"} ${action.target.join(", ")} (${state}, ${action.createdAt.slice(0, 16).replace("T", " ")} UTC)`;
+    });
 }
 
 export async function rewind(

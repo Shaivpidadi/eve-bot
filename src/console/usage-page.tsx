@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { tokens, usd, type UsageLike } from "../../agent/lib/usage-format";
+import { tokens, tokenTotal, usd, type UsageLike } from "../../agent/lib/usage-format";
 import { api, isRecord, SignedOutError } from "./api";
 import { ArrowLeftIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -383,7 +383,7 @@ export function UsagePage({ onClose, exportable = false }: { onClose: () => void
                       <TableCell>{when(job.at)}</TableCell>
                       <TableCell>{modelName(job.usage)}</TableCell>
                       <TableCell>{job.usage.steps}</TableCell>
-                      <TableCell>{tokens(job.usage.inputTokens + job.usage.outputTokens)}</TableCell>
+                      <TableCell>{tokenTotal(job.usage)}</TableCell>
                       <TableCell>{usd(job.usage.costUsd)}</TableCell>
                     </TableRow>
                   ))}
@@ -421,7 +421,7 @@ function WhoRow({ name, note, usage, total }: { name: string; note: string | nul
         {note === null ? null : <small className={quiet}> {note}</small>}
       </TableCell>
       <TableCell>{usage.steps}</TableCell>
-      <TableCell>{tokens(usage.inputTokens + usage.outputTokens)}</TableCell>
+      <TableCell>{tokenTotal(usage)}</TableCell>
       <TableCell>
         {usd(usage.costUsd)}
         <small className={quiet}> · {share(usage.costUsd, total.costUsd)}</small>

@@ -3,7 +3,7 @@ import { defineAgent, defineDynamic } from "eve";
 
 import type { DynamicResolveContext } from "eve";
 
-import { customEndpoint, effortInBrief, endpointModel, gatewaySelection, modelForEffort, modelInBrief, type ReasoningLevel, reasoningFor, tokenLimits, withOutputLimit } from "../../lib/models";
+import { customEndpoint, effortInBrief, endpointModel, gatewaySelection, modelForEffort, modelInBrief, type ReasoningLevel, reasoningFor, sessionUsage, withOutputLimit } from "../../lib/models";
 
 const textOf = (message: ModelMessage): string =>
   typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.map((part) => (part.type === "text" ? part.text : "")).join("\n") : "";
@@ -107,9 +107,10 @@ export default defineAgent({
   compaction: {
     thresholdPercent: 0.75,
   },
+  // A job's run keeps its transcript too, as HQ's does (see agent/agent.ts).
+  experimental: { workflow: { retention: "default" } },
   limits: {
-    maxTokenCostUsdPerSession: Number(process.env.BOT_JOB_COST_LIMIT_USD ?? 5),
-    // On a custom endpoint, token caps back the USD cap up for unpriced models.
-    ...tokenLimits("job"),
+    // Spend per window of the session; on a custom endpoint, token caps back the USD cap up for unpriced models.
+    sessionUsage: sessionUsage("job", Number(process.env.BOT_JOB_COST_LIMIT_USD ?? 5)),
   },
 });

@@ -195,6 +195,8 @@ export function Composer({ member, live, store }: { member: Member; live: boolea
           placeholder={`Message ${member.name} · @ to tag a teammate`}
           onChange={(event) => {
             setText(event.target.value);
+            // A thread's first message is on its way: have its session ready by the time it is sent.
+            if (event.target.value.trim() !== "") store.prewarm();
             setCaret(event.target.selectionStart ?? event.target.value.length);
             setPick(0);
             setTagClosed(null);

@@ -36,6 +36,11 @@ export interface Bot {
   hidden?: boolean;
   /** How it introduces itself in its empty thread: from its template, or written when it was hired. */
   intro?: { readonly hello: string; readonly starters: readonly string[] } | null;
+  /**
+   * What runs its jobs. Absent means eve, so every existing Bot is unchanged.
+   * Another engine runs only where the owner turned it on (`lib/engines`).
+   */
+  engine?: "eve" | "claude-code" | "codex";
   updatedAt: string;
   stats: {
     jobsCompleted: number;
@@ -95,6 +100,14 @@ export interface Job {
   effortBy?: "hq" | "default";
   /** What the job's model steps cost so far (see `usage.ts`). Absent until the first step completes. */
   usage?: Usage;
+  /**
+   * For a job on a harness engine (`lib/engines`): how many of each session's
+   * priced model calls are already in `usage`, so a look retried charges
+   * nothing twice.
+   */
+  harnessCharged?: Readonly<Record<string, number>>;
+  /** For a job on a harness engine: where each session's live stream was last read into the Bot's thread. */
+  harnessHeard?: Readonly<Record<string, string>>;
   /** When the job becomes eligible to run. */
   runAt: string;
   /** Repeat interval in minutes, or `null` for a one-shot job. */

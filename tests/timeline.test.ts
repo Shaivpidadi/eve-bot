@@ -35,6 +35,14 @@ describe("buildTimeline", () => {
     expect(items.map((item) => item.kind)).toEqual(["steps"]);
   });
 
+  it("shows a Claude Code or Codex Bot's words in its own thread as it says them, between its steps", () => {
+    const here = (e: ActivityEvent) => ({ ...e, data: { ...e.data, room: "bot-bot_w" } });
+    const said = event({ kind: "job.progress", at: "2026-10-14T10:00:40.000Z", text: "Found it on the city's site.", data: { said: true } });
+    const items = buildTimeline(wiki, [], [here(asked), step, said, here(done)], [hq, wiki]);
+    expect(items.map((item) => item.kind)).toEqual(["steps", "bot", "steps"]);
+    expect(items[1]).toMatchObject({ kind: "bot", text: "Found it on the city's site." });
+  });
+
   it("keeps another thread's job out of HQ's desk", () => {
     const elsewhere = { ...done, data: { ...done.data, room: "bot-bot_x" } };
     expect(buildTimeline(hq, [], [elsewhere], [hq, wiki])).toEqual([]);

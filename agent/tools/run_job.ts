@@ -8,6 +8,7 @@ import { getBot } from "../lib/bots";
 import { admitClaimedRun, BUDGET_HALT_REASON, releaseRun, runHalted, settleRun } from "../lib/budget";
 import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
 import { renderBrief } from "../lib/brief";
+import type { Engine, HarnessEngine } from "../lib/engines";
 import { reapIdleScreens } from "../lib/computer/reaper";
 import { forgetJob } from "../lib/computer/screens";
 import { newId } from "../lib/ids";
@@ -245,17 +246,47 @@ async function runCycle(
   if (abortSignal.aborted) stop.abort();
   else abortSignal.addEventListener("abort", () => stop.abort(), { once: true });
 
+  // A Bot on another engine (lib/engines): its session runs outside this
+  // workflow, so `working` never settles on its own; each look below asks the
+  // session instead, and every way out of the run stops it.
+  const engine: Engine = claim.engine ?? "eve";
+  let harness: { readonly engine: HarnessEngine; readonly sessionId: string; cursor: string | null; charged: number; partial: string } | null = null;
+  let settledEarly: Settled | null = null;
+  if (engine !== "eve") {
+    const started = await startHarness(engine, workspaceId, jobId, claim.token, claim.brief);
+    if (started.ok) harness = { engine, sessionId: started.sessionId, cursor: null, charged: 0, partial: "" };
+    else settledEarly = { ok: false, error: started.error };
+  }
+  // What the session spent is charged as it goes (each look) and once more when it stops.
+  const spendOf = (session: { readonly sessionId: string; readonly charged: number }) => ({
+    workspaceId,
+    jobId,
+    botId: claim.botId ?? "",
+    token: claim.token,
+    sessionId: session.sessionId,
+    charged: session.charged,
+  });
+  const halt = async (): Promise<void> => {
+    stop.abort();
+    if (harness !== null) await stopHarness(harness.engine, spendOf(harness));
+  };
+
   // No output schema: the result of record is what finish_job stored. A
   // structured final answer is welcome but not required; see salvageResult.
-  const working: Promise<Settled> = ctx
-    .agent("teammate")
-    .send(claim.brief, { signal: stop.signal })
-    .then((response) => response.result())
-    .then(
-      (result): Settled =>
-        result.status === "failed" ? { ok: false, error: result.error?.message ?? "The bot's turn failed." } : { ok: true, raw: result.data ?? result.message ?? null },
-      (error: unknown): Settled => ({ ok: false, error: describeError(error) }),
-    );
+  const working: Promise<Settled> =
+    engine !== "eve"
+      ? settledEarly !== null
+        ? Promise.resolve(settledEarly)
+        : new Promise<Settled>(() => undefined)
+      : ctx
+          .agent("teammate")
+          .send(claim.brief, { signal: stop.signal })
+          .then((response) => response.result())
+          .then(
+            (result): Settled =>
+              result.status === "failed" ? { ok: false, error: result.error?.message ?? "The bot's turn failed." } : { ok: true, raw: result.data ?? result.message ?? null },
+            (error: unknown): Settled => ({ ok: false, error: describeError(error) }),
+          );
 
   // Heartbeat: while the bot works, look at the job every 20 seconds and keep
   // the lease fresh, so the watchdog never mistakes a long job for a dead one
@@ -274,13 +305,39 @@ async function runCycle(
     const still =
       looks % RENEW_EVERY === 0 ? await keepLease(workspaceId, jobId, claim.token) : (await standing(workspaceId, jobId, claim.token)) === "owns";
     if (!still) {
-      stop.abort();
+      await halt();
       await closeBudget(workspaceId, claim.token, "release");
       return answer(stoppedEarly(jobId, await standing(workspaceId, jobId, claim.token)));
     }
     // The budget halted the run: its model resolver refuses the next step, and this stops the turn outright.
-    if ((await budgetHalted(workspaceId, claim.token)) !== null) stop.abort();
+    const halted = await budgetHalted(workspaceId, claim.token);
+    if (halted !== null) {
+      await halt();
+      if (harness !== null) settled = { ok: false, error: halted };
+      continue;
+    }
+    // Stopped from eve while a harness session works: nothing aborts that session but this.
+    if (harness !== null && abortSignal.aborted) {
+      await halt();
+      settled = { ok: false, error: "Stopped." };
+      continue;
+    }
+    if (harness !== null) {
+      const { look, charged, halt: overBudget } = await lookAtHarness(harness.engine, harness.cursor, harness.partial, spendOf(harness));
+      harness.charged = charged;
+      harness.partial = look.partial;
+      // Spend is read from the session's log at every look (H0), so a run over the budget stops here, mid-turn.
+      if (overBudget !== null) {
+        await halt();
+        settled = { ok: false, error: overBudget };
+        continue;
+      }
+      if (look.kind === "working") harness.cursor = look.cursor;
+      else settled = look.ok ? { ok: true, raw: null } : { ok: false, error: look.error };
+    }
   }
+  // The turn is over one way or another: a harness session never outlives its run.
+  if (harness !== null) await stopHarness(harness.engine, spendOf(harness));
 
   // Stopped from eve (a task cancel, or the conversation started over): the job is cancelled too.
   if (abortSignal.aborted && !stop.signal.aborted) stop.abort();
@@ -435,6 +492,14 @@ type Claim =
       ok: true;
       token: string;
       brief: string;
+      /**
+       * What runs this job: eve, or a harness engine the owner turned on
+       * (lib/engines). Absent in a claim recorded before engines existed,
+       * which a run in flight across the upgrade replays: that is eve.
+       */
+      engine?: Engine;
+      /** Absent in a claim recorded before engines existed; only harness runs need it. */
+      botId?: string;
       botName: string;
       title: string;
       requiresSignoff: boolean;
@@ -470,6 +535,14 @@ async function claimForRun(
     // Hand a dispatched job back; the watchdog skips paused bots until they resume.
     await releaseJob(workspaceId, jobId);
     return refused(`${bot.name} is paused. Resume them to run this job.`);
+  }
+  // Checked again at every run, so a data control turned on since the Bot was set up stops it here.
+  const { engineOf, engineRefusal } = await import("../lib/engines");
+  const engine = engineOf(bot);
+  const engineRefused = engineRefusal(engine, { workspaceId });
+  if (engineRefused !== null) {
+    await releaseJob(workspaceId, jobId);
+    return refused(`${bot.name} runs on another engine that cannot run here: ${engineRefused}`);
   }
 
   // A job whose last run failed gets another try on a more capable model,
@@ -535,7 +608,9 @@ async function claimForRun(
   return {
     ok: true,
     token,
-    brief: renderBrief(bot, claimed.job, { token, model }),
+    brief: engine === "eve" ? renderBrief(bot, claimed.job, { token, model }) : (await import("../lib/engines/brief")).renderHarnessBrief(bot, claimed.job),
+    engine,
+    botId: bot.id,
     botName: bot.name,
     title: claimed.job.title,
     requiresSignoff: claimed.job.requiresSignoff,
@@ -699,6 +774,47 @@ async function resultRecordedSince(
 async function newWaitToken(): Promise<string> {
   "use step";
   return newId("wait");
+}
+
+/** Starts the run's harness session and binds it to the run. Steps load durable-harness; the workflow body never does. */
+async function startHarness(engine: HarnessEngine, workspaceId: string, jobId: string, token: string, brief: string) {
+  "use step";
+  const { startHarnessRun } = await import("../lib/engines/sessions");
+  return startHarnessRun(engine, { workspaceId, jobId, token, brief });
+}
+
+interface HarnessCharge {
+  readonly workspaceId: string;
+  readonly jobId: string;
+  readonly botId: string;
+  readonly token: string;
+  readonly sessionId: string;
+  /** How many of the session's priced calls are charged already. */
+  readonly charged: number;
+}
+
+/**
+ * One look at the session's turn: charges what it spent since the last, and
+ * puts what the model wrote into the Bot's thread. `partial` is the text the
+ * last look caught mid-stretch, which this one goes on with.
+ */
+async function lookAtHarness(engine: HarnessEngine, cursor: string | null, partial: string, charge: HarnessCharge) {
+  "use step";
+  const { chargeHarnessSpend, lookAtHarnessRun, tellThread } = await import("../lib/engines/sessions");
+  const look = await lookAtHarnessRun(engine, charge.sessionId, cursor, undefined, partial);
+  const { charged, halted } = await chargeHarnessSpend({ ...charge, spend: look.spend });
+  await tellThread({ ...charge, heard: look.heard, said: look.said }).catch(() => undefined);
+  // The reason as words, from here: the workflow body must not reach into the budget module itself.
+  return { look: { ...look, spend: [], said: [] }, charged, halt: halted ? BUDGET_HALT_REASON : null };
+}
+
+/** Charges what is left, then stops the session for good (closes it, deletes its Sandbox and Drive). */
+async function stopHarness(engine: HarnessEngine, charge: HarnessCharge): Promise<void> {
+  "use step";
+  const { chargeHarnessSpend, lookAtHarnessRun, stopHarnessRun } = await import("../lib/engines/sessions");
+  const last = await lookAtHarnessRun(engine, charge.sessionId, null).catch(() => null);
+  if (last !== null) await chargeHarnessSpend({ ...charge, spend: last.spend }).catch(() => undefined);
+  await stopHarnessRun(engine, charge.sessionId);
 }
 
 

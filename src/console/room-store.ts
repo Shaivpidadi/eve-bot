@@ -75,7 +75,9 @@ export type RoomItem =
   /** A teammate's message to this thread's member (see `agent/lib/teammail.ts`). */
   | { readonly kind: "peer"; readonly key: string; readonly at: string; readonly from: string; readonly text: string }
   | ({ readonly kind: "notice"; readonly key: string; readonly at: string } & Notice)
-  | { readonly kind: "ask"; readonly key: string; readonly at: string; readonly requestId: string };
+  | { readonly kind: "ask"; readonly key: string; readonly at: string; readonly requestId: string }
+  /** An email a Claude Code or Codex Bot asked a person to send (see ask-card.tsx's ProposalCard). */
+  | { readonly kind: "proposal"; readonly key: string; readonly at: string; readonly actionId: string };
 
 export interface StepsItem {
   readonly kind: "steps";
@@ -238,6 +240,21 @@ export class RoomStore {
   };
 
   getSnapshot = (): RoomSnapshot => this.snapshot;
+
+  /** Whether this thread's session has been asked for ahead of its first message. */
+  private prewarmed = false;
+
+  /**
+   * The person started typing in a thread with no session yet: the server gets
+   * one ready (`POST …/prewarm`), so the durable run is up by the time they
+   * send. Once per thread until it is started over; best effort, since the
+   * first message makes the session anyway.
+   */
+  prewarm(): void {
+    if (this.prewarmed || this.sessionId !== null) return;
+    this.prewarmed = true;
+    void api(`/bot/v1/rooms/${encodeURIComponent(this.room)}/prewarm`, { method: "POST" }).catch(() => undefined);
+  }
 
   async send(message: string): Promise<boolean> {
     this.optimistic.push(message);
@@ -453,6 +470,7 @@ export class RoomStore {
   restart(): void {
     // The current follower is on the old session's stream; drop it before reading again.
     this.controller?.abort();
+    this.prewarmed = false;
     this.controller = null;
     this.following = false;
     this.reset();
@@ -841,7 +859,8 @@ export function buildTimeline(
     const close = event.kind === "job.done" || event.kind === "job.failed";
     const relevant =
       member.kind === "bot"
-        ? event.botId === member.id && (event.kind.startsWith("job.") || event.kind === "memory.saved")
+        ? event.botId === member.id &&
+          (event.kind.startsWith("job.") || event.kind === "memory.saved" || (event.kind === "input.requested" && typeof event.data?.proposal === "string"))
         : event.kind === "bot.hired" ||
           event.kind === "bot.retired" ||
           (event.kind === "memory.saved" && event.botId === null) ||
@@ -883,6 +902,11 @@ export function buildTimeline(
       });
       continue;
     }
+    // A Claude Code or Codex Bot's email waiting for a person: its own card.
+    if (event.kind === "input.requested") {
+      if (typeof event.data?.proposal === "string") out.push({ kind: "proposal", key: event.id, at: event.at, actionId: event.data.proposal });
+      continue;
+    }
     // Work this Bot was given from another thread reads as a conversation: who
     // asked, then the answer. The live step is on the working row meanwhile.
     const jobRoom = event.jobId == null ? undefined : roomOf.get(event.jobId);
@@ -901,6 +925,11 @@ export function buildTimeline(
       } else if (event.kind === "job.failed") {
         out.push({ kind: "notice", key: event.id, at: event.at, icon: "alert", tone: "error", label: withoutEmoji(event.text) });
       }
+      continue;
+    }
+    // A Claude Code or Codex Bot's own words while it works (lib/engines/sessions.ts tellThread).
+    if (event.kind === "job.progress" && event.data?.said === true) {
+      out.push({ kind: "bot", key: event.id, at: event.at, text: event.text });
       continue;
     }
     const last = out[out.length - 1];

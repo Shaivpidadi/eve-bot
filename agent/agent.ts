@@ -2,7 +2,8 @@ import { defineAgent, defineDynamic } from "eve";
 
 import type { DynamicResolveContext } from "eve";
 
-import { contextToSend, customEndpoint, defaultModelFor, gatewaySelection, hqModel, levelOf, reasoningFor, tokenLimits, withOutputLimit } from "./lib/models";
+import { enginesOn } from "./lib/engines";
+import { contextToSend, customEndpoint, defaultModelFor, gatewaySelection, hqModel, levelOf, reasoningFor, sessionUsage, withOutputLimit } from "./lib/models";
 
 /**
  * HQ's model on AI Gateway: the workspace's choice in the console (see
@@ -63,15 +64,24 @@ export default defineAgent({
   // A shared Workflow world (a Postgres one, say) lets a run outlive the process
   // that started it on a self-hosted server. Off unless named; see
   // docs/research/shared-world.md and BOT_WORKFLOW_WORLD in docs/configuration.md.
-  ...(process.env.BOT_WORKFLOW_WORLD?.trim()
-    ? { experimental: { workflow: { world: process.env.BOT_WORKFLOW_WORLD.trim() } } }
-    : {}),
+  experimental: {
+    workflow: {
+      // Threads and jobs read their transcripts back from their runs, so keep
+      // them for the World's default period, as eve did before 0.82 (which now
+      // deletes an authenticated session's run data when the session ends).
+      retention: "default",
+      ...(process.env.BOT_WORKFLOW_WORLD?.trim() ? { world: process.env.BOT_WORKFLOW_WORLD.trim() } : {}),
+    },
+  },
+  // Bots on Claude Code (lib/engines): with BOT_ENGINES on at build,
+  // durable-harness ships as a runtime dependency, loaded only when such a job
+  // runs. Off (the default), the agent service is built without it.
+  ...(enginesOn() ? { build: { externalDependencies: ["durable-harness"] } } : {}),
   limits: {
-    // A thread is long-lived by design; cap spend, not lifetime. Jobs started
-    // from a thread draw their budget from what the thread has left, so this
-    // stays above a job's own limit.
-    maxTokenCostUsdPerSession: Number(process.env.BOT_HQ_COST_LIMIT_USD ?? 10),
-    // On a custom endpoint, token caps back the USD cap up for unpriced models.
-    ...tokenLimits("hq"),
+    // A thread is long-lived by design; cap spend, not lifetime: per window of
+    // the session (a person's Continue starts the next). A job's run checks its
+    // own window against the job's limit (the teammate's agent.ts). On a custom
+    // endpoint, token caps back the USD cap up for unpriced models.
+    sessionUsage: sessionUsage("hq", Number(process.env.BOT_HQ_COST_LIMIT_USD ?? 10)),
   },
 });

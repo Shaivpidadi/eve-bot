@@ -16,6 +16,8 @@ export interface BoardState {
   readonly health?: BoardResponse["health"];
   /** The deployment lets the console download the workspace as an export file. */
   readonly exportable?: boolean;
+  /** What a Bot here may run on; absent from a server that does not report it (then eve alone). */
+  readonly engines?: BoardResponse["engines"];
 }
 
 const ACTIVITY_LIMIT = 1_200;
@@ -49,7 +51,7 @@ export function useBoard(): { board: BoardState | null; online: boolean; refresh
         events.current.delete(stale.id);
       }
 
-      setBoard({ workspaceId: next.workspaceId, user: next.user, profile: next.profile ?? null, members: next.members, activity, health: next.health, exportable: next.exportable });
+      setBoard({ workspaceId: next.workspaceId, user: next.user, profile: next.profile ?? null, members: next.members, activity, health: next.health, exportable: next.exportable, engines: next.engines });
       setOnline(true);
       if (!swept.current) {
         // Opening the console after a restart is the moment to pick up jobs the

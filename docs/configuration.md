@@ -138,6 +138,73 @@ paid option: $30 buys $80 of usage on the models it covers.
 | `BOT_QA` | `1` opens the QA suite's fault routes (crash a job's run, replace the computer) on this deployment; leave unset in production |
 | `BOT_STANDUP_CRON` / `BOT_STANDUP_ROOM` | when the daily standup runs (`0 13 * * 1-5`, in UTC) and where it posts: HQ's `desk` by default, or a Bot's room (`bot-<id>`) |
 
+## Bots on Claude Code or Codex (experimental, off)
+
+A Bot can run its jobs on Claude Code or Codex instead of eve, through Vercel's
+[`durable-harness`](https://vercel.com/blog/making-every-harness-durable). Every
+Bot runs on eve unless you choose otherwise: when the owner turns an engine on,
+the hire dialog asks what a new Bot runs on (eve preselected), and a Bot's
+profile can move it. HQ can do the same when asked. It is an experiment, and
+the library is still `0.0.x`: see `docs/plan/harness-engines.md` for what is
+built, what is not, and what the live checks showed.
+
+| Variable | Does |
+| --- | --- |
+| `BOT_ENGINES` | `claude-code`, `codex`, or both (`claude-code,codex`) turns those engines on for this deployment. Read at build: unset (the default), the build is exactly as without the feature |
+| `BOT_CLAUDE_CODE_MODEL` | the AI Gateway model a Claude Code Bot runs on (an `anthropic/…` model); the library's default when unset |
+| `BOT_CODEX_MODEL` | the AI Gateway model a Codex Bot runs on (one that speaks OpenAI's Responses API); `openai/gpt-5.4-mini` when unset |
+| `BOT_ENGINE_BUILTINS` | `1` gives these Bots the CLI's own tools: a shell and file editing (Claude Code's Bash, Read, Edit and Write, never WebFetch; Codex's shell and `apply_patch`), in the job's Sandbox on its own scratch Drive. Off when unset |
+| `BOT_ENGINE_NETWORK` | the Sandbox's outbound network: unset is none at all, `allow-all` is everything, a comma list of domains (`registry.npmjs.org,*.github.com`) is only those. Model calls never need it |
+
+**Billing.** Both engines make their model calls through AI Gateway, with the
+same `AI_GATEWAY_API_KEY` (or OIDC token) eve uses, so they are billed as
+Gateway credits, like every other Bot. A Claude Pro/Max or ChatGPT
+subscription is not used, and cannot be: the library has no way to sign in
+with one. Each job also uses a Vercel Sandbox and a Drive of its own, billed
+by Vercel as Sandbox time and storage.
+
+What such a Bot gets, and does not:
+
+- Its own Vercel Sandbox for each job, with no network unless
+  `BOT_ENGINE_NETWORK` opens it, deleted when the job ends. Not the team's
+  computer: no browser, no shared files.
+- Its tools: read the job, log a step, record the result, and propose an
+  email, which a person approves or declines in the Bot's thread before
+  eve-bot sends it, once.
+- The team's connectors, under each connector's gate as for any Bot, read
+  live on every call: reads run at once, and whatever the gate would ask
+  about appears as a card in the Bot's thread, which eve-bot carries out,
+  exactly as shown and once, when a person approves. Under the "all" gate
+  every call asks (such a Bot has no eve session for a first-use approval to
+  last in), and an approval given before the connector's settings changed
+  runs nothing. A shell and file editing only with
+  `BOT_ENGINE_BUILTINS=1`; each such call is logged before it runs and never
+  re-run after a crash, and Claude Code runs its commands under bubblewrap in
+  the VM (a turn fails if that cannot start).
+- The job's spend limit (`BOT_JOB_COST_LIMIT_USD`) as a cap the session itself
+  enforces, and the workspace budget checked at every look at the job (about
+  every 20 seconds): its spend is read from the session's log, charged to the
+  job and the Usage page as it goes, and the job stops when the budget runs out.
+- Owner's workspace only, and refused where it would drop a data control: with
+  `BOT_ZDR` or `BOT_INFERENCE_REGION` set, or on your own model endpoint
+  (`BOT_MODEL_BASE_URL`).
+
+**Not on Hobby.** Hobby's Sandbox quota is small, and once it is used up every
+new Sandbox waits until the next cycle, the team's computer included. Nothing
+in a deployment can tell which plan it is on, so this is on you: leave
+`BOT_ENGINES` unset on Hobby.
+
+On a Vercel deployment, each such job's session is in **Agent Runs** too
+(the same tracing rule turns it on): its turns, model and tool calls, timing
+and spend. Metadata only: no brief, reply or tool input or output is recorded.
+A Bot's profile links there; Vercel has no link to one session yet, so open it
+from the list.
+
+Locally, sessions run on the local Workflow World (`.workflow-data`), but each
+job's Sandbox is still on Vercel, so a local server needs the project's
+credentials (`vercel env pull` for a `VERCEL_OIDC_TOKEN`, or `VERCEL_TOKEN`,
+`VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`).
+
 ## Observability: Vercel Agent Runs
 
 On a Vercel deployment, every HQ, Bot and job session appears in **Agent

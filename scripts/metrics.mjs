@@ -79,7 +79,13 @@ if (worst.length > 0) {
   }
 }
 
-console.log(
-  "\nCost per job is not here: nothing records what a job's model steps cost." +
-    "\nRun this before and after a change, on the same kind of work, and compare the rates.",
-);
+// What each job's model steps cost, as the job counted them (`job.usage`, see agent/lib/usage.ts).
+const priced = jobs.map((job) => job.usage?.costUsd).filter((cost) => typeof cost === "number");
+if (priced.length > 0) {
+  const sorted = [...priced].sort((a, b) => a - b);
+  const total = priced.reduce((sum, cost) => sum + cost, 0);
+  const median = sorted.length % 2 === 1 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+  console.log(`\nCost: $${total.toFixed(3)} over ${priced.length} job(s) that counted it · median $${median.toFixed(4)} per job.`);
+}
+
+console.log("\nRun this before and after a change, on the same kind of work, and compare the rates.");

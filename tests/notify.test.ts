@@ -92,6 +92,9 @@ function fakeSender(sent: unknown[]) {
 describe("each person's choices", () => {
   it("decide what reaches whom, and hold the rest through their own quiet hours", async () => {
     vi.stubEnv("BOT_TIMEZONE", "UTC");
+    // Noon UTC, inside Bob's quiet hours. On the real clock this failed every
+    // day from 23:00 to 23:59 UTC, the one hour his quiet hours leave out.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-20T12:00:00Z") });
     const sent: { title: string }[] = [];
     fakeSender(sent);
     try {
@@ -100,7 +103,7 @@ describe("each person's choices", () => {
       const { deliver } = await import("../agent/lib/notify");
       await subscribe({ workspaceId: "ws", person: "ann", subscription: { endpoint: "https://push.example/ann", keys }, device: "iPhone" });
       await subscribe({ workspaceId: "ws", person: "bob", subscription: { endpoint: "https://push.example/bob", keys }, device: "Mac" });
-      // Ann wants no news of jobs; Bob is in quiet hours all day long (from 0 to 23).
+      // Ann wants no news of jobs; Bob is in quiet hours from 00:00 to 23:00.
       await savePrefs("ws", "ann", { done: false, quietFrom: 0, quietTo: 0 });
       await savePrefs("ws", "bob", { quietFrom: 0, quietTo: 23 });
       const done = { kind: "done", title: "Atlas finished", body: "b", url: "/bot", tag: "job-1", urgent: false } as const;
@@ -110,6 +113,7 @@ describe("each person's choices", () => {
       await deliver("ws", { ...done, kind: "needs-you", title: "Atlas needs you", urgent: true });
       expect(sent.map((message) => message.title)).toEqual(["Atlas needs you", "Atlas needs you"]);
     } finally {
+      vi.useRealTimers();
       vi.doUnmock("web-push");
     }
   });

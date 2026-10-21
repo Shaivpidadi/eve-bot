@@ -31,7 +31,8 @@ import { isConflict, listDocs, readDoc, updateDoc, writeDoc } from "./store";
  * (a person, or a provider lookup) settles it.
  */
 
-export type ActionKind = "email.send";
+/** An email (`email-send.ts`), or a change a Claude Code or Codex Bot asked to make through a connector (`engines/connector-calls.ts`). */
+export type ActionKind = "email.send" | "connector.call";
 
 export type ActionState = "proposed" | "approved" | "executing" | "succeeded" | "failed" | "delivery_unknown";
 

@@ -233,7 +233,12 @@ facts a run produced, written into the job record under the fence.
   decisions match the result's summary (observation only, no gate).
 - **Eval:** share of jobs with at least one `decision` entry (`npm run metrics` prints it)
   `[done]`; Jev agreement rate (`decisionsAgree` on completion shadows, `npm run jev:report`)
-  `[done]`. Numbers `[to-do]`: need jobs run after this change.
+  `[done]`. Numbers `[done]` (21 Oct 2026): six ordinary jobs (a checklist, two scripts, a note, a
+  release note, a statistic) on the free Nemotron model with Jev on, briefs that say nothing about
+  decisions: **0 of 6 recorded a decision (0%)**, so Jev's `decisionsAgree` was never asked. Jev's
+  completion verdicts on the same six: 4 below its confidence floor, 2 "no" on jobs a person checked
+  and found done (0 unmet criteria), so 0 of 6 agreed. Two readings: Bots on this model do not log
+  decisions unless told to, and Jev is not ready to judge completion on its own.
 - **Done when:** the brief's replay leads with why, then what.
 
 ### D1.6 The console shows it `[done]`
@@ -244,7 +249,8 @@ facts a run produced, written into the job record under the fence.
   icons per kind, the `page` entries as links, `error` entries muted.
 - `[done]` D1.6.2 A resumed run shows a divider "continued from step N after a restart"
   at the right place.
-- `[to-do]` D1.6.3 (the resume check already reads the route; an order assertion is still to add) QA `qa/checks/jobs.mjs` asserts the job route returns `journal` and the
+- `[done]` D1.6.3 (in `qa/checks/resume.mjs`, which already reads the route: the journal reads in time order, and the
+  crashed run's steps open it unchanged; not yet run live) QA asserts the job route returns `journal` and the
   timeline order matches.
 - **Done when:** a person can read what a Bot did while they were away from the card alone.
 
@@ -296,9 +302,16 @@ connectors and backups, and open jobs are picked up by the watchdog there.
 - **Eval results (13 Oct 2026, the local dev store, fs → fs):** 209 keys (205 documents, 4 binary
   objects, 757 KB gzipped). 206 byte-identical, 3 changed as designed (one open job's lease,
   two rooms' sessions), 0 missing, 1 added (the `job.moved` feed line). Fidelity 1.0 for
-  everything that is meant to move. Dry run wrote 0 files. Re-dispatch time `[to-do]`: needs a
-  server with a model. The QA `transfer.mjs` check `[to-do]` (needs a scratch deployment
-  to reset); the unit round trip covers the same ground against the memory driver.
+  everything that is meant to move. Dry run wrote 0 files.
+- **Eval results (21 Oct 2026, a Vercel preview → a local store):** `npm run qa:transfer`
+  (`qa/transfer.mjs`) seeded a Bot, a memory and a running job on a scratch preview of
+  eve-bot-test, exported the workspace over HTTP mid-run (199 KB), imported it into a fresh
+  local store (461 keys, 3 open jobs, 19 rooms given fresh sessions), and started a local
+  server on it from a worktree of the same commit: the Bot, the memory and the job arrived,
+  the job's thread said it moved, and it started again **2 s** after the server came up
+  (3 s on the run before). It goes deployment → laptop, the direction a reset is not needed
+  for; laptop → Vercel is the same import into Blob, which the scripts cannot reach from a
+  laptop's development OIDC token.
 - **Done when:** a workspace moves Vercel → laptop → Vercel with nothing lost but live runs.
 
 ### D2.3 Route for hosted deployments `[done]`
@@ -413,7 +426,7 @@ Vercel, so this is a spike with a written answer, not a feature.
 - `[done]` D4.1.2 (moved, six hops, every one answered; the local-world control stranded on the first) Build with `npm run build`, start `npm start` against the same world, send a
   message to the session the dev server created. Record what happens: picked up, refused
   (stranded, 409), or corrupted.
-- `[to-do]` D4.1.3 (not done: the spike ran with mock models and no computer; noted as untested in the findings) Same with the computer: does the sandbox reconnect record survive, does
+- `[done]` D4.1.3 (21 Oct 2026, `scripts/spikes/computer-hop.mjs`, five hops dev ↔ built on one Postgres world: the same Docker container every hop, its files kept, no restore needed; across hosts still untested) Same with the computer: does the sandbox reconnect record survive, does
   the second process reattach the Docker container, does the backup restore cover the gap.
 - `[done]` D4.1.4 (9.3 MB after six hops; pool and concurrency knobs noted; reset support deferred to after track E) Cost and operations: what Postgres needs (size after a day of jobs, vacuum),
   how `npm run reset` clears it.

@@ -16,6 +16,16 @@ export interface UsageLike {
 export const tokens = (count: number): string =>
   count >= 1_000_000 ? `${(count / 1_000_000).toFixed(1)}M` : count >= 1_000 ? `${(count / 1_000).toFixed(count >= 100_000 ? 0 : 1)}k` : String(count);
 
+/**
+ * Whether the record counted tokens. A Claude Code or Codex Bot's calls report
+ * only their cost, so a priced record with no tokens has none to show, which
+ * is not the same as zero.
+ */
+export const tokensReported = (usage: UsageLike): boolean => usage.inputTokens + usage.outputTokens > 0 || usage.costUsd === 0;
+
+/** A record's tokens in and out together, or a dash when it counted none. */
+export const tokenTotal = (usage: UsageLike): string => (tokensReported(usage) ? tokens(usage.inputTokens + usage.outputTokens) : "—");
+
 /** Dollars, to the cent above a cent and to the tenth of a cent below. */
 export const usd = (cost: number): string => (cost >= 0.01 ? `$${cost.toFixed(2)}` : cost > 0 ? `$${cost.toFixed(3)}` : "$0");
 
@@ -28,7 +38,7 @@ export const modelsOf = (usage: UsageLike): string | null => {
 /** One line about what a job or thread spent, or null when nothing was recorded. */
 export function describeUsage(usage: UsageLike | undefined): string | null {
   if (usage === undefined || usage.steps === 0) return null;
-  const parts = [`${tokens(usage.inputTokens + usage.outputTokens)} tokens`, usd(usage.costUsd)];
+  const parts = tokensReported(usage) ? [`${tokens(usage.inputTokens + usage.outputTokens)} tokens`, usd(usage.costUsd)] : [usd(usage.costUsd)];
   const model = modelsOf(usage);
   return (model === null ? parts : [model, ...parts]).join(" · ");
 }
