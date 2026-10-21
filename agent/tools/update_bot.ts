@@ -3,7 +3,23 @@ import { z } from "zod";
 
 import { record } from "../lib/activity";
 import { findBot, patchBot, teachBot } from "../lib/bots";
+import { ENGINE_LABELS, ENGINES, engineRefusal, enginesOn, type Engine } from "../lib/engines";
 import { operator } from "../lib/session";
+
+/**
+ * Offered only where the owner turned an engine on (`BOT_ENGINES`), so HQ's
+ * tools read exactly as before everywhere else.
+ */
+const engineField = enginesOn()
+  ? {
+      engine: z
+        .enum(ENGINES)
+        .optional()
+        .describe(
+          `What runs its jobs from the next one on: ${ENGINES.map((engine) => `"${engine}" for ${ENGINE_LABELS[engine]}`).join(", ")}. Only when the person asks for it.`,
+        ),
+    }
+  : {};
 
 export default defineTool({
   description:
@@ -21,6 +37,7 @@ export default defineTool({
       .max(400)
       .optional()
       .describe("A durable lesson to add to the bot's playbook, in one sentence."),
+    ...engineField,
   }),
   label: {
     start: ({ bot }) => `Update ${bot}`,
@@ -37,6 +54,12 @@ export default defineTool({
       }
     }
 
+    const engine = (input as { engine?: Engine }).engine;
+    if (engine !== undefined) {
+      const refused = engineRefusal(engine, { workspaceId: who.workspaceId });
+      if (refused !== null) return { updated: false as const, reason: refused };
+    }
+
     const updated = await patchBot(who.workspaceId, found.id, (bot) => ({
       ...bot,
       name: input.name ?? bot.name,
@@ -45,6 +68,7 @@ export default defineTool({
       emoji: input.emoji ?? bot.emoji,
       skills: input.skills ?? bot.skills,
       status: input.status ?? bot.status,
+      ...(engine === undefined ? {} : { engine }),
     }));
 
     const taught =
@@ -55,9 +79,11 @@ export default defineTool({
       kind: "bot.updated",
       botId: found.id,
       text:
-        input.lesson === undefined
-          ? `${found.name} was updated.`
-          : `${found.name} learned: ${input.lesson}`,
+        input.lesson !== undefined
+          ? `${found.name} learned: ${input.lesson}`
+          : engine !== undefined
+            ? `${found.name} now runs on ${ENGINE_LABELS[engine]}.`
+            : `${found.name} was updated.`,
     });
 
     return { updated: true as const, bot: taught };
