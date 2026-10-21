@@ -62,6 +62,11 @@ export function engineOf(bot: { readonly engine?: Engine | undefined } | null | 
 
 const truthy = (value: string | undefined): boolean => /^(1|true|on|yes)$/i.test(value?.trim() ?? "");
 
+/** The engines this workspace may give a Bot: always eve, and any other the owner turned on and nothing refuses here. */
+export function engineChoices(workspaceId: string, env: Env = process.env): readonly Engine[] {
+  return ENGINES.filter((engine) => engineRefusal(engine, { workspaceId, env }) === null);
+}
+
 /**
  * Why a harness engine cannot run here, in words for the person, or null when
  * it can. Checked when a Bot is given the engine and again when each job

@@ -4,6 +4,7 @@ import type { SessionAuthContext } from "eve/context";
 
 import { authenticate, hasSignedInCookie, sessionCookie, setStoredName, signedInCookie, tokensConfigured, type Access, type Gate, workspaceForToken } from "../lib/access";
 import { record } from "../lib/activity";
+import { ENGINE_LABELS, ENGINES, engineOf, engineRefusal, isEngine } from "../lib/engines";
 import { readArtifact } from "../lib/artifacts";
 import { buildBoard } from "../lib/board";
 import { findBot, getBot, hireBot, isHq, listBots, patchBot, retireBot } from "../lib/bots";
@@ -193,6 +194,11 @@ async function hireFromForm(
   }
   const clash = await findBot(access.workspaceId, name);
   if (clash !== null) return { error: `${clash.name} is already on the team.`, status: 409 };
+  // What runs its jobs: eve unless the person picked an engine the owner turned on (see lib/engines).
+  const engine = body?.engine === undefined || body.engine === "eve" ? "eve" : isEngine(body.engine) ? body.engine : null;
+  if (engine === null) return { error: `engine must be one of ${ENGINES.join(", ")}.`, status: 400 };
+  const engineRefused = engineRefusal(engine, { workspaceId: access.workspaceId });
+  if (engineRefused !== null) return { error: engineRefused, status: 400 };
   const template = templateById(body?.template);
   const skills = Array.isArray(body?.skills)
     ? body.skills.filter((skill): skill is string => typeof skill === "string" && /^[a-z][a-z -]{0,19}$/.test(skill)).slice(0, 8)
@@ -203,6 +209,7 @@ async function hireFromForm(
     name,
     role,
     persona,
+    engine,
     ...(template === null
       ? skills.length > 0
         ? { skills }
@@ -902,7 +909,14 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         return json({ error: "A section name is 1–40 characters." }, 400);
       }
       const placement = pinned !== undefined || hidden !== undefined || section !== undefined;
-      if (status === undefined && name === undefined && role === undefined && persona === undefined && !placement) {
+      // What runs its jobs from the next one on, checked as at hiring (see lib/engines).
+      const engine = body?.engine === undefined ? undefined : isEngine(body.engine) ? body.engine : null;
+      if (engine === null) return json({ error: `engine must be one of ${ENGINES.join(", ")}.` }, 400);
+      if (engine !== undefined) {
+        const refused = engineRefusal(engine, { workspaceId });
+        if (refused !== null) return json({ error: refused }, 400);
+      }
+      if (status === undefined && name === undefined && role === undefined && persona === undefined && engine === undefined && !placement) {
         return json({ error: "nothing to change" }, 400);
       }
       const before = botId === undefined || isHq(botId) ? null : await getBot(workspaceId, botId);
@@ -923,9 +937,11 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         ...(pinned === undefined ? {} : { pinned }),
         ...(hidden === undefined ? {} : { hidden }),
         ...(section === undefined ? {} : { section }),
+        ...(engine === undefined ? {} : { engine }),
       }));
       if (bot === null) return json({ error: "no such bot" }, 404);
       const changes = [
+        engine === undefined || engineOf(before) === engine ? null : `${bot.name} now runs on ${ENGINE_LABELS[engine]}.`,
         before.name === bot.name ? null : `${before.name} is now called ${bot.name}.`,
         before.role === bot.role && before.persona === bot.persona ? null : `${bot.name}'s profile was updated.`,
         before.status === bot.status ? null : `${bot.name} was ${bot.status === "paused" ? "paused" : "resumed"}.`,

@@ -300,6 +300,7 @@ export function Console() {
                 onChanged={refresh}
                 onHover={setHover}
                 editRequest={editRequest}
+                engines={board.engines ?? ["eve"]}
               />
               </div>
             </>
@@ -366,6 +367,7 @@ export function Console() {
       <HireDialog
         open={hiring}
         taken={members.map((entry) => entry.name)}
+        engines={board?.engines ?? ["eve"]}
         onClose={() => setHiring(false)}
         onHired={async (id) => {
           await refresh();

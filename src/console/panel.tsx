@@ -25,6 +25,7 @@ import {
 import { type ReactNode, useEffect, useId, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -39,6 +40,7 @@ import { bytes, clock, PRESENCE_LABEL, scheduleText, shortWhen, withoutEmoji } f
 import { RoutineDialog } from "./routine-dialog";
 import type { ActivityEvent, Hover, Member, Routine } from "./types";
 import { modelsOf, tokens, usd } from "../../agent/lib/usage-format";
+import type { Engine } from "../../agent/lib/engines";
 
 /**
  * What a member's model steps have cost, all time: which models, how many
@@ -205,6 +207,7 @@ export function DetailsPanel({
   onChanged,
   onHover,
   editRequest = 0,
+  engines = ["eve"],
 }: {
   member: Member;
   members: readonly Member[];
@@ -218,6 +221,8 @@ export function DetailsPanel({
   onHover: (hover: Hover | null) => void;
   /** Bumped by the roster menu's "Edit profile"; the profile tab opens its form. */
   editRequest?: number;
+  /** What a Bot here may run on (the board's `engines`). */
+  engines?: readonly Engine[];
 }) {
   const tabs = member.kind === "hq" ? HQ_TABS : BOT_TABS;
   const tab = tabFor(member, view);
@@ -290,7 +295,7 @@ export function DetailsPanel({
           {tab === "routines" ? <RoutinesTab member={member} onChanged={onChanged} /> : null}
           {tab === "library" ? <LibraryTab member={member} /> : null}
           {tab === "computer" ? <ComputerTab member={member} members={members} onTakeover={onTakeover} /> : null}
-          {tab === "profile" ? <SettingsPanel key={member.id} member={member} onChanged={onChanged} editRequest={editRequest} /> : null}
+          {tab === "profile" ? <SettingsPanel key={member.id} member={member} onChanged={onChanged} editRequest={editRequest} engines={engines} /> : null}
         </TabsContent>
       </Tabs>
     </aside>
@@ -682,14 +687,18 @@ function ScreenPreview({
   );
 }
 
+const ENGINE_NAME: Readonly<Record<Engine, string>> = { eve: "eve (the team's computer)", "claude-code": "Claude Code", codex: "Codex" };
+
 function SettingsPanel({
   member,
   onChanged,
   editRequest,
+  engines,
 }: {
   member: Member;
   onChanged: () => Promise<void>;
   editRequest: number;
+  engines: readonly Engine[];
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -721,6 +730,21 @@ function SettingsPanel({
       }
     } catch (caught) {
       if (!(caught instanceof SignedOutError)) setError("Could not save the profile.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Moves the Bot to another engine, from its next job on. */
+  const runOn = async (engine: Engine) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await api(`/bot/v1/bots/${encodeURIComponent(member.id)}`, { method: "PATCH", body: JSON.stringify({ engine }) });
+      if (response.ok) await onChanged();
+      else setError(await errorMessage(response, "Could not change what it runs on."));
+    } catch (caught) {
+      if (!(caught instanceof SignedOutError)) setError("Could not change what it runs on.");
     } finally {
       setBusy(false);
     }
@@ -846,6 +870,30 @@ function SettingsPanel({
               {profile.createdBy === null ? "" : ` · created by ${profile.createdBy}`}
             </p>
           </Section>
+          {/* What runs its jobs: only worth a line where there is a choice, or it is on something other than eve. */}
+          {engines.length > 1 || profile.engine !== "eve" ? (
+            <Section title="Runs on" quiet>
+              {engines.length > 1 ? (
+                <Select items={engines.map((value) => ({ value, label: ENGINE_NAME[value] }))} value={profile.engine} disabled={busy} onValueChange={(next) => next !== null && next !== profile.engine && void runOn(next as Engine)}>
+                  <SelectTrigger size="sm" className="w-full bg-secondary text-[12.5px] dark:bg-secondary" aria-label="Runs on">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {engines.map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {ENGINE_NAME[value]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+              <p className="m-0 mt-1 text-[11.5px] text-faint">
+                {profile.engine === "eve"
+                  ? "The team's computer: its browser, shell and shared files."
+                  : `A sandbox of its own for each job, with no browser or network yet. From its next job on.${engines.includes(profile.engine) ? "" : " Not available here now, so its jobs will not start."}`}
+              </p>
+            </Section>
+          ) : null}
         </>
       )}
 

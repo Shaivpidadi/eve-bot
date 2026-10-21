@@ -69,6 +69,8 @@ export async function hireBot(input: {
   intro?: Bot["intro"];
   /** Set when a Bot created this one at the operator's request. */
   createdBy?: { botId: string; name: string };
+  /** What runs its jobs; eve when absent. Checked by the caller (`engineRefusal`). */
+  engine?: Bot["engine"];
 }): Promise<Bot> {
   const now = new Date().toISOString();
   const bot: Bot = {
@@ -85,6 +87,7 @@ export async function hireBot(input: {
     hiredAt: now,
     createdBy: input.createdBy ?? null,
     ...(input.intro ? { intro: input.intro } : {}),
+    ...(input.engine && input.engine !== "eve" ? { engine: input.engine } : {}),
     updatedAt: now,
     stats: { jobsCompleted: 0, jobsFailed: 0 },
   };

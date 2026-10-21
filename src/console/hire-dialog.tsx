@@ -13,6 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import type { ProposedBot } from "../../agent/lib/roster";
 import { type BotTemplate, suggestName, TEMPLATES } from "../../agent/lib/templates";
 import { api, errorMessage, SignedOutError } from "./api";
+import type { Engine } from "../../agent/lib/engines";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const ICONS: Readonly<Record<string, LucideIcon>> = {
   researcher: SearchIcon,
@@ -27,19 +29,30 @@ const ICONS: Readonly<Record<string, LucideIcon>> = {
  * fills in the job and how it should work, and brings skills and an
  * introduction the server adds; "Start from scratch" leaves the form empty.
  */
+/** How each engine reads in the hire dialog: what it is, and what it means for the Bot. */
+const ENGINE_CHOICE: Readonly<Record<Engine, { label: string; note: string }>> = {
+  eve: { label: "eve (default)", note: "Works on the team's computer: its browser, shell and shared files." },
+  "claude-code": { label: "Claude Code", note: "Each job gets a sandbox of its own, with no browser or network yet. Billed through AI Gateway, per job." },
+  codex: { label: "Codex", note: "Each job gets a sandbox of its own, with no browser or network yet. Billed through AI Gateway, per job." },
+};
+
 export function HireDialog({
   open,
   taken,
+  engines = ["eve"],
   onClose,
   onHired,
 }: {
   open: boolean;
   /** Names already on the team, so a suggested name is a free one. */
   taken: readonly string[];
+  /** What a new Bot may run on (the board's `engines`); the choice shows only when there is more than eve. */
+  engines?: readonly Engine[];
   onClose: () => void;
   onHired: (botId: string) => Promise<void>;
 }) {
   const [step, setStep] = useState<"pick" | "adjust" | "team">("pick");
+  const [engine, setEngine] = useState<Engine>("eve");
   const [need, setNeed] = useState("");
   const [proposed, setProposed] = useState<readonly ProposedBot[]>([]);
   const [keep, setKeep] = useState<ReadonlySet<number>>(new Set());
@@ -232,7 +245,13 @@ export function HireDialog({
               try {
                 const response = await api("/bot/v1/bots", {
                   method: "POST",
-                  body: JSON.stringify({ name: name.trim(), role: role.trim(), persona: persona.trim(), ...(template === null ? {} : { template: template.id }) }),
+                  body: JSON.stringify({
+                    name: name.trim(),
+                    role: role.trim(),
+                    persona: persona.trim(),
+                    ...(template === null ? {} : { template: template.id }),
+                    ...(engine === "eve" ? {} : { engine }),
+                  }),
                 });
                 if (!response.ok) {
                   setError(await errorMessage(response, "Could not create the Bot."));
@@ -302,6 +321,24 @@ export function HireDialog({
                   <p className="m-0 text-[11.5px] text-muted-foreground">{20 - persona.trim().length} more characters: say how it should sound and what it must never do.</p>
                 ) : null}
               </Field>
+              {engines.length > 1 ? (
+                <Field>
+                  <FieldLabel htmlFor="hire-engine">Runs on</FieldLabel>
+                  <Select items={engines.map((value) => ({ value, label: ENGINE_CHOICE[value].label }))} value={engine} onValueChange={(next) => next !== null && setEngine(next as Engine)}>
+                    <SelectTrigger id="hire-engine" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {engines.map((value) => (
+                        <SelectItem key={value} value={value}>
+                          {ENGINE_CHOICE[value].label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="m-0 text-[11.5px] text-muted-foreground">{ENGINE_CHOICE[engine].note}</p>
+                </Field>
+              ) : null}
               {error === null ? null : <FieldError>{error}</FieldError>}
             </FieldGroup>
             <DialogFooter className="sm:justify-between">
