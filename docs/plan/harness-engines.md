@@ -213,9 +213,13 @@ The day estimates are guesses, not measurements.
   a list of domains). Both off by default, so decision 3 stays the owner's.
 - **H5 done as docs.** A deployment cannot tell its plan, so engines are not refused on Hobby by code; the docs say
   to leave `BOT_ENGINES` unset there.
-- **Still unverified:** a deployment on Vercel with `BOT_ENGINES` on (the queue route through Vercel World, the
-  build's function sizes, Agent Runs traces), built-ins live, and connectors against a real server. The first needs
-  a deployment of this branch, which needs a push.
+- **On Vercel (Oct 21).** A preview of this branch with `BOT_ENGINES=claude-code,codex` (on a scratch project) built
+  within the function limits, and both engines ran a job end to end through the queue route on Vercel's World: Codex
+  in about a minute from the ask for $0.007, Claude Code in under a minute for $0.05, each with its words in the Bot's thread
+  and its spend charged. The rest of `npm run qa` with jobs passed there too (resume twice, rewind after a fix in
+  `archivePaths`, the jobs checks once off a model whose provider refused the prompt). Agent Runs registered with no
+  warning; its traces need a tracing rule on the project, which the scratch project had not.
+- **Still unverified:** built-ins live, and connectors against a real server.
 
 ## 7. Decisions for Shaishav
 
