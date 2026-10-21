@@ -295,9 +295,10 @@ describe("run_job's side of a harness session", () => {
     const told = { workspaceId: WORKSPACE, jobId: job.id, botId: "bot_1", sessionId: "sess_H", heard: "c4", said: ["Reading the brief."] };
     await tellThread(told);
     await tellThread(told);
-    await tellThread({ ...told, heard: "c9", said: ["All done."] });
+    await tellThread({ ...told, heard: "c9", said: ["Checking the brief first.", "All done."] });
     const said = (await recentActivity(WORKSPACE, { limit: 100 })).filter((event) => event.data?.said === true).map((event) => event.text);
-    expect(said.sort()).toEqual(["All done.", "Reading the brief."]);
+    // One message per look, in the order its stretches were said (seen live: three events in one instant came back shuffled).
+    expect(said.sort()).toEqual(["Checking the brief first.\n\nAll done.", "Reading the brief."]);
   });
 
   it("stops a session by closing it and deleting its Sandbox, even when one of them fails", async () => {

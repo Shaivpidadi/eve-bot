@@ -218,12 +218,14 @@ export async function lookAtHarnessRun(
   return { kind: "working", cursor: last, spend, said, partial: text, heard: last };
 }
 
-/** The most one stretch of a Bot's words keeps in its thread. */
+/** The most one look's worth of a Bot's words keeps in its thread. */
 const SAID_LIMIT = 4_000;
 
 /**
  * Puts what the model wrote into the Bot's thread, as its own words while the
- * job runs. Once per stretch of the stream: the job notes how far its thread
+ * job runs: one message per look (about every 20 seconds), so its words can
+ * land a little after the steps they came with. Once per stretch of the
+ * stream: the job notes how far its thread
  * has heard the session, so a look that runs again adds nothing twice (a look
  * cut short between the two writes loses its words rather than repeating them).
  */
@@ -242,11 +244,11 @@ export async function tellThread(input: {
     return fresh ? { ...current, harnessHeard: { ...current.harnessHeard, [input.sessionId]: input.heard! } } : current;
   }).catch(() => null);
   if (!fresh) return;
+  // One message per look, its stretches in the order they were said: events written in the same instant have no order of their own.
+  const words = input.said.join("\n\n");
+  const text = words.length > SAID_LIMIT ? `${words.slice(0, SAID_LIMIT - 1)}\u2026` : words;
   const { record } = await import("../activity");
-  for (const words of input.said) {
-    const text = words.length > SAID_LIMIT ? `${words.slice(0, SAID_LIMIT - 1)}\u2026` : words;
-    await record({ workspaceId: input.workspaceId, kind: "job.progress", botId: input.botId, jobId: input.jobId, text, data: { said: true } }).catch(() => undefined);
-  }
+  await record({ workspaceId: input.workspaceId, kind: "job.progress", botId: input.botId, jobId: input.jobId, text, data: { said: true } }).catch(() => undefined);
 }
 
 /**
