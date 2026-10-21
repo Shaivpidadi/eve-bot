@@ -1022,6 +1022,35 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return json({ ...report, canUpdate: report.runsItself && gate.access.owner && Boolean(token) });
     }),
 
+    /** An email a Claude Code or Codex Bot asked a person to send (see lib/engines/proposals.ts), for its card. */
+    GET("/bot/v1/proposals/:actionId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const { getProposal } = await import("../lib/engines/proposals");
+      const proposal = await getProposal(gate.access.workspaceId, params.actionId ?? "");
+      if (proposal === null) return json({ error: "No such request." }, 404);
+      return json({ proposal: { actionId: proposal.actionId, jobId: proposal.jobId, botId: proposal.botId, email: proposal.payload, at: proposal.at, decided: proposal.decided } });
+    }),
+
+    /** A person's answer to such an email: { approve: true } sends it exactly as proposed, once; false declines it. */
+    POST("/bot/v1/proposals/:actionId", async (request, { params }) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      const body = await readJson(request);
+      if (typeof body?.approve !== "boolean") return json({ error: "Send { approve: true } or { approve: false }." }, 400);
+      const [{ decideProposal }, { tellHarnessSession }] = await Promise.all([import("../lib/engines/proposals"), import("../lib/engines/sessions")]);
+      const decision = await decideProposal({
+        workspaceId: gate.access.workspaceId,
+        actionId: params.actionId ?? "",
+        by: gate.access.user,
+        approve: body.approve,
+        settings: await effectiveEnv(),
+        signal: request.signal,
+        tell: tellHarnessSession,
+      });
+      return decision.ok ? json(decision) : json({ error: decision.error }, decision.status);
+    }),
+
     /** Push notifications on this person's devices (see lib/push.ts): the key a browser subscribes with, and the devices on. */
     GET("/bot/v1/push", async (request) => {
       const gate = await authenticate(request);

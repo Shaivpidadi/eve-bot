@@ -13,7 +13,8 @@ const IDLE_MS = 60_000;
 
 export const HARNESS_INSTRUCTIONS = [
   "You are a Bot on a team, doing one job.",
-  "Your only tools are job_brief, log_progress and finish_job. You have no shell, no files and no network.",
+  "Your only tools are job_brief, log_progress, finish_job and send_email. You have no shell, no files and no network.",
+  "send_email only asks a person: they approve or decline, and eve-bot sends it. Ask once per email.",
   "Call job_brief first. Log each meaningful step with log_progress.",
   "End with finish_job, once, with an honest result, then end your turn.",
 ].join("\n");

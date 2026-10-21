@@ -75,7 +75,9 @@ export type RoomItem =
   /** A teammate's message to this thread's member (see `agent/lib/teammail.ts`). */
   | { readonly kind: "peer"; readonly key: string; readonly at: string; readonly from: string; readonly text: string }
   | ({ readonly kind: "notice"; readonly key: string; readonly at: string } & Notice)
-  | { readonly kind: "ask"; readonly key: string; readonly at: string; readonly requestId: string };
+  | { readonly kind: "ask"; readonly key: string; readonly at: string; readonly requestId: string }
+  /** An email a Claude Code or Codex Bot asked a person to send (see ask-card.tsx's ProposalCard). */
+  | { readonly kind: "proposal"; readonly key: string; readonly at: string; readonly actionId: string };
 
 export interface StepsItem {
   readonly kind: "steps";
@@ -841,7 +843,8 @@ export function buildTimeline(
     const close = event.kind === "job.done" || event.kind === "job.failed";
     const relevant =
       member.kind === "bot"
-        ? event.botId === member.id && (event.kind.startsWith("job.") || event.kind === "memory.saved")
+        ? event.botId === member.id &&
+          (event.kind.startsWith("job.") || event.kind === "memory.saved" || (event.kind === "input.requested" && typeof event.data?.proposal === "string"))
         : event.kind === "bot.hired" ||
           event.kind === "bot.retired" ||
           (event.kind === "memory.saved" && event.botId === null) ||
@@ -881,6 +884,11 @@ export function buildTimeline(
         ...(event.kind === "computer.failed" || event.kind === "job.failed" ? { tone: "error" as const } : {}),
         ...(close && event.botId != null ? { face: event.botId } : {}),
       });
+      continue;
+    }
+    // A Claude Code or Codex Bot's email waiting for a person: its own card.
+    if (event.kind === "input.requested") {
+      if (typeof event.data?.proposal === "string") out.push({ kind: "proposal", key: event.id, at: event.at, actionId: event.data.proposal });
       continue;
     }
     // Work this Bot was given from another thread reads as a conversation: who

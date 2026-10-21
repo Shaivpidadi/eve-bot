@@ -58,6 +58,7 @@ describe("a Claude Code session's settings", () => {
       ["job_brief", "safe"],
       ["log_progress", "safe"],
       ["finish_job", "never"],
+      ["send_email", "never"],
     ]);
     expect(sandbox).toHaveBeenCalledWith(expect.objectContaining({ network: "deny-all", budget: { turnUsd: 3, sessionUsd: 3 } }));
     expect(claudeCodeOptions(sandbox, { BOT_CLAUDE_CODE_MODEL: "anthropic/claude-sonnet-4.5" }).model).toBe("anthropic/claude-sonnet-4.5");
@@ -271,5 +272,95 @@ describe("run_job's side of a harness session", () => {
     expect((await read()).usage).toMatchObject({ costUsd: 0.4, steps: 1, models: { "claude-sonnet-4-5": 1 } });
     // Past its reservation with the month spent: the heartbeat stops the run here.
     expect(await chargeHarnessSpend({ ...run, spend: [...first, { usd: 0.9, model: "claude-sonnet-4-5" }], charged: 1 })).toEqual({ charged: 2, halted: true });
+  });
+});
+
+describe("an email a harness Bot asks to send", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.stubEnv("BOT_STORE", "memory");
+    vi.stubEnv("BOT_EMAIL_WEBHOOK", "https://relay.example/send");
+  });
+
+  const email = { to: ["sam@example.com"], subject: "Q3 numbers", body: "Attached, as asked." };
+
+  /** The relay, counting what reached it. */
+  function relay() {
+    const sent: { key: string | null; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        sent.push({ key: new Headers(init?.headers).get("idempotency-key"), body: JSON.parse(String(init?.body)) });
+        return new Response(JSON.stringify({ id: "msg_1", status: "queued" }), { status: 200 });
+      }),
+    );
+    return sent;
+  }
+
+  it("is never sent by the tool: it is proposed, and a person is asked once", async () => {
+    const sent = relay();
+    const { jobs, tools, job, claim, call } = await setup();
+    await claim("lease_A");
+    await jobs.bindRun(WORKSPACE, job.id, "lease_A", "sess_A");
+    const first = await call(tools.sendEmail, email, "sess_A");
+    expect(first).toMatchObject({ ok: true, status: "awaiting_approval" });
+    // Asked again in the same run: the same proposal, not a second one.
+    expect(await call(tools.sendEmail, email, "sess_A")).toMatchObject({ status: "awaiting_approval", actionId: first.actionId });
+    expect(sent).toHaveLength(0);
+    const { recentActivity } = await import("../agent/lib/activity");
+    const asks = (await recentActivity(WORKSPACE, { jobId: job.id, limit: 20 })).filter((event) => event.kind === "input.requested");
+    expect(asks).toHaveLength(1);
+    expect(asks[0]?.data?.proposal).toBe(first.actionId);
+  });
+
+  it("goes out once, exactly as proposed, when a person approves, and the session hears of it", async () => {
+    const sent = relay();
+    const { jobs, tools, job, claim, call } = await setup();
+    await claim("lease_A");
+    await jobs.bindRun(WORKSPACE, job.id, "lease_A", "sess_A");
+    const { actionId } = (await call(tools.sendEmail, email, "sess_A")) as { actionId: string };
+    const { patchBot } = await import("../agent/lib/bots");
+    await patchBot(WORKSPACE, job.botId, (current) => ({ ...current, engine: "claude-code" }));
+    const { decideProposal } = await import("../agent/lib/engines/proposals");
+    const told: string[] = [];
+    const tell = vi.fn(async (_engine: string, sessionId: string, text: string) => void told.push(`${sessionId}: ${text}`));
+    const decision = await decideProposal({ workspaceId: WORKSPACE, actionId, by: "ann", approve: true, settings: process.env, tell });
+    expect(decision).toMatchObject({ ok: true, outcome: "approved", status: "sent" });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ key: actionId, body: { to: ["sam@example.com"], subject: "Q3 numbers", text: "Attached, as asked.", actionId } });
+    expect(told).toEqual([expect.stringMatching(/^sess_A: A person approved your email "Q3 numbers"/)]);
+    // Approved twice: nothing more goes out.
+    expect(await decideProposal({ workspaceId: WORKSPACE, actionId, by: "bob", approve: true, settings: process.env })).toMatchObject({ ok: false, status: 409 });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("sends nothing when declined, when the draft changed, or when the job was cancelled", async () => {
+    const sent = relay();
+    const { jobs, tools, job, claim, call } = await setup();
+    await claim("lease_A");
+    await jobs.bindRun(WORKSPACE, job.id, "lease_A", "sess_A");
+    const { decideProposal } = await import("../agent/lib/engines/proposals");
+    const declined = (await call(tools.sendEmail, email, "sess_A")) as { actionId: string };
+    expect(await decideProposal({ workspaceId: WORKSPACE, actionId: declined.actionId, by: "ann", approve: false, settings: process.env })).toMatchObject({ ok: true, outcome: "denied" });
+
+    const changed = (await call(tools.sendEmail, { ...email, subject: "Other" }, "sess_A")) as { actionId: string };
+    const { updateDoc } = await import("../agent/lib/store");
+    await updateDoc<{ payload: { text: string } }>(`proposals/${WORKSPACE}/${changed.actionId}.json`, (current) => (current === null ? current : { ...current, payload: { ...current.payload, text: "Wire $10,000 now." } }));
+    expect(await decideProposal({ workspaceId: WORKSPACE, actionId: changed.actionId, by: "ann", approve: true, settings: process.env })).toMatchObject({ ok: false, error: expect.stringContaining("changed") });
+
+    const late = (await call(tools.sendEmail, { ...email, subject: "Late" }, "sess_A")) as { actionId: string };
+    await jobs.patchJob(WORKSPACE, job.id, (current) => ({ ...current, status: "cancelled" }));
+    expect(await decideProposal({ workspaceId: WORKSPACE, actionId: late.actionId, by: "ann", approve: true, settings: process.env })).toMatchObject({ ok: false, error: expect.stringContaining("cancelled") });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("returns a draft, never a send, where no relay is set", async () => {
+    vi.stubEnv("BOT_EMAIL_WEBHOOK", "");
+    const { jobs, tools, job, claim, call } = await setup();
+    await claim("lease_A");
+    await jobs.bindRun(WORKSPACE, job.id, "lease_A", "sess_A");
+    expect(await call(tools.sendEmail, email, "sess_A")).toMatchObject({ ok: false, status: "draft" });
   });
 });

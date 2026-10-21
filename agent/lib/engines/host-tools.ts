@@ -3,8 +3,9 @@
  * built-ins, plan section 4.3), served by durable-harness as an MCP server in
  * the Function, never in the Sandbox.
  *
- * Phase 1 is three tools, the ones a job cannot do without: read the job,
- * log a step, record the result. Each one is fenced the way the teammate's
+ * Four tools: the three a job cannot do without (read the job, log a step,
+ * record the result), and `send_email`, which never sends: it asks a person,
+ * and eve-bot sends it once they approve (`./proposals`). Each one is fenced the way the teammate's
  * are: the session is the job's run only while the job's lease names it
  * (`run_job` binds the two when it starts the session), so a session that
  * was cancelled, or outlived its lease, writes nothing.
@@ -15,7 +16,8 @@
  *
  * Replay, as durable-harness asks every tool to declare it: `job_brief` and
  * `log_progress` are safe to run twice (a repeated journal line is dropped by
- * `appended`), `finish_job` runs at most once.
+ * `appended`), `finish_job` and `send_email` run at most once (and a second
+ * `send_email` of the same email in the run is the same proposal anyway).
  *
  * Nothing here imports durable-harness: these are plain objects in its
  * `HostTool` shape, so they load (and are tested) without it.
@@ -177,5 +179,61 @@ export const finishJob: HarnessTool = {
   },
 };
 
-/** Every tool a Claude Code Bot has in phase 1. */
-export const HOST_TOOLS: readonly HarnessTool[] = [jobBrief, logProgress, finishJob];
+const EmailInput = z.object({
+  to: z.array(z.string().max(200)).min(1).max(20),
+  subject: z.string().min(1).max(200),
+  body: z.string().min(1).max(20_000),
+  cc: z.array(z.string().max(200)).max(20).optional(),
+});
+
+export const sendEmail: HarnessTool = {
+  name: "send_email",
+  label: "Ask to send an email",
+  description:
+    "Ask a person to send an email on the operator's behalf. It is never sent by this call: the person sees it exactly as written and approves or declines it, and eve-bot sends it once they approve. Call it once per email, then carry on; you hear back when they decide.",
+  inputSchema: schema(EmailInput),
+  replay: "never",
+  async execute(input, io) {
+    const config = sessionConfigOf(io.ctx.config);
+    if (config === null) return NotBound;
+    const parsed = EmailInput.safeParse(input);
+    if (!parsed.success) return answer({ ok: false, message: parsed.error.issues.map((issue) => issue.message).join("; ") });
+    const check = await checkRun(config.workspaceId, config.jobId, io.ctx.runId);
+    if (!check.ok) return answer({ ok: false, message: describeRunRefusal(check.reason, config.jobId) });
+    const job = check.job;
+    const email = parsed.data;
+    const payload = { to: email.to, cc: email.cc ?? [], subject: email.subject, text: email.body, jobId: job.id };
+    const { effectiveEnv } = await import("../settings/store");
+    if (!(await effectiveEnv()).BOT_EMAIL_WEBHOOK?.trim()) {
+      return answer({
+        ok: false,
+        status: "draft",
+        message:
+          "No email webhook is set (Settings, Email), so it cannot be sent. Put the draft in your result and say it is unsent; do not send it any other way.",
+      });
+    }
+    const { proposeEmail } = await import("./proposals");
+    const proposed = await proposeEmail({
+      workspaceId: config.workspaceId,
+      jobId: job.id,
+      botId: job.botId,
+      runToken: job.lease?.token ?? io.ctx.runId,
+      sessionId: io.ctx.runId,
+      requester: job.requestedBy,
+      payload,
+    });
+    if (proposed.decided !== null) {
+      return answer({ ok: true, status: proposed.decided.outcome, message: `A person already ${proposed.decided.outcome === "approved" ? "approved" : "declined"} this exact email. Do not send it again.` });
+    }
+    return answer({
+      ok: true,
+      status: "awaiting_approval",
+      actionId: proposed.actionId,
+      message:
+        "A person was asked. If they approve, eve-bot sends it exactly as written. Do not call send_email again for it, and never send it any other way. Carry on; if you finish first, say in your result that it is waiting for approval.",
+    });
+  },
+};
+
+/** Every tool a Claude Code or Codex Bot has. */
+export const HOST_TOOLS: readonly HarnessTool[] = [jobBrief, logProgress, finishJob, sendEmail];

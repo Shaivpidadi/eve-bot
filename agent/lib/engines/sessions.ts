@@ -230,6 +230,11 @@ async function stopSession(deps: HarnessDeps, sessionId: string): Promise<void> 
   await deps.deleteSandbox(sessionId).catch(() => undefined);
 }
 
+/** Tells a running session something as a follow-up message, such as what a person decided about its email. */
+export async function tellHarnessSession(engine: HarnessEngine, sessionId: string, text: string, deps?: HarnessDeps): Promise<void> {
+  await (deps ?? (await load(engine))).sessions.send(sessionId, text, "followUp");
+}
+
 /** Stops a session for good: closes it and deletes its Sandbox and Drive. Best effort and idempotent. */
 export async function stopHarnessRun(engine: HarnessEngine, sessionId: string, deps?: HarnessDeps): Promise<void> {
   await stopSession(deps ?? (await load(engine)), sessionId);

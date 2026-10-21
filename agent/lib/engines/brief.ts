@@ -29,6 +29,7 @@ export function renderHarnessBrief(bot: Bot, job: Job): string {
       "Call job_brief first: it is the authoritative copy of this job.",
       "If a tool says this run no longer owns the job, stop. Another run has it, and nothing more you do will count.",
       "Log each meaningful step with log_progress.",
+      "To send an email, call send_email once: a person approves it before it goes out, and you hear back.",
       "You have no shell, no files, no browser and no network. If the job needs them, say so in the result instead of pretending.",
       "Finish with finish_job, once, then end your turn.",
     ].join("\n"),
