@@ -177,6 +177,33 @@ He gave the go on Oct 20, for local branches only. Each step ends with a check.
 
 The day estimates are guesses, not measurements.
 
+### Status, Oct 21 (local branch, not pushed)
+
+- **End to end, through the app (Oct 21).** On a local server (`next dev`, a scratch store, `BOT_ENGINES` on, HQ on
+  the free MiniMax model), a Bot hired on Claude Code through the console's route was given a job; the sweep
+  dispatched it, HQ ran `run_job`, the session ran, logged a step and recorded a verified result in about 30 seconds,
+  and $0.041 was charged to the job and the budget from the session's log as it ran. The same job on Codex
+  (`openai/gpt-5.4-mini`) took about 30 seconds and $0.006. The first two Claude Code tries failed on every delivery:
+  eve's active trace reached the CLI's environment through the Agent SDK (`TRACEPARENT`, then `BAGGAGE`), which the
+  harness refuses; the session's sandbox now names them, empty. Locally, eve's process carries its own older
+  `@workflow/world-local`, so the harness's messages go through the app's generated flow route, which worked.
+- **H1 done**, plus Codex (**H4 done**): `BOT_ENGINES=claude-code,codex`, one agent per engine, spend read from each
+  engine's own stream (`hw.spend`, `codex.spend`) and charged at every look, with the run stopped when the budget
+  halts it (the one-at-a-time stopgap is gone).
+- **H2: email done, connectors not.** `send_email` proposes through the ledger, keeps the draft beside it, pushes
+  "needs you", and shows a card in the Bot's thread; approving sends it once through the eve Bot's own path
+  (`lib/email-send.ts`) after checking the draft's hash and that the job was not cancelled; the session hears the
+  answer while it is the job's run. Connector writes as gated HostTools are still to do: they need an MCP client in
+  the Function and the connector gate's policy, which only eve's connection layer has today.
+- **H3 in part.** Done: the engine choice when hiring (eve by default) and on the profile, the board's engines, the
+  proposal card, spend on the job card and the Usage page. Not done: the thread from `liveEntries` (a harness job
+  shows its logged steps and result, as an eve job's card does, but not the model's text as it streams), and an
+  Agent Runs link (its URL is not documented).
+- **H5 done as docs.** A deployment cannot tell its plan, so engines are not refused on Hobby by code; the docs say
+  to leave `BOT_ENGINES` unset there.
+- **Still unverified:** a deployment on Vercel with `BOT_ENGINES` on (the queue route through Vercel World, and the
+  build's function sizes). It needs a deployment of this branch, which needs a push.
+
 ## 7. Decisions for Shaishav
 
 1. **When:** answered Oct 20. Now, on local branches, no push or PR.
