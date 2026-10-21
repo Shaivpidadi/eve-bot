@@ -219,7 +219,13 @@ The day estimates are guesses, not measurements.
   and its spend charged. The rest of `npm run qa` with jobs passed there too (resume twice, rewind after a fix in
   `archivePaths`, the jobs checks once off a model whose provider refused the prompt). Agent Runs registered with no
   warning; its traces need a tracing rule on the project, which the scratch project had not.
-- **Still unverified:** built-ins live, and connectors against a real server.
+- **Built-ins live (Oct 21).** With `BOT_ENGINE_BUILTINS=1` and `BOT_ENGINE_NETWORK=registry.npmjs.org`, a Claude
+  Code job ($0.098) and a Codex job ($0.011) each wrote and ran a script in the job's Sandbox, reached the npm
+  registry (200), and were refused `example.com` (000; Claude Code's own sandbox named the allow list).
+- **A real connector (Oct 21).** DeepWiki's public MCP server under the "writes" gate: its two `read_*` tools were
+  reads and `ask_wiki_question` a change. A Codex job listed the tools, read a repo's wiki structure at once (the real
+  section titles came back), and proposed the question; approving the card ran it once, the answer came back on the
+  card and to the job, and a second approval was refused.
 
 ## 7. Decisions for Shaishav
 

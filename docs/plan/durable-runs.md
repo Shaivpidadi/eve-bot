@@ -233,7 +233,12 @@ facts a run produced, written into the job record under the fence.
   decisions match the result's summary (observation only, no gate).
 - **Eval:** share of jobs with at least one `decision` entry (`npm run metrics` prints it)
   `[done]`; Jev agreement rate (`decisionsAgree` on completion shadows, `npm run jev:report`)
-  `[done]`. Numbers `[to-do]`: need jobs run after this change.
+  `[done]`. Numbers `[done]` (21 Oct 2026): six ordinary jobs (a checklist, two scripts, a note, a
+  release note, a statistic) on the free Nemotron model with Jev on, briefs that say nothing about
+  decisions: **0 of 6 recorded a decision (0%)**, so Jev's `decisionsAgree` was never asked. Jev's
+  completion verdicts on the same six: 4 below its confidence floor, 2 "no" on jobs a person checked
+  and found done (0 unmet criteria), so 0 of 6 agreed. Two readings: Bots on this model do not log
+  decisions unless told to, and Jev is not ready to judge completion on its own.
 - **Done when:** the brief's replay leads with why, then what.
 
 ### D1.6 The console shows it `[done]`
