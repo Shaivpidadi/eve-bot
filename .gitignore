@@ -18,3 +18,6 @@ certificates
 # QA runs
 .qa/
 .vid
+
+# durable-harness sessions on the local Workflow World (Bots on Claude Code or Codex, run locally)
+.workflow-data

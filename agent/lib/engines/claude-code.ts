@@ -39,6 +39,17 @@ export function claudeCodeOptions(
     instructions: HARNESS_INSTRUCTIONS,
     tools: HOST_TOOLS as unknown as HostTool[],
     builtins: false,
-    workspace: sandbox(harnessSandbox(env)),
+    workspace: sandbox({ ...harnessSandbox(env), env: TRACE_ENV }),
   };
 }
+
+/**
+ * Set, empty, for the CLI. Inside eve a trace is always active, and Claude's
+ * Agent SDK copies what OpenTelemetry's propagators carry (W3C trace context
+ * and baggage) into the CLI's environment, as `TRACEPARENT`, `TRACESTATE` and
+ * `BAGGAGE`, unless the environment it is given already names them. The
+ * harness refuses any variable it did not set itself, so without these every
+ * turn failed before it started (seen in the first end-to-end jobs, Oct 21).
+ * Naming them here keeps eve's trace ids and baggage out of the VM as well.
+ */
+const TRACE_ENV: Readonly<Record<string, string>> = { TRACEPARENT: "", TRACESTATE: "", BAGGAGE: "" };
