@@ -323,12 +323,12 @@ async function runCycle(
       continue;
     }
     if (harness !== null) {
-      const { look, charged, halted: overBudget } = await lookAtHarness(harness.engine, harness.cursor, spendOf(harness));
+      const { look, charged, halt: overBudget } = await lookAtHarness(harness.engine, harness.cursor, spendOf(harness));
       harness.charged = charged;
       // Spend is read from the session's log at every look (H0), so a run over the budget stops here, mid-turn.
-      if (overBudget) {
+      if (overBudget !== null) {
         await halt();
-        settled = { ok: false, error: BUDGET_HALT_REASON };
+        settled = { ok: false, error: overBudget };
         continue;
       }
       if (look.kind === "working") harness.cursor = look.cursor;
@@ -798,7 +798,8 @@ async function lookAtHarness(engine: HarnessEngine, cursor: string | null, charg
   const { chargeHarnessSpend, lookAtHarnessRun } = await import("../lib/engines/sessions");
   const look = await lookAtHarnessRun(engine, charge.sessionId, cursor);
   const { charged, halted } = await chargeHarnessSpend({ ...charge, spend: look.spend });
-  return { look: { ...look, spend: [] }, charged, halted };
+  // The reason as words, from here: the workflow body must not reach into the budget module itself.
+  return { look: { ...look, spend: [] }, charged, halt: halted ? BUDGET_HALT_REASON : null };
 }
 
 /** Charges what is left, then stops the session for good (closes it, deletes its Sandbox and Drive). */
