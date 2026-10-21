@@ -11,7 +11,7 @@ type ProviderMetadata = NonNullable<GenerateResult["providerMetadata"]>;
  * What a model on your own endpoint costs, so the USD spend caps hold there too.
  *
  * eve adds up the cost each model step reports in `providerMetadata.gateway.cost`
- * and stops a session at `maxTokenCostUsdPerSession`. AI Gateway fills that in;
+ * and stops a session at its USD cap (`limits.sessionUsage`). AI Gateway fills that in;
  * an OpenAI-compatible endpoint does not, so without help every step there
  * costs nothing and the caps never trigger. This module prices the step from
  * its token usage and writes the cost where eve reads it.
