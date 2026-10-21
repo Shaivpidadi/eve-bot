@@ -244,7 +244,8 @@ facts a run produced, written into the job record under the fence.
   icons per kind, the `page` entries as links, `error` entries muted.
 - `[done]` D1.6.2 A resumed run shows a divider "continued from step N after a restart"
   at the right place.
-- `[to-do]` D1.6.3 (the resume check already reads the route; an order assertion is still to add) QA `qa/checks/jobs.mjs` asserts the job route returns `journal` and the
+- `[done]` D1.6.3 (in `qa/checks/resume.mjs`, which already reads the route: the journal reads in time order, and the
+  crashed run's steps open it unchanged; not yet run live) QA asserts the job route returns `journal` and the
   timeline order matches.
 - **Done when:** a person can read what a Bot did while they were away from the card alone.
 
