@@ -414,7 +414,7 @@ Vercel, so this is a spike with a written answer, not a feature.
 - `[done]` D4.1.2 (moved, six hops, every one answered; the local-world control stranded on the first) Build with `npm run build`, start `npm start` against the same world, send a
   message to the session the dev server created. Record what happens: picked up, refused
   (stranded, 409), or corrupted.
-- `[to-do]` D4.1.3 (not done: the spike ran with mock models and no computer; noted as untested in the findings) Same with the computer: does the sandbox reconnect record survive, does
+- `[done]` D4.1.3 (21 Oct 2026, `scripts/spikes/computer-hop.mjs`, five hops dev ↔ built on one Postgres world: the same Docker container every hop, its files kept, no restore needed; across hosts still untested) Same with the computer: does the sandbox reconnect record survive, does
   the second process reattach the Docker container, does the backup restore cover the gap.
 - `[done]` D4.1.4 (9.3 MB after six hops; pool and concurrency knobs noted; reset support deferred to after track E) Cost and operations: what Postgres needs (size after a day of jobs, vacuum),
   how `npm run reset` clears it.

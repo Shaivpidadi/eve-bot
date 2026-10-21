@@ -63,16 +63,42 @@ than its concurrency (50); `WORKFLOW_POSTGRES_WORKER_CONCURRENCY` and
   same sessions.
 - The store must be shared too (or moved, D2), since jobs and rooms live
   there. The spike used one store for both processes.
-- Not tested here: the computer. A sandbox's reconnect record lives in the
-  world, so on the same host the Docker container is found again by name;
-  across hosts the computer is a different machine, and the backup restore
-  (and the kind rule from D3.2) decides what follows.
+- The computer follows too, on the same host (D4.1.3, below): the Docker
+  container is found again by eve's labels and keeps its files. Across hosts
+  the computer is a different machine, and the backup restore (and the kind
+  rule from D3.2) decides what follows; that is still untested.
 - Not tested: a run in the middle of a turn when its process dies (eve
   re-runs the interrupted step from the world, which is the point), and two
   processes serving the same world at once (Graphile Worker is built for
   it; eve's handoff rules were not exercised).
 - Cost: one Postgres, which a standalone server can run in the compose file.
   `npm run reset` would need to drop the schema too.
+
+## The computer across processes (D4.1.3)
+
+21 Oct 2026, eve 0.79.1, `@workflow/world-postgres` 5.0.5 (matching eve's
+`@workflow/world` 5.0.5), a Docker computer (`BOT_COMPUTER=local`), the free
+Nemotron model, a scratch store. `scripts/spikes/computer-hop.mjs` starts one
+server, has HQ give the generalist a job that appends the hop's word to
+`/workspace/shared/hop.txt` on the computer, waits for the job to end, stops
+the server, and reads the container and the file.
+
+| Hop | Server | Job | Container | Container started | File after |
+| --- | --- | --- | --- | --- | --- |
+| one | dev | done, 20 s | `eve-sbx-011aa…` | 17:19:38 (created) | `one` |
+| two | built | not run: HQ's model call failed at AI Gateway | same | 17:19:38 | `one` |
+| three | dev | done, 20 s | same | 17:20:29 (restarted) | `one`, `three` |
+| four | built | done, 30 s | same | 17:20:29 (still running) | `one`, `three`, `four` |
+| five | dev | done, 25 s | same | 17:22:55 (restarted) | `one`, `three`, `four`, `five` |
+
+- One container served every hop, in either kind of server: a server that
+  found it stopped started it again, one that found it running used it.
+- Its files survived every hop; no backup restore was needed, or made.
+- Hop two's failure was the free model's Gateway call, not the hop; hop four
+  is the built server's run.
+- A first attempt was wrong: the hop script stopped the dev server by its
+  process group, eve's dev server outlived that, and the next "built" hop
+  talked to it. The script now refuses a taken port and stops servers by name.
 
 ## Caveats
 
