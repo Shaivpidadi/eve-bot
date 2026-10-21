@@ -36,6 +36,11 @@ export interface Bot {
   hidden?: boolean;
   /** How it introduces itself in its empty thread: from its template, or written when it was hired. */
   intro?: { readonly hello: string; readonly starters: readonly string[] } | null;
+  /**
+   * What runs its jobs. Absent means eve, so every existing Bot is unchanged.
+   * Another engine runs only where the owner turned it on (`lib/engines`).
+   */
+  engine?: "eve" | "claude-code";
   updatedAt: string;
   stats: {
     jobsCompleted: number;

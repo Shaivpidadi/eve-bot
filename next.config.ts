@@ -155,11 +155,23 @@ function routeConsoleToAgentService(): void {
   writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`);
 }
 
+/**
+ * With `BOT_ENGINES` on (see agent/lib/engines), durable-harness adds its queue
+ * route, which drives Claude Code sessions, and keeps its packages out of the
+ * server bundle. Off (the default), it is never loaded and the build is as before.
+ */
+async function withEngines(phase: string, context: { defaultConfig: NextConfig }): Promise<NextConfig> {
+  const raw = (process.env.BOT_ENGINES ?? "").trim().toLowerCase();
+  if (raw === "" || raw === "off" || raw === "0" || raw === "false") return withAgent(phase, context);
+  const { withDurableHarness } = await import("durable-harness/next");
+  return withDurableHarness(withAgent, { agents: ["src/lib/engines/claude-code-agent.ts"] })(phase, context);
+}
+
 export default async function config(
   phase: string,
   context: { defaultConfig: NextConfig },
 ): Promise<NextConfig> {
-  const resolved = await withAgent(phase, context);
+  const resolved = await withEngines(phase, context);
   if (process.env.VERCEL) {
     routeConsoleToAgentService();
     return resolved;

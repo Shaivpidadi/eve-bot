@@ -2,6 +2,7 @@ import { defineAgent, defineDynamic } from "eve";
 
 import type { DynamicResolveContext } from "eve";
 
+import { enginesOn } from "./lib/engines";
 import { contextToSend, customEndpoint, defaultModelFor, gatewaySelection, hqModel, levelOf, reasoningFor, tokenLimits, withOutputLimit } from "./lib/models";
 
 /**
@@ -66,6 +67,10 @@ export default defineAgent({
   ...(process.env.BOT_WORKFLOW_WORLD?.trim()
     ? { experimental: { workflow: { world: process.env.BOT_WORKFLOW_WORLD.trim() } } }
     : {}),
+  // Bots on Claude Code (lib/engines): with BOT_ENGINES on at build,
+  // durable-harness ships as a runtime dependency, loaded only when such a job
+  // runs. Off (the default), the agent service is built without it.
+  ...(enginesOn() ? { build: { externalDependencies: ["durable-harness"] } } : {}),
   limits: {
     // A thread is long-lived by design; cap spend, not lifetime. Jobs started
     // from a thread draw their budget from what the thread has left, so this
