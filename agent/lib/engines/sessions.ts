@@ -23,6 +23,7 @@
 import { bindRun, describeRunRefusal, patchJob } from "../jobs";
 import { chargeUsage } from "../spend";
 import { addUsage, type Usage } from "../usage";
+import { DEFAULT_CODEX_MODEL } from "./codex";
 import { type HarnessEngine, SPEND_STREAMS } from "./index";
 import type { HarnessSessionConfig } from "./host-tools";
 
@@ -98,9 +99,18 @@ function load(engine: HarnessEngine): Promise<HarnessDeps> {
   return deps;
 }
 
+/**
+ * The model a record names when it names none: Codex's spend records carry
+ * only the cost, and a Codex agent runs one model (`./codex`).
+ */
+function defaultModelOf(engine: HarnessEngine, env: Readonly<Record<string, string | undefined>> = process.env): string | null {
+  return engine === "codex" ? env.BOT_CODEX_MODEL?.trim() || DEFAULT_CODEX_MODEL : null;
+}
+
 /** The priced model calls in a session's log: the engine's spend stream, folded from completed journal effects. */
 export function spendOf(engine: HarnessEngine, state: { readonly effectOrder?: readonly { name: string; status: string; input?: unknown }[] }): SpendRecord[] {
   const stream = SPEND_STREAMS[engine];
+  const fallback = defaultModelOf(engine);
   const records: SpendRecord[] = [];
   for (const effect of state.effectOrder ?? []) {
     if (effect.name !== "journal" || effect.status !== "completed") continue;
@@ -108,7 +118,7 @@ export function spendOf(engine: HarnessEngine, state: { readonly effectOrder?: r
     for (const entry of batch?.streams?.[stream]?.entries ?? []) {
       const data = entry.data as { usd?: unknown; model?: unknown } | undefined;
       if (typeof data?.usd !== "number" || !Number.isFinite(data.usd)) continue;
-      records.push({ usd: data.usd, model: typeof data.model === "string" ? data.model : null });
+      records.push({ usd: data.usd, model: typeof data.model === "string" ? data.model : fallback });
     }
   }
   return records;

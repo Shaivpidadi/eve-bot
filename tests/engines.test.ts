@@ -253,7 +253,11 @@ describe("run_job's side of a harness session", () => {
       { usd: 0.0032, model: "claude-sonnet-4-5" },
       { usd: 0.0068, model: null },
     ]);
-    expect(spendOf("codex", log("codex.spend"))).toHaveLength(2);
+    // Codex's records name no model; a Codex agent runs one, so that is what they cost against.
+    expect(spendOf("codex", log("codex.spend"))).toEqual([
+      { usd: 0.0032, model: "claude-sonnet-4-5" },
+      { usd: 0.0068, model: "openai/gpt-5.4-mini" },
+    ]);
     // Each engine reads its own stream only.
     expect(spendOf("codex", log("hw.spend"))).toEqual([]);
   });
