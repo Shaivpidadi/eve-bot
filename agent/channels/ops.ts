@@ -231,10 +231,23 @@ async function updateReady(owner: boolean): Promise<{ ok: true; token: string; r
   return { ok: true, token, repo };
 }
 
+/** The saved Vercel deploy hook, when it is one: an https address on Vercel's own deploy-hook endpoint, and nothing else. */
+function deployHook(env: Readonly<Record<string, string | undefined>>): string | null {
+  const value = env.BOT_DEPLOY_HOOK?.trim();
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "api.vercel.com" && url.pathname.startsWith("/v1/integrations/deploy/") ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function settingApplies(def: SettingDef): boolean {
   if (def.where === "copy") return updateLink().runsItself;
   if (def.where === "vercel-computer") return computerMode() === "vercel";
   if (def.where === "local-computer") return computerMode() === "local";
+  if (def.where === "vercel") return process.env.VERCEL === "1";
   if (def.where === "worker") return /^(1|true|on|yes)$/i.test(process.env.BOT_WORKER?.trim() ?? "");
   return true;
 }
@@ -459,7 +472,25 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     GET("/bot/v1/settings", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      return json(await settingsReport(gate.access, process.env, settingApplies));
+      return json({ ...(await settingsReport(gate.access, process.env, settingApplies)), canRebuild: gate.access.owner && deployHook(await effectiveEnv()) !== null });
+    }),
+
+    /**
+     * Rebuild now: asks Vercel, through the deployment's deploy hook, for a
+     * fresh build, so settings that wait for one (the spend caps, the engines)
+     * apply without a trip to the dashboard. Owner only; the hook is saved
+     * sealed in Settings, and only a Vercel deploy hook address is called.
+     */
+    POST("/bot/v1/settings/rebuild", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!gate.access.owner) return json({ error: "Only this deployment's owner can rebuild it." }, 403);
+      const hook = deployHook(await effectiveEnv());
+      if (hook === null) return json({ error: "No deploy hook is set (Settings, Updates)." }, 400);
+      const answer = await fetch(hook, { method: "POST", signal: AbortSignal.timeout(20_000) }).catch(() => null);
+      if (answer === null || !answer.ok) return json({ error: `Vercel did not take the rebuild${answer === null ? "" : ` (${answer.status})`}. Check the deploy hook.` }, 502);
+      await record({ workspaceId: gate.access.workspaceId, kind: "bot.updated", botId: null, text: `${gate.access.user} asked Vercel for a rebuild, so saved settings that wait for one apply.` }).catch(() => undefined);
+      return json({ ok: true });
     }),
 
     /** Saves changes ({ "BOT_…": value or null }); deployment settings need the owner. */
@@ -471,7 +502,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (typeof changes !== "object" || changes === null || Array.isArray(changes)) return json({ error: 'Send { "changes": { "BOT_…": value or null } }.' }, 400);
       const saved = await saveSettings({ workspaceId: gate.access.workspaceId, owner: gate.access.owner, by: gate.access.user }, changes as Record<string, unknown>);
       if (!saved.ok) return json({ error: saved.error }, saved.status);
-      return json(await settingsReport(gate.access, process.env, settingApplies));
+      return json({ ...(await settingsReport(gate.access, process.env, settingApplies)), canRebuild: gate.access.owner && deployHook(await effectiveEnv()) !== null });
     }),
 
     /** The models each role runs on, AI Gateway's list, and the free-only switch (see lib/model-settings.ts). */

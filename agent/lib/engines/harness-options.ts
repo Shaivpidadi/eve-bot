@@ -11,6 +11,8 @@
  *
  * Nothing here imports durable-harness at run time.
  */
+// First: the build's Settings values over the environment, before anything below reads it (see settings/built.ts).
+import "../settings/built";
 import type { SandboxNetwork, SandboxOptions } from "durable-harness/sandbox";
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -18,9 +20,10 @@ type Env = Readonly<Record<string, string | undefined>>;
 /** How long a session's VM stays up after a turn. Short: a job's turns are minutes apart at most. */
 const IDLE_MS = 60_000;
 
-/** Whether the CLI's own tools are on: `BOT_ENGINE_BUILTINS=1`, never by default. */
+/** Whether the CLI's own tools are on: `BOT_ENGINE_BUILTINS=1` (or on in Settings), never by default. */
 export function harnessBuiltins(env: Env = process.env): boolean {
-  return env.BOT_ENGINE_BUILTINS?.trim() === "1";
+  // `1` in the environment, `on` from the Settings page's switch.
+  return /^(1|on|true)$/i.test(env.BOT_ENGINE_BUILTINS?.trim() ?? "");
 }
 
 /**

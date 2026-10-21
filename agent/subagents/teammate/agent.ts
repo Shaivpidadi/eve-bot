@@ -1,3 +1,5 @@
+// First: the build's Settings values over the environment, before anything below reads it (see settings/built.ts).
+import "../../lib/settings/built";
 import type { ModelMessage } from "ai";
 import { defineAgent, defineDynamic } from "eve";
 

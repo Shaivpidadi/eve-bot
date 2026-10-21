@@ -32,14 +32,16 @@ export type SettingArea =
   | "Background work"
   | "Team"
   | "Data controls"
+  | "Engines"
   | "Updates";
 
 /**
  * Where a setting means anything: everywhere, on Vercel's computer, on a local
- * one, with the background worker deployed on, or on a copy Vercel builds from
- * its own GitHub repository (which can update itself).
+ * one, with the background worker deployed on, on a copy Vercel builds from
+ * its own GitHub repository (which can update itself), or on any Vercel
+ * deployment.
  */
-export type SettingWhere = "always" | "vercel-computer" | "local-computer" | "worker" | "copy";
+export type SettingWhere = "always" | "vercel-computer" | "local-computer" | "worker" | "copy" | "vercel";
 
 export interface SettingDef {
   readonly env: string;
@@ -157,7 +159,35 @@ export const SETTINGS: readonly SettingDef[] = [
   { env: "BOT_INFERENCE_REGION", area: "Data controls", label: "Keep inference in", help: "Gateway fails a call it can't serve there rather than run it elsewhere.", scope: "deployment", tier: "live", kind: { type: "choice", options: [{ value: "us", label: "United States" }, { value: "eu", label: "Europe" }] }, fallback: "Anywhere" },
   { env: "BOT_EXPORT", area: "Data controls", label: "Export from the console", help: "Lets the owner download the workspace as an export file.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "Off" },
 
+  // ─── Engines ─────────────────────────────────────────────────────────────
+  {
+    env: "BOT_ENGINES",
+    area: "Engines",
+    label: "Bots on Claude Code or Codex",
+    help: "Lets a Bot run its jobs on Claude Code or Codex, each job in a Vercel Sandbox of its own, billed through AI Gateway. eve stays the default for every Bot. Not on Hobby: its Sandbox quota is the team computer's too.",
+    scope: "deployment",
+    tier: "rebuild",
+    kind: { type: "choice", options: [{ value: "claude-code", label: "Claude Code" }, { value: "codex", label: "Codex" }, { value: "claude-code,codex", label: "Both" }] },
+    fallback: "Off: every Bot runs on eve",
+  },
+  { env: "BOT_CLAUDE_CODE_MODEL", area: "Engines", label: "Claude Code's model", help: "An anthropic/… model on AI Gateway.", scope: "deployment", tier: "rebuild", kind: { type: "text", placeholder: "anthropic/claude-sonnet-4.5" }, fallback: "The library's default" },
+  { env: "BOT_CODEX_MODEL", area: "Engines", label: "Codex's model", help: "A model that speaks OpenAI's Responses API.", scope: "deployment", tier: "rebuild", kind: { type: "text", placeholder: "openai/gpt-5.4-mini" }, fallback: "openai/gpt-5.4-mini" },
+  { env: "BOT_ENGINE_BUILTINS", area: "Engines", label: "Shell and file tools", help: "Gives these Bots a shell and file editing in their job's Sandbox. Each call is logged before it runs and never re-run.", scope: "deployment", tier: "rebuild", kind: SWITCH, fallback: "Off" },
+  { env: "BOT_ENGINE_NETWORK", area: "Engines", label: "What their Sandbox may reach", help: "allow-all, or the domains it may reach, comma separated. Empty: no network at all. Model calls never need it.", scope: "deployment", tier: "rebuild", kind: { type: "text", placeholder: "registry.npmjs.org, *.github.com" }, fallback: "No network" },
+
   // ─── Updates ─────────────────────────────────────────────────────────────
+  {
+    env: "BOT_DEPLOY_HOOK",
+    area: "Updates",
+    label: "Vercel deploy hook",
+    help: "Lets Rebuild now apply settings that wait for the next build, from here. Make one in Vercel: Settings, Git, Deploy Hooks, for the production branch. Stored sealed.",
+    scope: "deployment",
+    tier: "live",
+    kind: { type: "secret" },
+    fallback: "Not set: changes apply with your next deploy",
+    where: "vercel",
+    sensitive: true,
+  },
   { env: "BOT_UPDATE_CHECK", area: "Updates", label: "Check for updates", help: "The console asks GitHub whether a newer version is out.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "On" },
   {
     env: "BOT_UPDATE_TOKEN",

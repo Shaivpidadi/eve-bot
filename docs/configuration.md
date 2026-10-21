@@ -128,6 +128,7 @@ paid option: $30 buys $80 of usage on the models it covers.
 | `BOT_EXPORT` | `on` lets the console download the signed-in workspace as an export file (`GET /bot/v1/export`; add `?secrets=1` for connectors) |
 | `BOT_UPDATE_CHECK` | `off` stops the console asking GitHub whether a newer version is out |
 | `BOT_UPDATE_TOKEN` | a fine-grained GitHub token for a Deploy-button copy (Actions, Contents and Workflows, read and write), so **Update now** updates it from the console; best saved in Settings (Updates), sealed. See [updating.md](updating.md) |
+| `BOT_DEPLOY_HOOK` | a Vercel deploy hook URL (Settings, Git, Deploy Hooks in Vercel), so **Rebuild now** applies a saved setting that waits for a build (the spend caps, where the computer runs, the engines) from the console; best saved in Settings (Updates), sealed. Only an `api.vercel.com` deploy hook is ever called |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
 | `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | Vercel Pro, production, once the worker is declared (see [The background worker](#the-background-worker)): `on` makes it ask the app for the watchdog's work every `30` seconds, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. Settings can pause it or change its pace without a redeploy |
@@ -144,13 +145,20 @@ A Bot can run its jobs on Claude Code or Codex instead of eve, through Vercel's
 [`durable-harness`](https://vercel.com/blog/making-every-harness-durable). Every
 Bot runs on eve unless you choose otherwise: when the owner turns an engine on,
 the hire dialog asks what a new Bot runs on (eve preselected), and a Bot's
-profile can move it. HQ can do the same when asked. It is an experiment, and
+profile can move it. HQ can do the same when asked.
+
+Turn them on in the console: **Settings → Engines**, owner only. Those
+settings apply with the next build, as the variables below do: on Vercel,
+press **Rebuild now** beside the saved setting once a deploy hook is saved
+(**Settings → Updates**; make the hook in Vercel under Settings, Git, Deploy
+Hooks), or redeploy; locally, the next `npm start` rebuilds. The variables
+still work, and a saved setting wins over them. It is an experiment, and
 the library is still `0.0.x`: see `docs/plan/harness-engines.md` for what is
 built, what is not, and what the live checks showed.
 
 | Variable | Does |
 | --- | --- |
-| `BOT_ENGINES` | `claude-code`, `codex`, or both (`claude-code,codex`) turns those engines on for this deployment. Read at build: unset (the default), the build is exactly as without the feature |
+| `BOT_ENGINES` | `claude-code`, `codex`, or both (`claude-code,codex`) turns those engines on for this deployment (or Settings → Engines). Read at build: unset (the default), the build is exactly as without the feature |
 | `BOT_CLAUDE_CODE_MODEL` | the AI Gateway model a Claude Code Bot runs on (an `anthropic/…` model); the library's default when unset |
 | `BOT_CODEX_MODEL` | the AI Gateway model a Codex Bot runs on (one that speaks OpenAI's Responses API); `openai/gpt-5.4-mini` when unset |
 | `BOT_ENGINE_BUILTINS` | `1` gives these Bots the CLI's own tools: a shell and file editing (Claude Code's Bash, Read, Edit and Write, never WebFetch; Codex's shell and `apply_patch`), in the job's Sandbox on its own scratch Drive. Off when unset |
