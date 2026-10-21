@@ -315,4 +315,50 @@ describe("the computer's programs", () => {
     expect(Object.keys(out.env)).not.toContain("B=C");
     expect(Object.keys(out.env)).not.toContain("D");
   });
+  it.runIf(python)("share the team's folders with the Bot, but never a folder reached through a link or outside the team's roots", () => {
+    // A Bot could plant a link in its own folder (bash ln -s, or a write_file
+    // through one) and point a command's folder through it, so that the helper,
+    // still root, shared the computer's state (/workspace/.computer: the sign-in
+    // jar, the browser profiles, the gateway key) or its user's home with the
+    // Bot's group. Here the computer's user is whoever runs the test.
+    const dir = mkdtempSync(join(tmpdir(), "bot-heal-"));
+    const path = join(dir, "bot_shell.py");
+    writeFileSync(path, helper!.content);
+    const probe = [
+      "import importlib.util, json, os, pwd, stat, sys",
+      "spec = importlib.util.spec_from_file_location('bot_shell', sys.argv[1])",
+      "mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)",
+      "root = sys.argv[2]; ws = root + '/workspace'; home = root + '/home'",
+      "mod.WORKSPACE = ws",
+      "me = pwd.getpwuid(os.getuid()).pw_name",
+      "mod.load_state = lambda: {'owner': me}",
+      "def mk(p, mode):",
+      "    os.makedirs(p, exist_ok=True); os.chmod(p, mode)",
+      "for p in ('bots/x/sub', 'bots/y', 'shared/z'): mk(ws + '/' + p, 0o755)",
+      "for p in ('bots', 'shared', 'bots/x'): os.chmod(ws + '/' + p, 0o2775)",
+      "mk(ws + '/.computer/profiles', 0o700); os.chmod(ws + '/.computer', 0o700)",
+      "mk(home + '/secret', 0o700)",
+      "os.symlink(ws, ws + '/bots/x/link')",
+      "os.symlink(home, ws + '/bots/x/out')",
+      "os.symlink(ws + '/.computer', ws + '/bots/evil')",
+      "targets = [ws + '/bots/x/link/.computer', os.path.dirname(ws + '/bots/x/link/.computer/key'),",
+      "           ws + '/bots/x/link/.computer/profiles', ws + '/bots/x/out/secret', ws + '/bots/evil',",
+      "           ws + '/.computer/profiles', ws + '/bots/x/../../.computer', ws + '/bots/x/sub']",
+      "mod.heal(os.getgid(), targets)",
+      "def shared(p): return stat.S_IMODE(os.lstat(p).st_mode) & 0o2070 == 0o2070",
+      "print(json.dumps({name: shared(p) for name, p in {",
+      "  'state': ws + '/.computer', 'profiles': ws + '/.computer/profiles', 'home': home, 'secret': home + '/secret',",
+      "  'own folder': ws + '/bots/x/sub', 'other Bot': ws + '/bots/y', 'shared': ws + '/shared/z'}.items()}))",
+    ].join("\n");
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", probe, path, dir], { encoding: "utf8" })) as Record<string, boolean>;
+    expect(out).toEqual({
+      state: false,
+      profiles: false,
+      home: false,
+      secret: false,
+      "own folder": true,
+      "other Bot": true,
+      shared: true,
+    });
+  });
 });

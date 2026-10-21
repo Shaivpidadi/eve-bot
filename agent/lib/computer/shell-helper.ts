@@ -391,6 +391,40 @@ def as_bot():
     return account, gid, ports
 
 
+def team_folders(path):
+    """Opens a folder under one of the team's roots one name at a time, as root.
+
+    Every name is opened relative to the folder above it with O_NOFOLLOW, so a
+    link anywhere on the way (one a Bot planted in its own folder, say) ends the
+    walk instead of leading out of the team's folders: a path that only names
+    the team's folders cannot reach the computer's state or its user's home.
+    Returns the descriptors from the root down; the caller closes them."""
+    path = os.path.normpath(path or "")
+    if not path.startswith(WORKSPACE + "/"):
+        return []
+    names = path[len(WORKSPACE) + 1:].split("/")
+    if names[0] not in LAYOUT:
+        return []
+    fds = []
+    try:
+        fds.append(os.open(WORKSPACE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
+        for name in names:
+            if name in ("", ".", ".."):
+                break
+            fds.append(os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fds[-1]))
+    except OSError:
+        pass
+    return fds
+
+
+def share_fd(fd, owner, gid):
+    """Gives one folder the group and setgid setup gives the roots, if the computer's user owns it."""
+    info = os.fstat(fd)
+    if stat.S_ISDIR(info.st_mode) and info.st_uid == owner and (info.st_gid != gid or stat.S_IMODE(info.st_mode) & 0o2070 != 0o2070):
+        os.fchown(fd, -1, gid)
+        os.fchmod(fd, stat.S_IMODE(info.st_mode) | 0o2070)
+
+
 def heal(gid, targets):
     """As root, before dropping: shares the work folders the computer's user made since setup.
 
@@ -399,32 +433,47 @@ def heal(gid, targets):
     screenshot saved to it, a file uploaded into it) is not the team's to write,
     and the Bot is locked out of its own folder. Each of the team's folders one
     level down, and the folders on the way to where this command works, get the
-    group and setgid setup gives the roots. Only folders the computer's user
-    owns, checked by descriptor, never through a link."""
+    group and setgid setup gives the roots. Only folders inside the team's roots
+    that the computer's user owns, each opened by descriptor from the one above
+    and never through a link (see team_folders)."""
     state = load_state() or {}
     try:
         owner = pwd.getpwnam(state.get("owner") or "").pw_uid
     except (KeyError, TypeError):
         return
-    folders = []
     for name in ("bots", "shared"):
-        root = os.path.join(WORKSPACE, name)
+        fds = team_folders(os.path.join(WORKSPACE, name))
         try:
-            folders.extend(entry.path for entry in os.scandir(root) if entry.is_dir(follow_symlinks=False))
+            if len(fds) != 2:
+                continue
+            for entry in os.listdir(fds[-1]):
+                try:
+                    fd = os.open(entry, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fds[-1])
+                except OSError:
+                    continue
+                try:
+                    share_fd(fd, owner, gid)
+                except OSError:
+                    pass
+                finally:
+                    os.close(fd)
         except OSError:
             pass
+        finally:
+            for fd in fds:
+                os.close(fd)
     for target in targets:
-        path = os.path.normpath(target or "")
-        while path.startswith(WORKSPACE + "/") and path.count("/") > 2:
-            folders.append(path)
-            path = os.path.dirname(path)
-    for path in set(folders):
+        fds = team_folders(target)
         try:
-            info = os.lstat(path)
-            if stat.S_ISDIR(info.st_mode) and info.st_uid == owner and (info.st_gid != gid or stat.S_IMODE(info.st_mode) & 0o2070 != 0o2070):
-                share_dir(path, owner, gid)
-        except (OSError, RuntimeError):
-            continue
+            # Below the roots only: WORKSPACE itself and the roots are setup's.
+            for fd in fds[2:]:
+                try:
+                    share_fd(fd, owner, gid)
+                except OSError:
+                    continue
+        finally:
+            for fd in fds:
+                os.close(fd)
 
 
 def cmd_run(argv):
