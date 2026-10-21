@@ -2,10 +2,11 @@
  * Which engine runs a Bot's jobs (see `docs/plan/harness-engines.md`).
  *
  * Every Bot runs on eve unless the owner turned another engine on for this
- * deployment and gave that Bot the engine. Today the only other engine is
- * Claude Code, through `durable-harness`: the CLI runs in a Vercel Sandbox of
+ * deployment and gave that Bot the engine. The other engines are Claude Code
+ * and Codex, through `durable-harness`: the CLI runs in a Vercel Sandbox of
  * its own for each job, not on the team's computer, and reaches the outside
- * world only through the few eve-bot tools it is given.
+ * world only through the few eve-bot tools it is given. Both bill through AI
+ * Gateway, like eve's own calls: no Claude or ChatGPT subscription is used.
  *
  * `BOT_ENGINES` is an environment variable only, never a Settings page
  * switch: it decides at build time whether the harness's queue route is built
@@ -16,17 +17,27 @@
  */
 
 /** What can run a Bot's jobs. `eve` is the default and needs no switch. */
-export const ENGINES = ["eve", "claude-code"] as const;
+export const ENGINES = ["eve", "claude-code", "codex"] as const;
 export type Engine = (typeof ENGINES)[number];
 /** The engines a switch can turn on: every one but eve. */
 export type HarnessEngine = Exclude<Engine, "eve">;
 
-const HARNESS_ENGINES: readonly HarnessEngine[] = ["claude-code"];
+const HARNESS_ENGINES: readonly HarnessEngine[] = ["claude-code", "codex"];
 
 export const ENGINE_LABELS: Readonly<Record<Engine, string>> = {
   eve: "eve (the team's computer)",
   "claude-code": "Claude Code (its own sandbox, no browser)",
+  codex: "Codex (its own sandbox, no browser)",
 };
+
+/** The engine's name alone, for sentences. */
+export const ENGINE_NAMES: Readonly<Record<Engine, string>> = { eve: "eve", "claude-code": "Claude Code", codex: "Codex" };
+
+/**
+ * Where each engine's session log keeps its model spend (H0 and H4): a journal
+ * stream of `{ usd, model }` records, one per model call.
+ */
+export const SPEND_STREAMS: Readonly<Record<HarnessEngine, string>> = { "claude-code": "hw.spend", codex: "codex.spend" };
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -78,14 +89,15 @@ export function engineRefusal(
   if (context.workspaceId !== owners) {
     return "Only the owner's workspace can run Bots on another engine.";
   }
+  const name = ENGINE_NAMES[engine];
   if (truthy(env.BOT_ZDR)) {
-    return "Zero Data Retention (BOT_ZDR) is on, and Claude Code jobs cannot carry it. Turn it off, or keep this Bot on eve.";
+    return `Zero Data Retention (BOT_ZDR) is on, and ${name} jobs cannot carry it. Turn it off, or keep this Bot on eve.`;
   }
   if ((env.BOT_INFERENCE_REGION ?? "").trim() !== "") {
-    return "An inference region (BOT_INFERENCE_REGION) is set, and Claude Code jobs cannot carry it. Unset it, or keep this Bot on eve.";
+    return `An inference region (BOT_INFERENCE_REGION) is set, and ${name} jobs cannot carry it. Unset it, or keep this Bot on eve.`;
   }
   if ((env.BOT_MODEL_BASE_URL ?? "").trim() !== "") {
-    return "This deployment uses its own model endpoint (BOT_MODEL_BASE_URL), and Claude Code jobs run only through AI Gateway.";
+    return `This deployment uses its own model endpoint (BOT_MODEL_BASE_URL), and ${name} jobs run only through AI Gateway.`;
   }
   return null;
 }

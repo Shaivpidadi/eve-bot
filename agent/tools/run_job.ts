@@ -250,16 +250,25 @@ async function runCycle(
   // workflow, so `working` never settles on its own; each look below asks the
   // session instead, and every way out of the run stops it.
   const engine: Engine = claim.engine ?? "eve";
-  let harness: { readonly engine: HarnessEngine; readonly sessionId: string; cursor: string | null } | null = null;
+  let harness: { readonly engine: HarnessEngine; readonly sessionId: string; cursor: string | null; charged: number } | null = null;
   let settledEarly: Settled | null = null;
   if (engine !== "eve") {
     const started = await startHarness(engine, workspaceId, jobId, claim.token, claim.brief);
-    if (started.ok) harness = { engine, sessionId: started.sessionId, cursor: null };
+    if (started.ok) harness = { engine, sessionId: started.sessionId, cursor: null, charged: 0 };
     else settledEarly = { ok: false, error: started.error };
   }
+  // What the session spent is charged as it goes (each look) and once more when it stops.
+  const spendOf = (session: { readonly sessionId: string; readonly charged: number }) => ({
+    workspaceId,
+    jobId,
+    botId: claim.botId ?? "",
+    token: claim.token,
+    sessionId: session.sessionId,
+    charged: session.charged,
+  });
   const halt = async (): Promise<void> => {
     stop.abort();
-    if (harness !== null) await stopHarness(harness.engine, harness.sessionId);
+    if (harness !== null) await stopHarness(harness.engine, spendOf(harness));
   };
 
   // No output schema: the result of record is what finish_job stored. A
@@ -314,13 +323,20 @@ async function runCycle(
       continue;
     }
     if (harness !== null) {
-      const look = await lookAtHarness(harness.engine, harness.sessionId, harness.cursor);
+      const { look, charged, halted: overBudget } = await lookAtHarness(harness.engine, harness.cursor, spendOf(harness));
+      harness.charged = charged;
+      // Spend is read from the session's log at every look (H0), so a run over the budget stops here, mid-turn.
+      if (overBudget) {
+        await halt();
+        settled = { ok: false, error: BUDGET_HALT_REASON };
+        continue;
+      }
       if (look.kind === "working") harness.cursor = look.cursor;
       else settled = look.ok ? { ok: true, raw: null } : { ok: false, error: look.error };
     }
   }
   // The turn is over one way or another: a harness session never outlives its run.
-  if (harness !== null) await stopHarness(harness.engine, harness.sessionId);
+  if (harness !== null) await stopHarness(harness.engine, spendOf(harness));
 
   // Stopped from eve (a task cancel, or the conversation started over): the job is cancelled too.
   if (abortSignal.aborted && !stop.signal.aborted) stop.abort();
@@ -481,6 +497,8 @@ type Claim =
        * which a run in flight across the upgrade replays: that is eve.
        */
       engine?: Engine;
+      /** Absent in a claim recorded before engines existed; only harness runs need it. */
+      botId?: string;
       botName: string;
       title: string;
       requiresSignoff: boolean;
@@ -524,12 +542,6 @@ async function claimForRun(
   if (engineRefused !== null) {
     await releaseJob(workspaceId, jobId);
     return refused(`${bot.name} runs on another engine that cannot run here: ${engineRefused}`);
-  }
-  // Until a harness run's spend can be read while it works, one at a time
-  // keeps the most a workspace can overshoot to one job's limit (plan 4.5).
-  if (engine !== "eve" && (await (await import("../lib/engines/sessions")).harnessRunsElsewhere(workspaceId, jobId))) {
-    await releaseJob(workspaceId, jobId);
-    return refused(`${bot.name} waits: another job on ${engine} is running, and only one runs at a time.`);
   }
 
   // A job whose last run failed gets another try on a more capable model,
@@ -597,6 +609,7 @@ async function claimForRun(
     token,
     brief: engine === "eve" ? renderBrief(bot, claimed.job, { token, model }) : (await import("../lib/engines/brief")).renderHarnessBrief(bot, claimed.job),
     engine,
+    botId: bot.id,
     botName: bot.name,
     title: claimed.job.title,
     requiresSignoff: claimed.job.requiresSignoff,
@@ -769,16 +782,32 @@ async function startHarness(engine: HarnessEngine, workspaceId: string, jobId: s
   return startHarnessRun(engine, { workspaceId, jobId, token, brief });
 }
 
-async function lookAtHarness(engine: HarnessEngine, sessionId: string, cursor: string | null) {
-  "use step";
-  const { lookAtHarnessRun } = await import("../lib/engines/sessions");
-  return lookAtHarnessRun(engine, sessionId, cursor);
+interface HarnessCharge {
+  readonly workspaceId: string;
+  readonly jobId: string;
+  readonly botId: string;
+  readonly token: string;
+  readonly sessionId: string;
+  /** How many of the session's priced calls are charged already. */
+  readonly charged: number;
 }
 
-async function stopHarness(engine: HarnessEngine, sessionId: string): Promise<void> {
+/** One look at the session's turn, charging what it spent since the last. */
+async function lookAtHarness(engine: HarnessEngine, cursor: string | null, charge: HarnessCharge) {
   "use step";
-  const { stopHarnessRun } = await import("../lib/engines/sessions");
-  await stopHarnessRun(engine, sessionId);
+  const { chargeHarnessSpend, lookAtHarnessRun } = await import("../lib/engines/sessions");
+  const look = await lookAtHarnessRun(engine, charge.sessionId, cursor);
+  const { charged, halted } = await chargeHarnessSpend({ ...charge, spend: look.spend });
+  return { look: { ...look, spend: [] }, charged, halted };
+}
+
+/** Charges what is left, then stops the session for good (closes it, deletes its Sandbox and Drive). */
+async function stopHarness(engine: HarnessEngine, charge: HarnessCharge): Promise<void> {
+  "use step";
+  const { chargeHarnessSpend, lookAtHarnessRun, stopHarnessRun } = await import("../lib/engines/sessions");
+  const last = await lookAtHarnessRun(engine, charge.sessionId, null).catch(() => null);
+  if (last !== null) await chargeHarnessSpend({ ...charge, spend: last.spend }).catch(() => undefined);
+  await stopHarnessRun(engine, charge.sessionId);
 }
 
 

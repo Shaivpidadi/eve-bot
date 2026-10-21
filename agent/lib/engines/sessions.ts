@@ -14,10 +14,16 @@
  * 3. Whether `sessions.close` stops a turn in flight. Until that passes,
  *    stopping also deletes the session's Sandbox and Drive, which stops
  *    whatever the VM was doing.
+ *
+ * H0 (Oct 21) passed 1 and 2; 3 failed in part (nothing more is logged, but
+ * a tool already running is not aborted), so stopping keeps deleting the VM.
+ * It also showed spend can be read from the log while a turn runs, which is
+ * how each look charges the workspace budget as it goes (`chargeHarnessSpend`).
  */
-import { getBot } from "../bots";
-import { bindRun, describeRunRefusal, listJobs } from "../jobs";
-import { engineOf, type HarnessEngine } from "./index";
+import { bindRun, describeRunRefusal, patchJob } from "../jobs";
+import { chargeUsage } from "../spend";
+import { addUsage, type Usage } from "../usage";
+import { type HarnessEngine, SPEND_STREAMS } from "./index";
 import type { HarnessSessionConfig } from "./host-tools";
 
 /** How long one look at the live stream waits for news before it reports "still working". */
@@ -25,16 +31,26 @@ const LOOK_MS = 2_000;
 
 export type HarnessStart = { readonly ok: true; readonly sessionId: string } | { readonly ok: false; readonly error: string };
 
-export type HarnessLook =
+/** One model call's cost, as the engine logged it. */
+export interface SpendRecord {
+  readonly usd: number;
+  readonly model: string | null;
+}
+
+export type HarnessLook = (
   | { readonly kind: "working"; readonly cursor: string | null }
   | { readonly kind: "ended"; readonly ok: true }
-  | { readonly kind: "ended"; readonly ok: false; readonly error: string };
+  | { readonly kind: "ended"; readonly ok: false; readonly error: string }
+) & {
+  /** Every model call the session's log has priced so far, in order. */
+  readonly spend: readonly SpendRecord[];
+};
 
 /** The slice of durable-harness's `DurableSessions` used here, so tests can stand one in. */
 export interface HarnessSessions {
   start(options: { config: HarnessSessionConfig }): Promise<{ sessionId: string }>;
   send(sessionId: string, text: string, kind?: "prompt" | "steer" | "followUp"): Promise<string>;
-  inspect(sessionId: string): Promise<{ status: string; failure?: { message: string } }>;
+  inspect(sessionId: string): Promise<{ status: string; failure?: { message: string }; effectOrder?: readonly { name: string; status: string; input?: unknown }[] }>;
   close(sessionId: string): Promise<void>;
   liveEntries(sessionId: string, options?: { cursor?: string; signal?: AbortSignal; resume?: boolean }): AsyncGenerator<{ value: unknown; cursor: string }>;
 }
@@ -54,26 +70,48 @@ const harnessModule = (entry: string): Promise<unknown> => {
   return import(/* @vite-ignore */ name);
 };
 
-let loaded: Promise<HarnessDeps> | null = null;
 
-async function load(engine: HarnessEngine): Promise<HarnessDeps> {
-  switch (engine) {
-    case "claude-code": {
-      loaded ??= (async () => {
-        const [{ claudeCode }, { sandbox, deleteSessionSandbox }, { claudeCodeOptions }] = (await Promise.all([
-          harnessModule("claude-code"),
-          harnessModule("sandbox"),
-          import("./claude-code"),
-        ])) as [typeof import("durable-harness/claude-code"), typeof import("durable-harness/sandbox"), typeof import("./claude-code")];
-        const agent = claudeCode(claudeCodeOptions(sandbox));
-        return {
-          sessions: agent.sessions as unknown as HarnessSessions,
-          deleteSandbox: (sessionId: string) => deleteSessionSandbox(sessionId, { force: true }),
-        };
-      })();
-      return loaded;
+const loaded = new Map<HarnessEngine, Promise<HarnessDeps>>();
+
+/** The engine's agent, made once per process from the same options its queue route uses. */
+function load(engine: HarnessEngine): Promise<HarnessDeps> {
+  let deps = loaded.get(engine);
+  if (deps === undefined) {
+    deps = (async (): Promise<HarnessDeps> => {
+      const { sandbox, deleteSessionSandbox } = (await harnessModule("sandbox")) as typeof import("durable-harness/sandbox");
+      let sessions: unknown;
+      if (engine === "claude-code") {
+        const [{ claudeCode }, { claudeCodeOptions }] = (await Promise.all([harnessModule("claude-code"), import("./claude-code")])) as [
+          typeof import("durable-harness/claude-code"),
+          typeof import("./claude-code"),
+        ];
+        sessions = claudeCode(claudeCodeOptions(sandbox)).sessions;
+      } else {
+        const [{ codex }, { codexOptions }] = (await Promise.all([harnessModule("codex"), import("./codex")])) as [typeof import("durable-harness/codex"), typeof import("./codex")];
+        sessions = codex(codexOptions(sandbox)).sessions;
+      }
+      return { sessions: sessions as HarnessSessions, deleteSandbox: (sessionId: string) => deleteSessionSandbox(sessionId, { force: true }) };
+    })();
+    deps.catch(() => loaded.delete(engine));
+    loaded.set(engine, deps);
+  }
+  return deps;
+}
+
+/** The priced model calls in a session's log: the engine's spend stream, folded from completed journal effects. */
+export function spendOf(engine: HarnessEngine, state: { readonly effectOrder?: readonly { name: string; status: string; input?: unknown }[] }): SpendRecord[] {
+  const stream = SPEND_STREAMS[engine];
+  const records: SpendRecord[] = [];
+  for (const effect of state.effectOrder ?? []) {
+    if (effect.name !== "journal" || effect.status !== "completed") continue;
+    const batch = effect.input as { streams?: Record<string, { entries?: readonly { data?: unknown }[] }> } | undefined;
+    for (const entry of batch?.streams?.[stream]?.entries ?? []) {
+      const data = entry.data as { usd?: unknown; model?: unknown } | undefined;
+      if (typeof data?.usd !== "number" || !Number.isFinite(data.usd)) continue;
+      records.push({ usd: data.usd, model: typeof data.model === "string" ? data.model : null });
     }
   }
+  return records;
 }
 
 /**
@@ -112,9 +150,10 @@ export async function startHarnessRun(
 export async function lookAtHarnessRun(engine: HarnessEngine, sessionId: string, cursor: string | null, deps?: HarnessDeps): Promise<HarnessLook> {
   const { sessions } = deps ?? (await load(engine));
   const state = await sessions.inspect(sessionId);
-  if (state.status === "failed") return { kind: "ended", ok: false, error: state.failure?.message ?? "The session failed." };
-  if (state.status === "cancelled") return { kind: "ended", ok: false, error: "The session was cancelled." };
-  if (state.status === "completed") return { kind: "ended", ok: true };
+  const spend = spendOf(engine, state);
+  if (state.status === "failed") return { kind: "ended", ok: false, error: state.failure?.message ?? "The session failed.", spend };
+  if (state.status === "cancelled") return { kind: "ended", ok: false, error: "The session was cancelled.", spend };
+  if (state.status === "completed") return { kind: "ended", ok: true, spend };
 
   // H0 check 2: a turn's end is an `idle` event on the live stream.
   const stop = new AbortController();
@@ -126,16 +165,63 @@ export async function lookAtHarnessRun(engine: HarnessEngine, sessionId: string,
       const type = typeof entry.value === "object" && entry.value !== null ? (entry.value as { type?: unknown }).type : undefined;
       if (type === "error") {
         const message = (entry.value as { message?: unknown }).message;
-        return { kind: "ended", ok: false, error: typeof message === "string" ? message : "The turn failed." };
+        return { kind: "ended", ok: false, error: typeof message === "string" ? message : "The turn failed.", spend };
       }
-      if (type === "idle") return { kind: "ended", ok: true };
+      if (type === "idle") return { kind: "ended", ok: true, spend };
     }
   } catch {
     // The look timed out or the stream closed: nothing ended that we saw.
   } finally {
     clearTimeout(timer);
   }
-  return { kind: "working", cursor: last };
+  return { kind: "working", cursor: last, spend };
+}
+
+/**
+ * Charges what a session spent since the last look: each priced model call
+ * once (keyed by the session and its place in the log, so a look that runs
+ * again counts nothing twice), to the usage ledger, the job's own usage and
+ * the run's reservation in the workspace budget. Says whether the budget now
+ * halts the run, so the heartbeat can stop it at once rather than at the end.
+ */
+export async function chargeHarnessSpend(input: {
+  readonly workspaceId: string;
+  readonly jobId: string;
+  readonly botId: string;
+  readonly token: string;
+  readonly sessionId: string;
+  readonly spend: readonly SpendRecord[];
+  readonly charged: number;
+}): Promise<{ readonly charged: number; readonly halted: boolean }> {
+  const usageOf = (record: SpendRecord): Usage => ({
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: record.usd,
+    steps: 1,
+    models: { [record.model ?? "unknown"]: 1 },
+  });
+  // The job notes how far its usage has counted this session, in the same write, so a retried look adds nothing.
+  let from = input.charged;
+  await patchJob(input.workspaceId, input.jobId, (current) => {
+    from = Math.max(input.charged, current.harnessCharged?.[input.sessionId] ?? 0);
+    const fresh = input.spend.slice(from);
+    if (fresh.length === 0) return current;
+    const usage = fresh.map(usageOf).reduce<Usage | undefined>((total, next) => addUsage(total, next), current.usage);
+    return { ...current, ...(usage === undefined ? {} : { usage }), harnessCharged: { ...current.harnessCharged, [input.sessionId]: input.spend.length } };
+  }).catch(() => null);
+  let halted = false;
+  // The budget is idempotent by id on its own: each call is charged once, whoever charges it.
+  for (let index = input.charged; index < input.spend.length; index += 1) {
+    const outcome = await chargeUsage(input.workspaceId, { botId: input.botId }, usageOf(input.spend[index]!), {
+      runToken: input.token,
+      costReported: true,
+      id: `${input.sessionId}:spend:${index}`,
+    }).catch(() => ({ counted: false, halted: false }));
+    halted ||= outcome.halted;
+  }
+  return { charged: Math.max(input.charged, input.spend.length, from), halted };
 }
 
 async function stopSession(deps: HarnessDeps, sessionId: string): Promise<void> {
@@ -147,19 +233,4 @@ async function stopSession(deps: HarnessDeps, sessionId: string): Promise<void> 
 /** Stops a session for good: closes it and deletes its Sandbox and Drive. Best effort and idempotent. */
 export async function stopHarnessRun(engine: HarnessEngine, sessionId: string, deps?: HarnessDeps): Promise<void> {
   await stopSession(deps ?? (await load(engine)), sessionId);
-}
-
-/**
- * Whether another job of a Bot on a harness engine is running in the
- * workspace. Until a harness run's spend can be read while it works (H0),
- * `run_job` runs one at a time, so the most a workspace can overshoot is one
- * job's limit (plan section 4.5).
- */
-export async function harnessRunsElsewhere(workspaceId: string, jobId: string): Promise<boolean> {
-  const running = await listJobs(workspaceId, { status: ["running"] });
-  for (const job of running) {
-    if (job.id === jobId) continue;
-    if (engineOf(await getBot(workspaceId, job.botId)) !== "eve") return true;
-  }
-  return false;
 }

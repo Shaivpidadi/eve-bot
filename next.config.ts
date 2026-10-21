@@ -160,11 +160,17 @@ function routeConsoleToAgentService(): void {
  * route, which drives Claude Code sessions, and keeps its packages out of the
  * server bundle. Off (the default), it is never loaded and the build is as before.
  */
+const ENGINE_AGENTS: Readonly<Record<string, string>> = {
+  "claude-code": "src/lib/engines/claude-code-agent.ts",
+  codex: "src/lib/engines/codex-agent.ts",
+};
+
 async function withEngines(phase: string, context: { defaultConfig: NextConfig }): Promise<NextConfig> {
-  const raw = (process.env.BOT_ENGINES ?? "").trim().toLowerCase();
-  if (raw === "" || raw === "off" || raw === "0" || raw === "false") return withAgent(phase, context);
+  const named = (process.env.BOT_ENGINES ?? "").trim().toLowerCase().split(",").map((part) => part.trim());
+  const agents = Object.entries(ENGINE_AGENTS).filter(([engine]) => named.includes(engine)).map(([, path]) => path);
+  if (agents.length === 0) return withAgent(phase, context);
   const { withDurableHarness } = await import("durable-harness/next");
-  return withDurableHarness(withAgent, { agents: ["src/lib/engines/claude-code-agent.ts"] })(phase, context);
+  return withDurableHarness(withAgent, { agents })(phase, context);
 }
 
 export default async function config(

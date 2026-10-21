@@ -17,7 +17,9 @@ describe("the engine switch", () => {
     const { enabledEngines, enginesOn } = await import("../agent/lib/engines");
     expect(enabledEngines({})).toEqual([]);
     expect(enabledEngines({ BOT_ENGINES: "off" })).toEqual([]);
-    expect(enabledEngines({ BOT_ENGINES: "codex, nonsense" })).toEqual([]);
+    expect(enabledEngines({ BOT_ENGINES: "nonsense" })).toEqual([]);
+    expect(enabledEngines({ BOT_ENGINES: "codex, nonsense" })).toEqual(["codex"]);
+    expect(enabledEngines({ BOT_ENGINES: "claude-code,codex" })).toEqual(["claude-code", "codex"]);
     expect(enabledEngines({ BOT_ENGINES: " Claude-Code " })).toEqual(["claude-code"]);
     expect(enginesOn({ BOT_ENGINES: "claude-code" })).toBe(true);
     expect(enginesOn({})).toBe(false);
@@ -223,10 +225,10 @@ describe("run_job's side of a harness session", () => {
 
   it("tells a finished turn, a failed one and one still working apart", async () => {
     const { lookAtHarnessRun } = await import("../agent/lib/engines/sessions");
-    expect(await lookAtHarnessRun("claude-code", "s", null, fakeSessions({ live: [{ type: "text", delta: "hi" }, { type: "idle" }] }).deps)).toEqual({ kind: "ended", ok: true });
-    expect(await lookAtHarnessRun("claude-code", "s", null, fakeSessions({ live: [{ type: "error", message: "budget" }] }).deps)).toEqual({ kind: "ended", ok: false, error: "budget" });
+    expect(await lookAtHarnessRun("claude-code", "s", null, fakeSessions({ live: [{ type: "text", delta: "hi" }, { type: "idle" }] }).deps)).toEqual({ kind: "ended", ok: true, spend: [] });
+    expect(await lookAtHarnessRun("claude-code", "s", null, fakeSessions({ live: [{ type: "error", message: "budget" }] }).deps)).toEqual({ kind: "ended", ok: false, error: "budget", spend: [] });
     expect(await lookAtHarnessRun("claude-code", "s", null, fakeSessions({ status: "failed" }).deps)).toMatchObject({ kind: "ended", ok: false });
-    expect(await lookAtHarnessRun("claude-code", "s", "c0", fakeSessions({ live: [{ type: "text", delta: "still" }] }).deps)).toEqual({ kind: "working", cursor: "c1" });
+    expect(await lookAtHarnessRun("claude-code", "s", "c0", fakeSessions({ live: [{ type: "text", delta: "still" }] }).deps)).toEqual({ kind: "working", cursor: "c1", spend: [] });
   });
 
   it("stops a session by closing it and deleting its Sandbox, even when one of them fails", async () => {
@@ -237,15 +239,37 @@ describe("run_job's side of a harness session", () => {
     expect(fake.deleteSandbox).toHaveBeenCalledWith("sess_H");
   });
 
-  it("runs one harness job at a time per workspace", async () => {
-    const { jobs, bot, job, claim } = await setup();
-    const { patchBot } = await import("../agent/lib/bots");
-    const { harnessRunsElsewhere } = await import("../agent/lib/engines/sessions");
-    await claim("lease_A");
-    const other = await jobs.assignJob({ workspaceId: WORKSPACE, botId: bot.id, requestedBy: "owner", title: "Another", brief: "More." });
-    expect(await harnessRunsElsewhere(WORKSPACE, other.id)).toBe(false);
-    await patchBot(WORKSPACE, bot.id, (current) => ({ ...current, engine: "claude-code" }));
-    expect(await harnessRunsElsewhere(WORKSPACE, other.id)).toBe(true);
-    expect(await harnessRunsElsewhere(WORKSPACE, job.id)).toBe(false);
+  it("reads each engine's spend from its own stream in the session's log", async () => {
+    const { spendOf } = await import("../agent/lib/engines/sessions");
+    const log = (stream: string) => ({
+      effectOrder: [
+        { name: "journal", status: "completed", input: { streams: { [stream]: { entries: [{ data: { usd: 0.0032, model: "claude-sonnet-4-5" } }, { data: { usd: 0.0068 } }] } } } },
+        { name: "journal", status: "pending", input: { streams: { [stream]: { entries: [{ data: { usd: 9 } }] } } } },
+        { name: "tool.stamp", status: "completed" },
+      ],
+    });
+    expect(spendOf("claude-code", log("hw.spend"))).toEqual([
+      { usd: 0.0032, model: "claude-sonnet-4-5" },
+      { usd: 0.0068, model: null },
+    ]);
+    expect(spendOf("codex", log("codex.spend"))).toHaveLength(2);
+    // Each engine reads its own stream only.
+    expect(spendOf("codex", log("hw.spend"))).toEqual([]);
+  });
+
+  it("charges a session's spend once, as it goes, and halts the run when the budget runs out", async () => {
+    vi.stubEnv("BOT_BUDGET_MONTHLY_USD", "1");
+    const { bot, job, read } = await setup();
+    const { admitRun } = await import("../agent/lib/budget");
+    expect(await admitRun(WORKSPACE, "lease_A", 0.5)).toMatchObject({ ok: true });
+    const { chargeHarnessSpend } = await import("../agent/lib/engines/sessions");
+    const run = { workspaceId: WORKSPACE, jobId: job.id, botId: bot.id, token: "lease_A", sessionId: "sess_H" };
+    const first = [{ usd: 0.4, model: "claude-sonnet-4-5" }];
+    expect(await chargeHarnessSpend({ ...run, spend: first, charged: 0 })).toEqual({ charged: 1, halted: false });
+    // The same look again charges nothing more.
+    expect(await chargeHarnessSpend({ ...run, spend: first, charged: 0 })).toEqual({ charged: 1, halted: false });
+    expect((await read()).usage).toMatchObject({ costUsd: 0.4, steps: 1, models: { "claude-sonnet-4-5": 1 } });
+    // Past its reservation with the month spent: the heartbeat stops the run here.
+    expect(await chargeHarnessSpend({ ...run, spend: [...first, { usd: 0.9, model: "claude-sonnet-4-5" }], charged: 1 })).toEqual({ charged: 2, halted: true });
   });
 });
