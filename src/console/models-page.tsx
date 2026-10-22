@@ -147,59 +147,50 @@ export function ModelsSection() {
     <>
       {report === null ? (
         error === null ? <PageLoading /> : <PageError>{error}</PageError>
-      ) : report.endpoint !== null ? (
-        <PageBody className="max-w-[760px]">
-          <PageNote>
-            Models come from your own endpoint, <code>{report.endpoint}</code>, and are set with environment variables (<code>BOT_MODEL</code>, <code>BOT_HQ_MODEL</code>,{" "}
-            <code>BOT_MODEL_QUICK</code> and the like). See docs/configuration.md.
-          </PageNote>
-          <PageSection title="Roles">
-            <List>
-              {report.roles.map((row) => (
-                <Row key={row.role}>
-                  <RowMain title={ROLES[row.role].label}>{ROLES[row.role].purpose}</RowMain>
-                  <code className="flex-none font-mono text-xs text-muted-foreground">{row.resolved.id}</code>
-                </Row>
-              ))}
-            </List>
-          </PageSection>
-        </PageBody>
       ) : (
         <PageBody className="max-w-[760px]">
           <PageNote>
-            From Vercel AI Gateway. A change applies from HQ&apos;s next message and each Bot&apos;s next job, within about 30 seconds; a job already running keeps
-            its model.
+            {report.endpoint === null ? (
+              "From Vercel AI Gateway."
+            ) : (
+              <>
+                From your own provider, <code>{report.endpoint}</code> (Settings, Models, below), as it lists them.
+              </>
+            )}{" "}
+            A change applies from HQ&apos;s next message and each Bot&apos;s next job, within about 30 seconds; a job already running keeps its model.
             {report.editable ? null : " This deployment sets its models itself (BOT_MODELS_EDITABLE=off), so they are shown here, not changed."}
           </PageNote>
           {error === null ? null : <p className="m-0 text-xs text-destructive">{error}</p>}
           {report.catalog.error === null ? null : (
             <Faint>
-              AI Gateway&apos;s list could not be read ({report.catalog.error}){report.catalog.at === null ? "" : "; showing the last one"}. You can still name a model.
+              {report.endpoint === null ? "AI Gateway's" : "Your provider's"} list could not be read ({report.catalog.error}){report.catalog.at === null ? "" : "; showing the last one"}. You can still name a model.
             </Faint>
           )}
 
-          <PageSection title="Cost">
-            <List>
-              <Row>
-                <RowMain title="Free models only">
-                  {report.zdr
-                    ? "Off: this deployment asks for Zero Data Retention (BOT_ZDR), and no free model offers it."
-                    : "Every role runs on a model Vercel serves at no cost. Free models can change or go away and keep no Zero Data Retention promise. Embeddings, decisions and web search still bill."}
-                </RowMain>
-                <Switch
-                  checked={report.freeOnly}
-                  disabled={busy || !report.editable || report.zdr}
-                  aria-label="Free models only"
-                  onCheckedChange={(next) => void save({ freeOnly: next })}
-                />
-              </Row>
-            </List>
-            {report.freeOnly && report.freeDefault !== null ? (
-              <Faint>
-                Roles not set to a free model run on {byId.get(report.freeDefault.id)?.name ?? report.freeDefault.id}, the free model that can see screenshots.
-              </Faint>
-            ) : null}
-          </PageSection>
+          {report.endpoint !== null ? null : (
+            <PageSection title="Cost">
+              <List>
+                <Row>
+                  <RowMain title="Free models only">
+                    {report.zdr
+                      ? "Off: this deployment asks for Zero Data Retention (BOT_ZDR), and no free model offers it."
+                      : "Every role runs on a model Vercel serves at no cost. Free models can change or go away and keep no Zero Data Retention promise. Embeddings, decisions and web search still bill."}
+                  </RowMain>
+                  <Switch
+                    checked={report.freeOnly}
+                    disabled={busy || !report.editable || report.zdr}
+                    aria-label="Free models only"
+                    onCheckedChange={(next) => void save({ freeOnly: next })}
+                  />
+                </Row>
+              </List>
+              {report.freeOnly && report.freeDefault !== null ? (
+                <Faint>
+                  Roles not set to a free model run on {byId.get(report.freeDefault.id)?.name ?? report.freeDefault.id}, the free model that can see screenshots.
+                </Faint>
+              ) : null}
+            </PageSection>
+          )}
 
           <PageSection title="Roles">
             <List>
@@ -269,7 +260,7 @@ function Picker({ report, role, onClose, onPick }: { report: Report; role: Role;
       <ModelSelectorContent title={`Model for ${ROLES[role].label}`} className="sm:max-w-[560px]">
         <ModelSelectorInput value={query} onValueChange={setQuery} placeholder="Search models, or type one such as anthropic/claude-sonnet-5" />
         <ModelSelectorList className="max-h-[420px]">
-          <ModelSelectorEmpty>{report.freeOnly ? "No free model by that name." : "No model by that name. Type its full id, provider/model, to use it anyway."}</ModelSelectorEmpty>
+          <ModelSelectorEmpty>{report.freeOnly ? "No free model by that name." : report.endpoint === null ? "No model by that name. Type its full id, provider/model, to use it anyway." : "Your provider doesn't list that name. Type it exactly to use it anyway."}</ModelSelectorEmpty>
           {offerTyped && !report.freeOnly ? (
             <ModelSelectorGroup heading="By name">
               <ModelSelectorItem value={`typed ${typed}`} onSelect={() => onPick(typed)}>

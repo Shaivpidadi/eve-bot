@@ -4,7 +4,7 @@ import { gatewayReachable } from "../jev";
 import { readDoc, updateDoc } from "../store";
 import { chargeUsage, reportedCost } from "../spend";
 import { type MemoryEntry, type MemorySlot, normalize } from "./store";
-import { withGatewayOptions } from "../models";
+import { customEndpoint, endpointEmbeddingModel, withGatewayOptions } from "../models";
 import { liveEnv } from "../settings/store";
 
 /**
@@ -14,8 +14,10 @@ import { liveEnv } from "../settings/store";
  * Once a Bot's craft memory holds a few hundred lessons, word overlap misses
  * too many of them, so on the Gateway each lesson gets a small embedding
  * (256 numbers, a fraction of a cent per hundred) kept beside the slot, and a
- * turn's question is embedded once and compared to all of them. Off the
- * Gateway, or when embedding fails, word overlap stands in unchanged.
+ * turn's question is embedded once and compared to all of them. On your own
+ * provider, its embedding model does the same once one is named
+ * (`BOT_MEMORY_EMBEDDING_MODEL`); without one, or when embedding fails, word
+ * overlap stands in unchanged.
  *
  * Vectors live in their own document so recall of the small slots never pays
  * for them, and each carries a digest of the text it was made from, so a
@@ -38,6 +40,8 @@ const key = (workspaceId: string, slot: MemorySlot) => `memory/v2/${workspaceId}
 
 export function embeddingsEnabled(env: Readonly<Record<string, string | undefined>> = liveEnv()): boolean {
   if (/^(0|off|false|none)$/i.test(env.BOT_MEMORY_EMBEDDINGS ?? "")) return false;
+  // Your own provider names its embedding models its own way (nomic-embed-text on Ollama): on once one is named.
+  if (customEndpoint() !== null) return (env.BOT_MEMORY_EMBEDDING_MODEL?.trim() ?? "") !== "";
   return gatewayReachable(env);
 }
 
@@ -84,7 +88,12 @@ export type Embedder = (texts: readonly string[]) => Promise<readonly (readonly 
 export function gatewayEmbedder(workspaceId: string, model: string = embeddingModel()): Embedder {
   return async (texts) => {
     if (texts.length === 0) return [];
-    const options = { model, providerOptions: withGatewayOptions({ openai: { dimensions: DIMENSIONS } }), maxRetries: 1, abortSignal: AbortSignal.timeout(15_000) };
+    // On your own provider, its embedding model at its own size (vectors are compared only with the same model's).
+    const endpoint = customEndpoint();
+    const options =
+      endpoint === null
+        ? { model, providerOptions: withGatewayOptions({ openai: { dimensions: DIMENSIONS } }), maxRetries: 1, abortSignal: AbortSignal.timeout(15_000) }
+        : { model: endpointEmbeddingModel(endpoint, model), maxRetries: 1, abortSignal: AbortSignal.timeout(15_000) };
     const result = texts.length === 1 ? await embed({ ...options, value: texts[0]! }).then((one) => ({ embeddings: [one.embedding], usage: one.usage, providerMetadata: one.providerMetadata })) : await embedMany({ ...options, values: [...texts] });
     const cost = reportedCost(result.providerMetadata);
     void chargeUsage(

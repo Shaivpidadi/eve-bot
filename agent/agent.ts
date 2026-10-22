@@ -5,7 +5,7 @@ import { defineAgent, defineDynamic } from "eve";
 import type { DynamicResolveContext } from "eve";
 
 import { enginesOn } from "./lib/engines";
-import { contextToSend, customEndpoint, defaultModelFor, gatewaySelection, hqModel, levelOf, reasoningFor, sessionUsage, withOutputLimit } from "./lib/models";
+import { contextToSend, customEndpoint, defaultModelFor, endpointModel, gatewaySelection, levelOf, reasoningFor, sessionUsage, withOutputLimit } from "./lib/models";
 
 /**
  * HQ's model on AI Gateway: the workspace's choice in the console (see
@@ -49,6 +49,23 @@ const hqOnGateway = defineDynamic({
 });
 
 /**
+ * HQ's model on your own provider: the workspace's choice on the Models page,
+ * else `BOT_HQ_MODEL`, else the provider's model. eve takes a provider's model
+ * object only per model step, so it is chosen there, from settings cached for
+ * 30 seconds, with the context window eve cannot look up.
+ */
+const endpoint = customEndpoint();
+const hqOnEndpoint = defineDynamic({
+  events: {
+    "step.started": async (_event, ctx: DynamicResolveContext) => {
+      const [{ resolveModel }, { operator }] = await Promise.all([import("./lib/model-settings"), import("./lib/session")]);
+      const resolved = await resolveModel(operator(ctx).workspaceId, "hq").catch(() => null);
+      return { model: endpointModel(endpoint!, resolved?.id ?? defaultModelFor("hq")), modelContextWindowTokens: endpoint!.contextWindowTokens };
+    },
+  },
+});
+
+/**
  * Bot HQ — the teammate you message.
  *
  * HQ routes, delegates, and reports. The actual work happens in the `teammate`
@@ -58,7 +75,7 @@ const hqOnGateway = defineDynamic({
  * `BOT_MODEL_BASE_URL` set, HQ runs on that endpoint's model instead.
  */
 export default defineAgent({
-  ...(customEndpoint() === null ? { model: hqOnGateway } : hqModel()),
+  model: endpoint === null ? hqOnGateway : hqOnEndpoint,
   ...reasoningFor(process.env.BOT_HQ_REASONING, "low"),
   compaction: {
     thresholdPercent: 0.8,

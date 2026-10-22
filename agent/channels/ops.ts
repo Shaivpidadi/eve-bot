@@ -36,7 +36,7 @@ import { isProjectWorker, workerEverySeconds, workerTick } from "../lib/worker";
 import { gatewayCatalog } from "../lib/gateway-models";
 import { customEndpoint } from "../lib/models";
 import { dockerReady, modelsReady } from "../lib/setup-probe";
-import { modelsEditable, modelsReport, saveModelSettings, settingsInput } from "../lib/model-settings";
+import { endpointCatalog, modelsEditable, modelsReport, saveModelSettings, settingsInput } from "../lib/model-settings";
 import { effectiveEnv, liveEnv, saveSettings, settingsReport, workerPaused } from "../lib/settings/store";
 import type { SettingDef } from "../lib/settings/registry";
 import { acceptTrigger, recentTriggers, TRIGGER_PATH, verifiedTrigger } from "../lib/triggers";
@@ -549,7 +549,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (!modelsEditable()) return json({ error: "Models are set by this deployment and cannot be changed here." }, 403);
       const input = settingsInput(await readJson(request));
       if (input === null) return json({ error: "Send { freeOnly?: boolean, roles?: { hq|standard|quick|deep|helper: model id or null } }." }, 400);
-      const saved = await saveModelSettings(gate.access.workspaceId, input, gate.access.user, await gatewayCatalog());
+      const saved = await saveModelSettings(gate.access.workspaceId, input, gate.access.user, customEndpoint() === null ? await gatewayCatalog() : await endpointCatalog());
       if (!saved.ok) return json({ error: saved.error }, 422);
       return json(await modelsReport(gate.access.workspaceId));
     }),

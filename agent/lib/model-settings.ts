@@ -35,6 +35,21 @@ export interface ModelSettings {
   readonly freeDefault: ChosenModel | null;
   readonly at: string | null;
   readonly by: string | null;
+  /**
+   * Your own provider's address these choices were made for; absent or null
+   * for AI Gateway. Choices apply only where they were made: a Gateway model
+   * name means nothing to Ollama, and the other way round.
+   */
+  readonly endpoint?: string | null;
+}
+
+/** The provider models are chosen among here: your own one's address, or null for AI Gateway. */
+const providerHere = (): string | null => customEndpoint()?.baseURL ?? null;
+
+/** The workspace's choices for the provider in use now, or none when they were made for another. */
+function forHere(settings: ModelSettings): ModelSettings {
+  if ((settings.endpoint ?? null) !== providerHere()) return EMPTY;
+  return providerHere() === null ? settings : { ...settings, freeOnly: false };
 }
 
 export interface ResolvedModel {
@@ -55,6 +70,42 @@ const key = (workspaceId: string) => `models/${workspaceId}.json`;
 const MODEL_ID = /^[a-z0-9][a-z0-9._-]{0,40}\/[a-z0-9][a-z0-9._:-]{0,79}$/i;
 export const isModelId = (value: string): boolean => value.length <= 120 && MODEL_ID.test(value);
 
+/** A model id as your own provider names it (qwen3:8b, mistral-small-3.2, org/model): one word, no spaces. */
+const isEndpointModelId = (value: string): boolean => value.length <= 120 && /^[\w./:@+-]+$/.test(value);
+
+const ENDPOINT_CACHE_MS = 60_000;
+let endpointList: { readonly catalog: Catalog; readonly until: number; readonly baseURL: string } | null = null;
+
+/**
+ * The models your own provider serves, from its `/models` list, in the shape of
+ * Gateway's (no prices or capabilities: the list says only their names, so a
+ * model is taken to see screenshots and answer in a fixed format until a job
+ * shows otherwise). Read for the page and when settings are saved.
+ */
+export async function endpointCatalog(): Promise<Catalog> {
+  const endpoint = customEndpoint();
+  if (endpoint === null) return { models: [], at: null, error: null };
+  if (endpointList !== null && endpointList.baseURL === endpoint.baseURL && endpointList.until > Date.now()) return endpointList.catalog;
+  let catalog: Catalog;
+  try {
+    const { endpointKey } = await import("./models");
+    const key = await endpointKey();
+    const response = await fetch(`${endpoint.baseURL}/models`, { headers: key === undefined ? {} : { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) throw new Error(`Your provider answered ${response.status}.`);
+    const body = (await response.json()) as { data?: readonly { id?: unknown }[] };
+    const host = new URL(endpoint.baseURL).host;
+    const models = (body.data ?? [])
+      .map((entry) => entry.id)
+      .filter((id): id is string => typeof id === "string" && isEndpointModelId(id))
+      .map((id): CatalogModel => ({ id, name: id, provider: host, free: false, inputPerM: null, priceVaries: false, outputPerM: null, context: endpoint.contextWindowTokens, vision: true, structured: true, reasoning: false, zdr: "none" }));
+    catalog = { models, at: new Date().toISOString(), error: null };
+  } catch (error) {
+    catalog = { models: [], at: null, error: error instanceof Error ? error.message : "Your provider did not answer." };
+  }
+  endpointList = { catalog, until: Date.now() + ENDPOINT_CACHE_MS, baseURL: endpoint.baseURL };
+  return catalog;
+}
+
 const cache = new Map<string, { readonly settings: ModelSettings; readonly until: number }>();
 
 /** The workspace's model settings, cached for 30 seconds (another instance may serve the old ones that long). */
@@ -71,7 +122,7 @@ export async function readModelSettings(workspaceId: string): Promise<ModelSetti
 
 /** Whether people may change models from the console (`BOT_MODELS_EDITABLE=off` locks it). */
 export const modelsEditable = (env: Readonly<Record<string, string | undefined>> = process.env): boolean =>
-  !/^(0|false|off|no)$/i.test(env.BOT_MODELS_EDITABLE?.trim() ?? "") && customEndpoint() === null;
+  !/^(0|false|off|no)$/i.test(env.BOT_MODELS_EDITABLE?.trim() ?? "");
 
 const zdrAsked = (env: Readonly<Record<string, string | undefined>>) => /^(1|true|on|yes)$/i.test(env.BOT_ZDR?.trim() ?? "");
 
@@ -100,8 +151,11 @@ export async function saveModelSettings(
   env: Readonly<Record<string, string | undefined>> = liveEnv(),
 ): Promise<{ ok: true; settings: ModelSettings } | { ok: false; error: string }> {
   if (!modelsEditable(env)) return { ok: false, error: "Models are set by this deployment and cannot be changed here." };
-  const current = await readModelSettings(workspaceId);
-  const freeOnly = input.freeOnly ?? current.freeOnly;
+  const current = forHere(await readModelSettings(workspaceId));
+  const onEndpoint = customEndpoint() !== null;
+  // "Free models only" is a choice among AI Gateway's models; your own provider's prices are yours.
+  if (onEndpoint && input.freeOnly === true) return { ok: false, error: '"Free models only" chooses among AI Gateway\'s models; on your own provider, pick the models you want.' };
+  const freeOnly = onEndpoint ? false : (input.freeOnly ?? current.freeOnly);
   if (freeOnly && zdrAsked(env)) return { ok: false, error: "This deployment asks for Zero Data Retention (BOT_ZDR), and no free model offers it." };
   const byId = new Map(catalog.models.map((model) => [model.id, model]));
   const roles: Partial<Record<ModelRole, ChosenModel>> = { ...current.roles };
@@ -113,7 +167,9 @@ export async function saveModelSettings(
       continue;
     }
     const id = value.trim();
-    if (!isModelId(id)) return { ok: false, error: `"${id.slice(0, 60)}" is not a model id. They look like provider/model, such as anthropic/claude-sonnet-5.` };
+    if (onEndpoint ? !isEndpointModelId(id) : !isModelId(id)) {
+      return { ok: false, error: onEndpoint ? `"${id.slice(0, 60)}" is not a model id your provider could serve.` : `"${id.slice(0, 60)}" is not a model id. They look like provider/model, such as anthropic/claude-sonnet-5.` };
+    }
     roles[role] = chosen(id, byId.get(id));
   }
   for (const [role, model] of Object.entries(roles) as [ModelRole, ChosenModel][]) {
@@ -129,6 +185,7 @@ export async function saveModelSettings(
     freeDefault: freePick === null ? null : chosen(freePick, byId.get(freePick)),
     at: new Date().toISOString(),
     by,
+    endpoint: providerHere(),
   };
   const { writeDoc } = await import("./store");
   await writeDoc(key(workspaceId), settings);
@@ -139,9 +196,9 @@ export async function saveModelSettings(
 /** The model a role runs on for this workspace: its setting, else the free default under "free only", else the deployment's default. */
 export async function resolveModel(workspaceId: string, role: ModelRole): Promise<ResolvedModel> {
   const fallback: ResolvedModel = { id: defaultModelFor(role), context: null, reasoning: null, free: false, source: "default" };
-  if (customEndpoint() !== null) return fallback;
   const settings = await readModelSettings(workspaceId).catch(() => EMPTY);
-  return resolveFrom(settings, role, fallback);
+  // Only choices made for this provider apply; "free only" is AI Gateway's.
+  return resolveFrom(forHere(settings), role, fallback);
 }
 
 /** `resolveModel` given the settings; for the page, which shows what each role resolves to. */
@@ -194,8 +251,8 @@ export interface ModelsReport {
 /** Everything the Models page shows for a workspace. */
 export async function modelsReport(workspaceId: string, env: Readonly<Record<string, string | undefined>> = liveEnv()): Promise<ModelsReport> {
   const endpoint = customEndpoint();
-  const settings = endpoint === null ? await readModelSettings(workspaceId) : EMPTY;
-  const catalog: Catalog = endpoint === null ? await gatewayCatalog() : { models: [], at: null, error: null };
+  const settings = forHere(await readModelSettings(workspaceId));
+  const catalog: Catalog = endpoint === null ? await gatewayCatalog() : await endpointCatalog();
   return {
     editable: modelsEditable(env),
     endpoint: endpoint === null ? null : new URL(endpoint.baseURL).host,
@@ -206,8 +263,15 @@ export async function modelsReport(workspaceId: string, env: Readonly<Record<str
     by: settings.by,
     catalog,
     roles: MODEL_ROLES.map((role) => {
-      const resolved = endpoint === null ? resolveFrom(settings, role) : { id: defaultModelFor(role), context: null, reasoning: null, free: false, source: "default" as const };
-      return { role, setting: settings.roles[role] ?? null, default: defaultModelFor(role), resolved, warnings: endpoint === null ? roleWarnings(role, settings, resolved, catalog, env) : [] };
+      const resolved = resolveFrom(settings, role);
+      const unlisted = catalog.error === null && catalog.models.length > 0 && !catalog.models.some((model) => model.id === resolved.id);
+      return {
+        role,
+        setting: settings.roles[role] ?? null,
+        default: defaultModelFor(role),
+        resolved,
+        warnings: endpoint === null ? roleWarnings(role, settings, resolved, catalog, env) : unlisted ? ["Your provider does not list this model; check the name."] : [],
+      };
     }),
   };
 }
@@ -242,9 +306,10 @@ export async function runModel(
   workspaceId: string,
   effort: JobEffort,
 ): Promise<{ id: string; context: number | null; reasoning: boolean | null; level: ReturnType<typeof levelOf>; free: boolean } | null> {
-  if (customEndpoint() !== null) return null;
   const [resolved, env] = await Promise.all([resolveModel(workspaceId, effortRole(effort)).catch(() => null), effectiveEnv(workspaceId).catch(() => process.env)]);
   if (resolved === null) return null;
+  // On your own provider only a model chosen in the console is named; the rest pick by effort as before (no reasoning level: many local servers reject one).
+  if (customEndpoint() !== null) return resolved.source === "setting" ? { id: resolved.id, context: null, reasoning: null, level: null, free: false } : null;
   // How hard a Bot reasons, from Settings; written into the brief with the model, so the run keeps both.
   const level = levelOf(env.BOT_TEAMMATE_REASONING);
   if (resolved.source === "default") return { id: resolved.id, context: null, reasoning: null, level, free: false };

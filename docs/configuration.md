@@ -46,7 +46,8 @@ Vercel. Each setting says where its value comes from (changed here, from
 
 ## Models
 
-The console's **Models** page picks the AI Gateway model for each role:
+The console's **Models** page picks the model for each role, on AI Gateway or on your own OpenAI-compatible provider
+(set in Settings → Models, or `BOT_MODEL_BASE_URL`):
 - **HQ:** the conversation.
 - **Bots:** standard, quick and deep jobs.
 - **Helper:** memories, a new Bot's hello, and team suggestions.
@@ -54,6 +55,14 @@ The console's **Models** page picks the AI Gateway model for each role:
 It lists Gateway's models, free ones first and then paid ones cheapest first, with prices and whether each can see
 screenshots. You can also type any `provider/model` id Gateway serves. **Free models only** puts every role on a free
 model; a role not set to one runs on the free model that can see screenshots (`minimax/minimax-m3.1-flash` today).
+
+On your own provider the page lists what it serves (its `/models`), and you can type any name it takes, such as
+`qwen3:8b`. Free models only is an AI Gateway choice and is not offered there. Choices are kept per provider: those
+made for AI Gateway never reach your provider, and the other way round. Jev's second opinions run there too, answered
+by your provider's quick model (or `BOT_JEV_MODEL` there), without Jev's calibrated probabilities; and memory by
+meaning uses your provider's embedding model once one is named (`BOT_MEMORY_EMBEDDING_MODEL`, such as
+`nomic-embed-text` on Ollama). eve's own web search and Zero Data Retention stay AI Gateway's; Settings → Web search
+picks a search service for your provider.
 
 Choices are saved per workspace and win over the variables below, which stay the defaults. A change applies from
 HQ's next message and each job's next run, within about 30 seconds, and a running job keeps its model. The page warns

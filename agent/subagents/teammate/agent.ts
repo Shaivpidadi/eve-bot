@@ -33,8 +33,8 @@ type Chosen = {
  * A job keeps the model it started with: prompt caches are per model, and a
  * brief compacted out of the history must not switch it mid-run. The brief
  * names it (`run_job` writes the workspace's choice there, see
- * `model-settings.ts`), so every step agrees on any instance; a brief from
- * before that, or on a custom endpoint, picks by its effort as before.
+ * `model-settings.ts`), on AI Gateway or your own provider, so every step
+ * agrees on any instance; a brief that names none picks by its effort.
  */
 const chosen = new Map<string, Chosen>();
 const MAX_REMEMBERED = 500;
@@ -43,7 +43,7 @@ function modelFor(ctx: Pick<DynamicResolveContext, "session" | "messages">): Cho
   const remembered = chosen.get(ctx.session.id);
   if (remembered !== undefined) return remembered;
   const brief = briefText(ctx.messages);
-  const named = endpoint === null ? modelInBrief(brief) : null;
+  const named = modelInBrief(brief);
   const model: Chosen = named === null ? { id: modelForEffort(effortInBrief(brief)), context: null, reasoning: null } : { ...named, picked: true };
   if (chosen.size >= MAX_REMEMBERED) chosen.delete(chosen.keys().next().value as string);
   chosen.set(ctx.session.id, model);

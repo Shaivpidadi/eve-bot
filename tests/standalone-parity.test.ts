@@ -40,11 +40,13 @@ describe("Settings on a standalone server", () => {
     for (const name of ["BOT_MODEL_PRICES", "BOT_HQ_INPUT_TOKEN_LIMIT"]) expect(settings.has(name), name).toBe(false);
   });
 
-  it("on its own endpoint, offers the endpoint's backstops and none of AI Gateway's", async () => {
+  it("on its own endpoint, offers the endpoint's backstops, and of AI Gateway's only what works off it", async () => {
     vi.stubEnv("BOT_MODEL_BASE_URL", "http://localhost:11434/v1");
     const settings = await shown();
     for (const name of ["BOT_MODEL_PRICES", "BOT_HQ_INPUT_TOKEN_LIMIT", "BOT_JOB_OUTPUT_TOKEN_LIMIT"]) expect(settings.has(name), name).toBe(true);
-    for (const name of ["BOT_JEV", "BOT_JEV_MODEL", "BOT_MEMORY_EMBEDDINGS", "BOT_ZDR", "BOT_INFERENCE_REGION", "BOT_HQ_REASONING"]) expect(settings.has(name), name).toBe(false);
+    for (const name of ["BOT_ZDR", "BOT_INFERENCE_REGION", "BOT_HQ_REASONING"]) expect(settings.has(name), name).toBe(false);
+    // Jev and memory by meaning run on your own provider too.
+    for (const name of ["BOT_JEV", "BOT_JEV_MODEL", "BOT_MEMORY_EMBEDDINGS", "BOT_MEMORY_EMBEDDING_MODEL"]) expect(settings.has(name), name).toBe(true);
   });
 
   it("does not offer what a Docker computer can't do: CPUs, Sandbox prices, a list of sites", async () => {
