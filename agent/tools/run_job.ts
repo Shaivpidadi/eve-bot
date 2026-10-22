@@ -140,6 +140,11 @@ export default defineWorkflowTool({
     now: looseBoolean()
       .optional()
       .describe("Start straight away even if the job is scheduled for later."),
+    note: z
+      .string()
+      .max(2_000)
+      .optional()
+      .describe("What the person wants changed, when they sent the job back without saying and you asked: the same bot revises with it."),
   }),
   label: {
     start: ({ jobId }) => `Run ${jobId}`,
@@ -147,8 +152,9 @@ export default defineWorkflowTool({
   async serve(receive, ctx) {
     "use workflow";
     const call = await receive();
-    const { jobId, now } = call.input;
+    const { jobId, now, note } = call.input;
     const workspaceId = operator(ctx).workspaceId;
+    if (note !== undefined && note.trim() !== "") await takeNote(workspaceId, jobId, note.trim());
 
     // 1. Not due yet: answer now, then wait for the start time without holding the conversation.
     if (now !== true) {
@@ -424,7 +430,7 @@ async function runCycle(
       if (note === "") {
         const reason = "Sent back without a note.";
         await markBlocked(workspaceId, jobId, reason, claim.token, result);
-        return answer({ jobId, ran: true, status: "blocked", reason, next: "Ask the person what to change, then call run_job for this job again.", result });
+        return answer({ jobId, ran: true, status: "blocked", reason, next: "Ask the person what to change, then call run_job for this job again with their answer as `note`. Do not open a new job for it.", result });
       }
       // The revision is a fresh call, so its review card reaches the person: the job
       // goes back in the queue with the note in its brief, next to this result.
@@ -909,6 +915,15 @@ async function markDone(
   await reapIdleScreens().catch(() => 0);
   const repeats = job?.status === "scheduled";
   return { status: job?.status ?? null, nextRunAt: repeats ? (job?.runAt ?? null) : null };
+}
+
+/**
+ * The person's note for a job they sent back without one (or that failed or is
+ * blocked): it goes in the brief of the next run, as a note on the card does.
+ */
+async function takeNote(workspaceId: string, jobId: string, note: string): Promise<void> {
+  "use step";
+  await patchJob(workspaceId, jobId, (job) => (job.status === "blocked" || job.status === "failed" ? { ...job, feedback: note } : job));
 }
 
 async function markFailed(
