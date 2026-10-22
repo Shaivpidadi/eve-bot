@@ -158,6 +158,10 @@ async function seedDefaultBot(workspaceId: string): Promise<void> {
   await writeDoc(seedKey(workspaceId), seeded);
 }
 
+/** HQ is the team's chief of staff, addressed by that name: no Bot may take it. */
+export const isReservedName = (name: string): boolean => name.trim().toLowerCase() === "hq";
+export const RESERVED_NAME_REFUSAL = "HQ is taken: it is the team's chief of staff.";
+
 /** Resolves "Ava", "ava", or `bot_k3f9x2` to one bot, the way a person would refer to it. */
 export async function findBot(workspaceId: string, reference: string): Promise<Bot | null> {
   const direct = await getBot(workspaceId, reference);

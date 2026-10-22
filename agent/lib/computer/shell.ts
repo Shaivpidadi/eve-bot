@@ -299,7 +299,22 @@ export const isolatedReadFile = shellIsolationOff()
   ? defineTool({ ...readFile, approval: always() })
   : defineTool({ ...readFile, execute: (input, ctx) => readFile.execute(input, withIsolatedShell(ctx)) });
 
+/** Where the Bots' shell user may write, named when a write is refused, so a model does not invent a reason. */
+const WRITABLE = "/workspace/shared (the team's files), /workspace/bots/<name> (a Bot's own) and /workspace/downloads";
+type WriteFileOutput = Exclude<Awaited<ReturnType<typeof writeFile.execute>>, AsyncIterable<unknown>>;
+
 /** eve's `write_file`, writing as the Bot's own user. */
 export const isolatedWriteFile = shellIsolationOff()
   ? defineTool({ ...writeFile, approval: always() })
-  : defineTool({ ...writeFile, execute: (input, ctx) => writeFile.execute(input, withIsolatedShell(ctx)) });
+  : defineTool({
+      ...writeFile,
+      async execute(input, ctx) {
+        try {
+          // eve's write_file answers with one result, never a stream.
+          return (await writeFile.execute(input, withIsolatedShell(ctx))) as WriteFileOutput;
+        } catch (error) {
+          if (!(error instanceof Error) || !/permission denied/i.test(error.message)) throw error;
+          throw new Error(`${error.message}. This folder is not writable; write under ${WRITABLE} instead.`);
+        }
+      },
+    });

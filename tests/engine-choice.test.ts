@@ -84,4 +84,11 @@ describe("choosing an engine", () => {
     expect(board.engines).toEqual(["eve", "claude-code"]);
     expect(board.members.find((member) => member.name === "Cody")?.profile?.engine).toBe("claude-code");
   });
+
+  it("never hires or renames a Bot to HQ, which is the chief of staff's name", async () => {
+    expect(await call("POST", "/bot/v1/bots", { ...hire, name: "hq" })).toMatchObject({ status: 409, body: { error: expect.stringContaining("HQ is taken") } });
+    const plain = await call("POST", "/bot/v1/bots", { ...hire, name: "Mira" });
+    const id = (plain.body.bot as { id: string }).id;
+    expect(await call("PATCH", `/bot/v1/bots/${id}`, { name: " HQ " })).toMatchObject({ status: 409 });
+  });
 });

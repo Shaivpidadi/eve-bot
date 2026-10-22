@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { record } from "../lib/activity";
-import { findBot, patchBot, teachBot } from "../lib/bots";
+import { findBot, isReservedName, patchBot, RESERVED_NAME_REFUSAL, teachBot } from "../lib/bots";
 import { ENGINE_LABELS, ENGINES, engineRefusal, engineChoiceOffered, type Engine } from "../lib/engines";
 import { operator } from "../lib/session";
 import { effectiveEnv } from "../lib/settings/store";
@@ -49,6 +49,7 @@ export default defineTool({
     const found = await findBot(who.workspaceId, input.bot);
     if (found === null) return { updated: false as const, reason: `No bot called ${input.bot}.` };
     if (input.name !== undefined) {
+      if (isReservedName(input.name)) return { updated: false as const, reason: RESERVED_NAME_REFUSAL };
       // Bots are addressed by name, so two with the same name would be ambiguous.
       const clash = await findBot(who.workspaceId, input.name);
       if (clash !== null && clash.id !== found.id) {

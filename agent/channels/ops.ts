@@ -10,7 +10,7 @@ import { record } from "../lib/activity";
 import { ENGINE_LABELS, ENGINES, engineOf, engineRefusal, isEngine } from "../lib/engines";
 import { readArtifact } from "../lib/artifacts";
 import { buildBoard } from "../lib/board";
-import { findBot, getBot, hireBot, isHq, listBots, patchBot, retireBot } from "../lib/bots";
+import { findBot, getBot, hireBot, isHq, isReservedName, listBots, patchBot, RESERVED_NAME_REFUSAL, retireBot } from "../lib/bots";
 import { computerMode, localComputer, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
@@ -197,6 +197,7 @@ async function hireFromForm(
   if (name === null || role === null || persona === null) {
     return { error: "A name (1–40), a job (1–120), and how it should work (20–4000 characters) are required.", status: 400 };
   }
+  if (isReservedName(name)) return { error: RESERVED_NAME_REFUSAL, status: 409 };
   const clash = await findBot(access.workspaceId, name);
   if (clash !== null) return { error: `${clash.name} is already on the team.`, status: 409 };
   // What runs its jobs: eve unless the person picked an engine the owner turned on (see lib/engines).
@@ -1048,7 +1049,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       }
       const before = botId === undefined || isHq(botId) ? null : await getBot(workspaceId, botId);
       if (before === null) return json({ error: "no such bot" }, 404);
-      if (name !== undefined && name.trim().toLowerCase() === "hq") return json({ error: "HQ is taken: it is the team's chief of staff." }, 409);
+      if (name !== undefined && isReservedName(name)) return json({ error: RESERVED_NAME_REFUSAL }, 409);
       if (name !== undefined) {
         // Bots are addressed by name, so two with the same name would be ambiguous.
         const clash = await findBot(workspaceId, name);

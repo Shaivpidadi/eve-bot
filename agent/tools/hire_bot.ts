@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { findBot, getBot, hireBot } from "../lib/bots";
+import { findBot, getBot, hireBot, isReservedName, RESERVED_NAME_REFUSAL } from "../lib/bots";
 import { ENGINE_LABELS, ENGINES, type Engine, engineRefusal, engineChoiceOffered } from "../lib/engines";
 import { operator } from "../lib/session";
 import { effectiveEnv } from "../lib/settings/store";
@@ -47,6 +47,7 @@ export default defineTool({
   },
   async execute(input, ctx) {
     const who = operator(ctx);
+    if (isReservedName(input.name)) return { hired: false as const, reason: `${RESERVED_NAME_REFUSAL} Pick another name.` };
     const existing = await findBot(who.workspaceId, input.name);
     if (existing !== null) {
       return {
