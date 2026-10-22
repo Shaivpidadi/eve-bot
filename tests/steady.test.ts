@@ -84,4 +84,29 @@ describe("a stream the endpoint drops early", () => {
     const parts = await collect(tolerateTruncation(streamOf([...whole]) as never));
     expect(parts).toEqual(whole);
   });
+
+  it("reads the drop when the provider reports it as an error part, as the OpenAI-compatible one does", async () => {
+    const parts = await collect(
+      tolerateTruncation(streamOf([{ type: "text-start", id: "t1" }, { type: "text-delta", id: "t1", delta: "Done." }, { type: "error", error: truncated() }]) as never),
+    );
+    expect(parts.map((part) => part.type)).toEqual(["text-start", "text-delta", "text-end", "finish"]);
+  });
+
+  it("asks again when the stream drops before the model said anything, and only so often", async () => {
+    let asked = 0;
+    const again = async () => {
+      asked += 1;
+      return streamOf([{ type: "stream-start", warnings: [] }, { type: "text-start", id: "t2" }, { type: "text-delta", id: "t2", delta: "Here." }, { type: "text-end", id: "t2" }, { type: "finish", finishReason: { unified: "stop" } }]) as never;
+    };
+    const parts = await collect(
+      tolerateTruncation(streamOf([{ type: "stream-start", warnings: [] }, { type: "reasoning-start", id: "r1" }, { type: "error", error: truncated() }]) as never, again),
+    );
+    expect(asked).toBe(1);
+    // The first try's thinking is closed, and the second's opening is not passed on twice.
+    expect(parts.map((part) => part.type)).toEqual(["stream-start", "reasoning-start", "reasoning-end", "text-start", "text-delta", "text-end", "finish"]);
+
+    const always = async () => streamOf([{ type: "error", error: truncated() }]) as never;
+    const gaveUp = await collect(tolerateTruncation(streamOf([{ type: "error", error: truncated() }]) as never, always, 2));
+    expect(gaveUp.map((part) => part.type)).toEqual(["error"]);
+  });
 });

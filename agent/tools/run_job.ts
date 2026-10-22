@@ -371,7 +371,9 @@ async function runCycle(
   const salvaged = await salvageResult(workspaceId, jobId, claim, settled.ok ? settled.raw : null);
   if (salvaged === null) {
     const error = settled.ok ? "The bot ended without a result: nothing was recorded, said, or saved." : (gateway?.text ?? settled.error);
-    await markFailed(workspaceId, jobId, error, claim.token);
+    const nextCycle = await markFailed(workspaceId, jobId, error, claim.token);
+    // A routine lost only this cycle: say when it runs again, so nobody starts it over.
+    if (nextCycle !== null) return answer({ jobId, ran: true, status: "scheduled", error, nextRunAt: nextCycle, note: "This cycle failed; the routine keeps its schedule. Do not create it again." });
     return answer({ jobId, ran: true, status: "failed", error });
   }
   const result: JobResult = salvaged;
@@ -643,9 +645,13 @@ async function salvageResult(workspaceId: string, jobId: string, claim: Extract<
   if (recorded !== null) return recorded;
 
   const text = typeof raw === "string" ? raw.trim() : "";
+  // Data the bot ended on (a tool's answer echoed back), which makes no summary.
+  let bareData = false;
   if (text.startsWith("{")) {
     try {
-      const parsed = JobResultZ.safeParse(JSON.parse(text));
+      const value: unknown = JSON.parse(text);
+      bareData = true;
+      const parsed = JobResultZ.safeParse(value);
       // The shape is the bot's, but the close is not: it never called finish_job.
       if (parsed.success) return { ...parsed.data, completion: "recovered" };
     } catch {
@@ -673,7 +679,7 @@ async function salvageResult(workspaceId: string, jobId: string, claim: Extract<
 
   const notes = await recentActivity(workspaceId, { jobId, after: claim.startedAt, limit: 40 });
   const lastNote = notes.find((event) => event.kind === "job.progress")?.text ?? null;
-  const summary = (lastNote ?? text.split(/\n\s*\n/)[0] ?? "").slice(0, 600) || `${claim.botName} ended without a summary; see the deliverable.`;
+  const summary = (lastNote ?? (bareData ? "" : text.split(/\n\s*\n/)[0]) ?? "").slice(0, 600) || `${claim.botName} ended without a summary; see the deliverable.`;
   const deliverable = [text.slice(0, SALVAGE_TEXT_CHARS), ...files].filter((part) => part !== "").join("\n\n").slice(0, SALVAGE_TEXT_CHARS);
 
   await record({
@@ -910,12 +916,14 @@ async function markFailed(
   jobId: string,
   error: string,
   token: string,
-): Promise<void> {
+): Promise<string | null> {
   "use step";
-  const failed = await failJob(workspaceId, jobId, error, { token });
+  const failed = await failJob(workspaceId, jobId, error, { token, routineGoesOn: true });
   await (failed === null ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
   await forgetJob(workspaceId, jobId).catch(() => undefined);
   await reapIdleScreens().catch(() => 0);
+  // When the routine runs again, if this was a routine's cycle.
+  return failed?.status === "scheduled" ? failed.runAt : null;
 }
 
 async function markBlocked(
