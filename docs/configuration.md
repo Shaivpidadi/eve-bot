@@ -5,8 +5,10 @@ environment variables below are the defaults until it is, and `.env.example` doc
 
 ## Settings
 
-The gear in the console's sidebar opens Settings, by area: Models, Spend, Team computer, Browser, Memory & decisions,
-Email, Background work, Team and Data controls. Each setting says where its value comes from (changed here, from
+The gear in the console's sidebar opens Settings, by area: Spend, Models, Team computer, Browser, Web search, Memory &
+decisions, Email, Background work, Team, Server, Data controls, Engines and Updates. Each area shows only what applies
+where this copy runs: AI Gateway's controls with Gateway models, your provider's with yours, Vercel's computer's on
+Vercel. Each setting says where its value comes from (changed here, from
 `.env`, or the default), and Reset goes back to the environment's.
 
 - **Who changes what.** Settings for the whole deployment (the computer, the browser, email, data controls) are its
@@ -22,23 +24,25 @@ Email, Background work, Team and Data controls. Each setting says where its valu
   - The computer's settings apply when a session next gets the computer. On Vercel the allowed sites and timeout are
     pushed to the running machine; CPUs and a drive apply from its next session. On Docker they apply from the
     container's next start.
-  - Cost and token caps and where the computer runs are fixed when the agent is built. `npm run build` and
+  - Cost and token caps, where the computer runs, your model provider, the search service, the schedules, the
+    engines and where conversations are kept are fixed when the agent is built. `npm run build` and
     `npm start` lay the saved values over the environment and record what they used, `npm start` rebuilds when they
     changed, and on Vercel they apply with the next deploy. Until then the page marks the change as waiting.
-- **Secrets** (the email webhook's token) are sealed with the computer's key and never shown again. An export
+- **Secrets** (the email webhook's token, your provider's and search's API keys, the Postgres address) are sealed with
+  the computer's key and never shown again. API keys are read on each call, never built in; the Postgres address is
+  handed to a standalone server when it starts. An export
   without secrets leaves all saved settings out.
 - **Locking.** `BOT_SETTINGS_EDITABLE=off` shows the page without letting anyone change it, so only the environment
   applies. `BOT_MODELS_EDITABLE=off` does the same for models alone.
 - **Environment only.** These stay in the environment, because the console needs them before it can run, or because
   changing them from a web page would be unsafe:
-  - model access and your own endpoint (`AI_GATEWAY_API_KEY`, `BOT_MODEL_BASE_URL`, …);
+  - a first model credential for the server to start with (`AI_GATEWAY_API_KEY`, or your provider in
+    `BOT_MODEL_BASE_URL` and `BOT_MODEL`); Settings → Models can change the provider afterwards;
   - the store (`BOT_STORE`, `BLOB_READ_WRITE_TOKEN`, `BOT_DATA_DIR`);
   - sign-in (`BOT_CONSOLE_TOKEN`, `BOT_CONSOLE_TOKENS`, `BOT_CONSOLE_AUTH`, `BOT_CONSOLE_OPEN`);
   - the computer's name and key (`BOT_COMPUTER_NAME`, `BOT_COMPUTER_KEY`), which name its drive and seal secrets;
   - shell isolation (`BOT_SHELL_ISOLATION`);
-  - web search on your own endpoint;
-  - the tick and standup schedules;
-  - whether the background worker runs at all (`BOT_WORKER`). Settings can pause it and set its pace.
+  - on Vercel, whether the background worker runs at all (`BOT_WORKER`). Settings can pause it and set its pace.
 
 ## Models
 

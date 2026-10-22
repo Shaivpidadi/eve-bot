@@ -28,7 +28,9 @@ export async function noteOrigin(request: Request): Promise<void> {
 }
 
 async function origin(): Promise<string | null> {
-  const pinned = process.env.BOT_PUBLIC_URL?.trim();
+  // Settings (Server) over the environment, where npm start puts its own address when none is set.
+  const { liveEnv } = await import("./settings/store");
+  const pinned = liveEnv().BOT_PUBLIC_URL?.trim();
   if (pinned) return pinned.replace(/\/+$/, "");
   if (knownOrigin !== null) return knownOrigin;
   return (await readDoc<{ origin: string }>(ORIGIN_KEY).catch(() => null))?.value.origin ?? null;

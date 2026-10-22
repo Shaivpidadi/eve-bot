@@ -55,7 +55,7 @@ interface Report {
   readonly canRebuild?: boolean;
 }
 
-const AREAS = ["Spend", "Team computer", "Browser", "Memory & decisions", "Email", "Background work", "Team", "Data controls", "Engines", "Updates", "Notifications", "Models"] as const;
+const AREAS = ["Spend", "Models", "Team computer", "Browser", "Web search", "Memory & decisions", "Email", "Background work", "Team", "Server", "Data controls", "Engines", "Updates", "Notifications"] as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 

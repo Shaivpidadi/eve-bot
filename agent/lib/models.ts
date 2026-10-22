@@ -217,6 +217,17 @@ export function customEndpoint(): ModelEndpoint | null {
   };
 }
 
+/**
+ * The provider's API key as Settings (sealed) or the environment has it now.
+ * Read per call, so a key saved or rotated in the console applies at once on
+ * every platform, and it never ends up in a build.
+ */
+export async function endpointKey(): Promise<string | undefined> {
+  const { effectiveEnv } = await import("./settings/store");
+  const env = await effectiveEnv().catch(() => process.env);
+  return env.BOT_MODEL_API_KEY?.trim() || undefined;
+}
+
 function endpointDefaultModel(): string {
   const model = process.env.BOT_MODEL?.trim();
   if (model) return model;
@@ -242,7 +253,13 @@ export function endpointModel(endpoint: ModelEndpoint, id: string): LanguageMode
         baseURL: endpoint.baseURL,
         // Streams carry no token counts unless asked; pricing and the caps need them.
         includeUsage: true,
-        ...(endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey }),
+        // The key is read on every call (see endpointKey), never fixed here.
+        fetch: async (input, init) => {
+          const key = await endpointKey();
+          const headers = new Headers(init?.headers);
+          if (key !== undefined) headers.set("authorization", `Bearer ${key}`);
+          return fetch(input, { ...init, headers });
+        },
       }),
     };
   }

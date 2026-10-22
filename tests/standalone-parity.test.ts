@@ -99,3 +99,35 @@ describe("npm start's worker", () => {
     expect(await isInternal(new Request("http://localhost/", { headers: { [INTERNAL_HEADER]: "wrong" } }))).toBe(false);
   });
 });
+
+describe("settings that used to be environment only", () => {
+  const owner = { workspaceId: "default", owner: true, by: "owner" };
+
+  it("read your provider's API key from Settings on each call", async () => {
+    vi.stubEnv("BOT_COMPUTER_KEY", "k".repeat(40));
+    const { saveSettings } = await import("../agent/lib/settings/store");
+    const { endpointKey } = await import("../agent/lib/models");
+    expect(await endpointKey()).toBeUndefined();
+    expect(await saveSettings(owner, { BOT_MODEL_API_KEY: "sk-saved" })).toMatchObject({ ok: true });
+    expect(await endpointKey()).toBe("sk-saved");
+  });
+
+  it("hand a saved Postgres address to the server when it starts, and never to the build", async () => {
+    vi.stubEnv("BOT_COMPUTER_KEY", "k".repeat(40));
+    const { rebuildPlan, saveSettings } = await import("../agent/lib/settings/store");
+    expect(await saveSettings(owner, { WORKFLOW_POSTGRES_URL: "postgres://u:p@db:5432/world", BOT_TICK_CRON: "* * * * *" })).toMatchObject({ ok: true });
+    const plan = await rebuildPlan({});
+    expect(plan.secrets).toEqual({ WORKFLOW_POSTGRES_URL: "postgres://u:p@db:5432/world" });
+    expect(plan.overlay).toEqual({ BOT_TICK_CRON: "* * * * *" });
+    expect(JSON.stringify(plan.overlay)).not.toContain("postgres://");
+  });
+
+  it("refuse a conversation store that is not installed here", async () => {
+    const ops = (await import("../agent/channels/ops")).default as unknown as { routes: Route[] };
+    const route = ops.routes.find((candidate) => candidate.method === "PUT" && candidate.path === "/bot/v1/settings")!;
+    const put = (changes: Record<string, unknown>) => route.handler(new Request("http://localhost/bot/v1/settings", { method: "PUT", body: JSON.stringify({ changes }) }), { params: {} });
+    const refused = await put({ BOT_WORKFLOW_WORLD: "@workflow/world-postgres" });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toMatch(/not installed/);
+  });
+});

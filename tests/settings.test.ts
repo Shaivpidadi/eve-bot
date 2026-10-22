@@ -280,11 +280,11 @@ describe("settings the build fixes", () => {
     vi.stubEnv("BOT_JOB_COST_LIMIT_USD", "5");
     vi.stubEnv("VERCEL_ENV", "");
     const { effectiveEnv, rebuildPlan, recordBuilt, saveSettings, settingsReport } = await load();
-    expect(await rebuildPlan()).toEqual({ overlay: {}, changed: false });
+    expect(await rebuildPlan()).toEqual({ overlay: {}, secrets: {}, changed: false });
     await saveSettings(owner, { BOT_JOB_COST_LIMIT_USD: 2 });
     // Saved, but the agent running was not built with it: readers keep the built value.
     expect((await effectiveEnv()).BOT_JOB_COST_LIMIT_USD).toBe("5");
-    expect(await rebuildPlan()).toEqual({ overlay: { BOT_JOB_COST_LIMIT_USD: "2" }, changed: true });
+    expect(await rebuildPlan()).toEqual({ overlay: { BOT_JOB_COST_LIMIT_USD: "2" }, secrets: {}, changed: true });
     const job = () => settingsReport(owner).then((report) => report.settings.find((setting) => setting.env === "BOT_JOB_COST_LIMIT_USD"));
     expect(await job()).toMatchObject({ value: "2", pending: true });
     // The build lays the saved value over the environment and records it.

@@ -33,17 +33,19 @@ export type SettingArea =
   | "Team"
   | "Data controls"
   | "Engines"
+  | "Web search"
+  | "Server"
   | "Updates";
 
 /**
  * Where a setting means anything: everywhere, on Vercel's computer, on a local
  * one, with the background worker deployed on, on a copy Vercel builds from
  * its own GitHub repository (which can update itself), on any Vercel
- * deployment, with models on AI Gateway, with models on your own endpoint, or
+ * deployment, on a standalone server, with models on AI Gateway, with models on your own endpoint, or
  * on a computer that can fence its network (Vercel Sandbox, microsandbox; not
  * Docker, which can only allow everything or nothing).
  */
-export type SettingWhere = "always" | "vercel-computer" | "local-computer" | "worker" | "copy" | "vercel" | "gateway" | "endpoint" | "fenced-computer";
+export type SettingWhere = "always" | "vercel-computer" | "local-computer" | "worker" | "copy" | "vercel" | "standalone" | "gateway" | "endpoint" | "fenced-computer";
 
 export interface SettingDef {
   readonly env: string;
@@ -100,6 +102,22 @@ export const SETTINGS: readonly SettingDef[] = [
   { env: "BOT_MEMORY_MODEL", area: "Models", label: "Helper's model", help: "", scope: "workspace", tier: "live", kind: { type: "text" }, fallback: "anthropic/claude-haiku-4-5", page: "models" },
   { env: "BOT_HQ_REASONING", area: "Models", label: "HQ's reasoning", help: "How hard HQ thinks before it answers. On your own endpoint, BOT_HQ_REASONING in the environment sets it.", scope: "workspace", tier: "live", kind: REASONING, fallback: "Low", where: "gateway" },
   { env: "BOT_TEAMMATE_REASONING", area: "Models", label: "Bots' reasoning", help: "How hard a Bot thinks at each step of a job. On your own endpoint, BOT_TEAMMATE_REASONING in the environment sets it.", scope: "workspace", tier: "live", kind: REASONING, fallback: "Medium", where: "gateway" },
+
+  // ─── Models: your own provider ───────────────────────────────────────────
+  {
+    env: "BOT_MODEL_BASE_URL",
+    area: "Models",
+    label: "Your own model provider",
+    help: "An OpenAI-compatible API: Ollama (http://localhost:11434/v1), LM Studio (http://localhost:1234/v1), OpenRouter, vLLM, a company proxy. Every model call goes there instead of AI Gateway.",
+    scope: "deployment",
+    tier: "rebuild",
+    kind: { type: "text", placeholder: "http://localhost:11434/v1" },
+    fallback: "AI Gateway",
+    sensitive: true,
+  },
+  { env: "BOT_MODEL", area: "Models", label: "Its model", help: "A model that provider serves, used everywhere unless a role names another. Pick one that handles tool calls well.", scope: "deployment", tier: "rebuild", kind: { type: "text", placeholder: "qwen3:8b" }, fallback: "Not set" },
+  { env: "BOT_MODEL_API_KEY", area: "Models", label: "Its API key", help: "Sent as a bearer token, read on every call. Stored sealed; never shown again.", scope: "deployment", tier: "live", kind: { type: "secret" }, fallback: "None", sensitive: true },
+  { env: "BOT_MODEL_CONTEXT_TOKENS", area: "Models", label: "Its context window", help: "Models off AI Gateway are not in its list, so this says how much they read.", scope: "deployment", tier: "rebuild", kind: { type: "number", min: 1000, integer: true, unit: "tokens" }, fallback: "128,000" },
 
   // ─── Memory & decisions ──────────────────────────────────────────────────
   { env: "BOT_MEMORY_FLOOR", area: "Memory & decisions", label: "How sure memory must be", help: "How confident the decision model must be before a memory is kept, from 0 to 1.", scope: "workspace", tier: "live", kind: { type: "number", min: 0, max: 1 }, fallback: "Jev's own floor", where: "gateway" },
@@ -160,6 +178,39 @@ export const SETTINGS: readonly SettingDef[] = [
   { env: "BOT_ZDR", area: "Data controls", label: "Zero Data Retention", help: "Only AI Gateway providers that keep nothing serve calls (Pro and Enterprise). Free models offer none.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "Off", where: "gateway" },
   { env: "BOT_INFERENCE_REGION", area: "Data controls", label: "Keep inference in", help: "Gateway fails a call it can't serve there rather than run it elsewhere.", scope: "deployment", tier: "live", kind: { type: "choice", options: [{ value: "us", label: "United States" }, { value: "eu", label: "Europe" }] }, fallback: "Anywhere", where: "gateway" },
   { env: "BOT_EXPORT", area: "Data controls", label: "Export from the console", help: "Lets the owner download the workspace as an export file.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "Off" },
+
+  // ─── Web search (on your own model provider; AI Gateway has eve's own) ───
+  {
+    env: "BOT_SEARCH_PROVIDER",
+    area: "Web search",
+    label: "Search service",
+    help: "What a Bot's web_search asks, on your own model provider. Off: Bots research in their browser.",
+    scope: "deployment",
+    tier: "rebuild",
+    kind: { type: "choice", options: [{ value: "searxng", label: "SearXNG" }, { value: "brave", label: "Brave Search" }, { value: "tavily", label: "Tavily" }, { value: "exa", label: "Exa" }] },
+    fallback: "Off",
+    where: "endpoint",
+  },
+  { env: "BOT_SEARCH_URL", area: "Web search", label: "SearXNG address", help: "With its JSON output on (docker-compose.yml starts one).", scope: "deployment", tier: "rebuild", kind: { type: "text", placeholder: "http://localhost:8888" }, fallback: "Not set", where: "endpoint", sensitive: true },
+  { env: "BOT_SEARCH_API_KEY", area: "Web search", label: "Search API key", help: "For Brave, Tavily or Exa. Stored sealed, read on every search.", scope: "deployment", tier: "live", kind: { type: "secret" }, fallback: "None", where: "endpoint", sensitive: true },
+
+  // ─── Server ──────────────────────────────────────────────────────────────
+  { env: "BOT_PUBLIC_URL", area: "Server", label: "This server's address", help: "Where people and connected apps reach it: OAuth sign-ins come back here, and the server calls itself here. Empty: the address requests arrive on.", scope: "deployment", tier: "live", kind: { type: "text", placeholder: "https://bot.example.com" }, fallback: "The address requests arrive on", sensitive: true },
+  { env: "BOT_TICK_CRON", area: "Server", label: "Watchdog schedule", help: "When the watchdog sweeps for stranded and due work, as a UTC cron. Vercel Hobby allows once a day; Pro and a standalone server, every minute (* * * * *).", scope: "deployment", tier: "rebuild", kind: { type: "text", placeholder: "* * * * *" }, fallback: "17 6 * * * (daily)" },
+  { env: "BOT_STANDUP_CRON", area: "Server", label: "Standup schedule", help: "When the daily standup is posted, as a UTC cron.", scope: "deployment", tier: "rebuild", kind: { type: "text", placeholder: "0 13 * * 1-5" }, fallback: "Weekday mornings" },
+  { env: "BOT_TICK_ON_START", area: "Server", label: "Sweep after a restart", help: "A minute after the server starts, pick up jobs the restart left behind.", scope: "deployment", tier: "rebuild", kind: SWITCH, fallback: "On", where: "standalone" },
+  {
+    env: "BOT_WORKFLOW_WORLD",
+    area: "Server",
+    label: "Where conversations are kept",
+    help: "A shared Postgres database keeps conversations and running jobs through rebuilds and restarts. Experimental; install @workflow/world-postgres first (docs/decisions/0002-workflow-world.md).",
+    scope: "deployment",
+    tier: "rebuild",
+    kind: { type: "choice", options: [{ value: "@workflow/world-postgres", label: "Postgres" }] },
+    fallback: "This server's disk (.eve/)",
+    where: "standalone",
+  },
+  { env: "WORKFLOW_POSTGRES_URL", area: "Server", label: "Postgres address", help: "postgres://user:password@host:5432/database. Stored sealed; handed to the server when it starts.", scope: "deployment", tier: "rebuild", kind: { type: "secret" }, fallback: "Not set", where: "standalone", sensitive: true },
 
   // ─── Engines ─────────────────────────────────────────────────────────────
   {

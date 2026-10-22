@@ -169,7 +169,7 @@ async function sendOne(subscription: Subscription, message: PushMessage, send: S
   const keys = await vapidKeys();
   try {
     await send({ endpoint: subscription.endpoint, keys: subscription.keys }, JSON.stringify(message), {
-      vapidDetails: { subject: vapidSubject(), publicKey: keys.publicKey, privateKey: keys.privateKey },
+      vapidDetails: { subject: vapidSubject((await import("./settings/store")).liveEnv()), publicKey: keys.publicKey, privateKey: keys.privateKey },
       TTL: TTL_SECONDS,
       urgency: message.urgent === true ? "high" : "normal",
       timeout: 10_000,

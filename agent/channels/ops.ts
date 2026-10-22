@@ -1,3 +1,6 @@
+import { createRequire } from "node:module";
+import { join } from "node:path";
+
 import { DELETE, GET, PATCH, POST, PUT, SessionStrandedError, defineChannel } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
@@ -34,7 +37,7 @@ import { gatewayCatalog } from "../lib/gateway-models";
 import { customEndpoint } from "../lib/models";
 import { dockerReady, modelsReady } from "../lib/setup-probe";
 import { modelsEditable, modelsReport, saveModelSettings, settingsInput } from "../lib/model-settings";
-import { effectiveEnv, saveSettings, settingsReport, workerPaused } from "../lib/settings/store";
+import { effectiveEnv, liveEnv, saveSettings, settingsReport, workerPaused } from "../lib/settings/store";
 import type { SettingDef } from "../lib/settings/registry";
 import { acceptTrigger, recentTriggers, TRIGGER_PATH, verifiedTrigger } from "../lib/triggers";
 import { sessionIsGone } from "../lib/gone";
@@ -233,6 +236,16 @@ async function updateReady(owner: boolean): Promise<{ ok: true; token: string; r
   return { ok: true, token, repo };
 }
 
+/** Whether a package can be loaded from this server's own node_modules. */
+function installed(name: string): boolean {
+  try {
+    createRequire(join(process.cwd(), "package.json")).resolve(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The saved Vercel deploy hook, when it is one: an https address on Vercel's own deploy-hook endpoint, and nothing else. */
 function deployHook(env: Readonly<Record<string, string | undefined>>): string | null {
   const value = env.BOT_DEPLOY_HOOK?.trim();
@@ -250,6 +263,7 @@ function settingApplies(def: SettingDef): boolean {
   if (def.where === "vercel-computer") return computerMode() === "vercel";
   if (def.where === "local-computer") return computerMode() === "local";
   if (def.where === "vercel") return process.env.VERCEL === "1";
+  if (def.where === "standalone") return process.env.VERCEL !== "1";
   if (def.where === "worker") return /^(1|true|on|yes)$/i.test(process.env.BOT_WORKER?.trim() ?? "");
   if (def.where === "gateway") return customEndpoint() === null;
   if (def.where === "endpoint") return customEndpoint() !== null;
@@ -259,7 +273,8 @@ function settingApplies(def: SettingDef): boolean {
 
 /** This deployment's public address, for redirect URIs: the configured one, else what the request came in on. */
 function publicOrigin(request: Request): string {
-  const configured = process.env.BOT_PUBLIC_URL?.trim();
+  // Settings (Server) over the environment.
+  const configured = liveEnv().BOT_PUBLIC_URL?.trim();
   if (configured) return configured.replace(/\/$/, "");
   const url = new URL(request.url);
   const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.replace(":", "");
@@ -510,6 +525,11 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const body = await readJson(request);
       const changes = body?.changes;
       if (typeof changes !== "object" || changes === null || Array.isArray(changes)) return json({ error: 'Send { "changes": { "BOT_…": value or null } }.' }, 400);
+      // A world the server cannot load would stop it starting: only one that is installed here is saved.
+      const world = (changes as Record<string, unknown>).BOT_WORKFLOW_WORLD;
+      if (typeof world === "string" && world.trim() !== "" && !installed(world.trim())) {
+        return json({ error: `${world.trim()} is not installed on this server. Install it first (npm i ${world.trim()}), then choose it here.` }, 400);
+      }
       const saved = await saveSettings({ workspaceId: gate.access.workspaceId, owner: gate.access.owner, by: gate.access.user }, changes as Record<string, unknown>);
       if (!saved.ok) return json({ error: saved.error }, saved.status);
       return json({ ...(await settingsReport(gate.access, process.env, settingApplies)), canRebuild: gate.access.owner && deployHook(await effectiveEnv()) !== null });

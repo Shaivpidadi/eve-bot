@@ -13,10 +13,12 @@ import { MAX_RESULTS, search, searchConfig, SearchError } from "../lib/search";
  * the search service `BOT_SEARCH_PROVIDER` names instead (see `lib/search.ts`);
  * with none configured, the tool is off and Bots research in their browser.
  *
- * The choice is made when this module loads, so `eve build` and the server
- * must see the same environment; `scripts/build.mjs` loads `.env` for both.
+ * The service is chosen when this module loads (Settings, Web search, applies
+ * with the next build); its key is read at each search, so a key saved in
+ * Settings, sealed, works on every platform.
  */
-const config = customEndpoint() === null ? null : searchConfig();
+// The key is read at each search (Settings keeps it sealed), so only the service is decided here.
+const config = customEndpoint() === null ? null : searchConfig(process.env, false);
 
 const searchTool = (provider: NonNullable<typeof config>) =>
   defineTool({
@@ -29,7 +31,12 @@ const searchTool = (provider: NonNullable<typeof config>) =>
     label: { start: (input) => `Search: ${input.query}` },
     async execute(input) {
       try {
-        const results = await search(provider, input.query, input.limit ?? 5);
+        const { effectiveEnv } = await import("../lib/settings/store");
+        const apiKey = (await effectiveEnv().catch(() => process.env)).BOT_SEARCH_API_KEY?.trim() || provider.apiKey;
+        if (provider.provider !== "searxng" && apiKey === undefined) {
+          return { provider: provider.provider, query: input.query, results: [], error: `${provider.provider} needs an API key (Settings, Web search). Research in the browser instead.` };
+        }
+        const results = await search({ ...provider, apiKey }, input.query, input.limit ?? 5);
         return { provider: provider.provider, query: input.query, results };
       } catch (error) {
         if (error instanceof SearchError) return { provider: provider.provider, query: input.query, results: [], error: error.message };

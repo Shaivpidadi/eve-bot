@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 
-import { customEndpoint } from "./models";
+import { customEndpoint, endpointKey } from "./models";
 
 /**
  * What the sign-in page's setup check looks at on a standalone server, beyond
@@ -42,8 +42,9 @@ export function modelsReady(env: Readonly<Record<string, string | undefined>> = 
     return Promise.resolve({ via: "gateway", ready });
   }
   return cached(`endpoint:${endpoint.baseURL}`, async () => {
+    const key = await endpointKey();
     const response = await fetch(`${endpoint.baseURL.replace(/\/+$/, "")}/models`, {
-      headers: endpoint.apiKey ? { authorization: `Bearer ${endpoint.apiKey}` } : {},
+      headers: key === undefined ? {} : { authorization: `Bearer ${key}` },
       signal: AbortSignal.timeout(PROBE_MS),
     });
     await response.body?.cancel().catch(() => undefined);

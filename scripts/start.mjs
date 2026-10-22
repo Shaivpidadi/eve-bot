@@ -28,6 +28,8 @@ nextEnv.loadEnvConfig(process.cwd(), false);
 // computer runs) win over .env; a change since the last build rebuilds it.
 const plan = savedSettings("plan");
 overlaySettings(plan?.overlay);
+// Saved secrets the server reads when it starts (the Postgres world's address): into its environment, never into a build.
+for (const [name, value] of Object.entries(plan?.secrets ?? {})) process.env[name] = value;
 
 const agentEntry = join(process.cwd(), ".output", "server", "index.mjs");
 
