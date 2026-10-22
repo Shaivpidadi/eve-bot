@@ -193,12 +193,14 @@ const file = platform === "standalone" ? ".env" : ".env.local";
 const path = join(process.cwd(), file);
 if (existsSync(path)) {
   say();
-  if (!(await yes(`${file} exists. Replace it (the old one is kept as ${file}.bak)?`, false))) {
+  // An earlier run's backup is kept too: each replaced file gets its own name.
+  const backup = existsSync(`${path}.bak`) ? `${file}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}` : `${file}.bak`;
+  if (!(await yes(`${file} exists. Replace it (the old one is kept as ${backup})?`, false))) {
     say("Nothing written.");
     rl.close();
     process.exit(0);
   }
-  renameSync(path, `${path}.bak`);
+  renameSync(path, join(process.cwd(), backup));
 }
 const rendered = lines.map((line) => (typeof line === "string" ? line : `${line[0]}=${line[1]}`)).join("\n");
 writeFileSync(path, `${rendered}\n`);
@@ -209,6 +211,9 @@ say(`Wrote ${file}.`);
 say();
 if (platform === "standalone") {
   say("Next:");
+  if (lines.some((line) => Array.isArray(line) && line[0] === "BOT_SEARCH_PROVIDER" && line[1] === "searxng")) {
+    say("  docker compose up -d searxng    # the web search you picked, on http://localhost:8888");
+  }
   say("  npm run build && npm start      # then open http://localhost:3000/bot");
   say(`  sign in with: ${consoleToken}`);
   say("  keep .data/, .eve/ and the bot-computer Docker volume on storage that survives restarts");
