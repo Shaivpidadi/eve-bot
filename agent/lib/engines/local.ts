@@ -85,7 +85,8 @@ export function signIn(engine: LocalEngine, env: Env): { readonly env: Record<st
   const auth = env.BOT_LOCAL_CODEX_AUTH?.trim();
   const key = env.BOT_LOCAL_CODEX_API_KEY?.trim();
   if (auth) return { env: {}, files: { ".codex/auth.json": auth }, paid: false };
-  if (key) return { env: { BOT_CODEX_KEY: key }, files: {}, paid: true };
+  const baseUrl = env.BOT_LOCAL_CODEX_BASE_URL?.trim();
+  if (key) return { env: { BOT_CODEX_KEY: key, ...(baseUrl ? { BOT_CODEX_BASE_URL: baseUrl } : {}) }, files: {}, paid: true };
   return null;
 }
 
@@ -170,6 +171,8 @@ export function launchCommand(plan: LaunchPlan): string {
       plan.builtins ? "--sandbox workspace-write" : "--sandbox read-only",
       `-c ${quote(`mcp_servers.bot.url="${plan.toolsUrl}"`)}`,
       `-c ${quote('mcp_servers.bot.bearer_token_env_var="BOT_RUN_SECRET"')}`,
+      // Codex asks before every MCP call, and `exec` has no one to ask: eve-bot's tools gate what needs a person themselves.
+      `-c ${quote('mcp_servers.bot.default_tools_approval_mode="approve"')}`,
       ...provider,
       ...(plan.model ? [`-m ${quote(plan.model)}`] : []),
       `"$(cat ${dir}/prompt.md)"`,
@@ -231,7 +234,7 @@ export function parseLook(output: string, offset: number): LocalLook {
       const failed = event.is_error === true || (typeof event.subtype === "string" && event.subtype !== "success");
       const usd = typeof event.total_cost_usd === "number" ? event.total_cost_usd : null;
       const model = Object.keys((event.modelUsage as Record<string, unknown> | undefined) ?? {})[0] ?? null;
-      outcome = { ok: !failed, error: failed ? String(event.result ?? event.subtype ?? "The turn failed.") : null, usd, model };
+      outcome = { ok: !failed, error: failed ? withoutKeys(String(event.result ?? event.subtype ?? "The turn failed.")) : null, usd, model };
     }
     // Codex: an agent message is its words; the turn's end or failure, and errors, end it.
     else if (event.type === "item.completed") {
@@ -241,11 +244,24 @@ export function parseLook(output: string, offset: number): LocalLook {
       outcome = { ok: true, error: null, usd: null, model: null };
     } else if (event.type === "turn.failed" || event.type === "error") {
       const message = (event.error as { message?: string } | undefined)?.message ?? (typeof event.message === "string" ? event.message : "The turn failed.");
-      outcome = { ok: false, error: message, usd: null, model: null };
+      // Codex reports each retry as an error and goes on; only its last word on the turn counts.
+      if (event.type === "error" && /^Reconnecting\b/.test(message)) continue;
+      outcome = { ok: false, error: withoutKeys(message), usd: null, model: null };
     }
   }
   const ended = exitCode !== null;
   return { ended, exitCode, cursor: offset + Buffer.byteLength(body.slice(0, complete)), said, outcome };
+}
+
+/**
+ * An error as the CLI wrote it, with any key in it hidden: a provider that
+ * refuses a key often repeats part of it (`vck_0sx2****UwLB`), and the error
+ * is shown in the Bot's thread.
+ */
+export function withoutKeys(text: string): string {
+  return text
+    .replace(/[\w-]{2,16}\*{4,}[\w-]{0,8}/g, "[a key, hidden]")
+    .replace(/\b(sk-[\w-]{8,}|vck_[\w-]{8,}|sk-ant-[\w-]{8,})/g, "[a key, hidden]");
 }
 
 /** What a look tells `run_job`: still working, or how it ended. */
@@ -253,7 +269,7 @@ export function lookResult(look: LocalLook, stderrTail: string): { readonly kind
   if (!look.ended) return { kind: "working" };
   if (look.outcome !== null) return look.outcome.ok ? { kind: "ended", ok: true } : { kind: "ended", ok: false, error: look.outcome.error ?? "The turn failed." };
   if (look.exitCode === 0) return { kind: "ended", ok: true };
-  const reason = stderrTail.trim().split("\n").slice(-3).join(" ").slice(0, 400);
+  const reason = withoutKeys(stderrTail).trim().split("\n").slice(-3).join(" ").slice(0, 400);
   return { kind: "ended", ok: false, error: `The CLI stopped (exit ${look.exitCode})${reason === "" ? "." : `: ${reason}`}` };
 }
 

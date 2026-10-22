@@ -24,7 +24,9 @@ describe("signing in", () => {
     expect(signIn("claude-code-local", { BOT_LOCAL_CLAUDE_TOKEN: "sk-ant-api03-key" })).toMatchObject({ env: { ANTHROPIC_API_KEY: "sk-ant-api03-key" }, paid: true });
     expect(signIn("claude-code-local", { BOT_LOCAL_CLAUDE_TOKEN: "gw-key", BOT_LOCAL_CLAUDE_BASE_URL: "https://ai-gateway.vercel.sh" })).toMatchObject({ env: { ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh", ANTHROPIC_AUTH_TOKEN: "gw-key" } });
     expect(signIn("codex-local", { BOT_LOCAL_CODEX_AUTH: '{"tokens":{}}' })).toEqual({ env: {}, files: { ".codex/auth.json": '{"tokens":{}}' }, paid: false });
-    expect(signIn("codex-local", { BOT_LOCAL_CODEX_API_KEY: "sk-openai" })).toMatchObject({ env: { BOT_CODEX_KEY: "sk-openai" }, paid: true });
+    expect(signIn("codex-local", { BOT_LOCAL_CODEX_API_KEY: "sk-openai" })).toEqual({ env: { BOT_CODEX_KEY: "sk-openai" }, files: {}, paid: true });
+    // Another address for the key reaches the command line, which names the provider Codex calls.
+    expect(signIn("codex-local", { BOT_LOCAL_CODEX_API_KEY: "gw-key", BOT_LOCAL_CODEX_BASE_URL: "https://ai-gateway.vercel.sh/v1" })?.env).toEqual({ BOT_CODEX_KEY: "gw-key", BOT_CODEX_BASE_URL: "https://ai-gateway.vercel.sh/v1" });
   });
 
   it("reaches this server from inside the computer's container", async () => {
@@ -72,9 +74,11 @@ describe("starting a run", () => {
     expect(command).toContain("/workspace/.engines/cli/bin/codex exec --json --skip-git-repo-check");
     expect(command).toContain("--sandbox read-only");
     expect(command).toContain("bearer_token_env_var");
+    expect(command).toContain('default_tools_approval_mode="approve"');
     expect(command).not.toContain("the-run-secret-value");
     expect(command).not.toContain("model_provider=bot");
     expect(launchCommand({ ...plan, engine: "codex-local", env: { BOT_CODEX_KEY: "k" } })).toContain("model_provider=bot");
+    expect(launchCommand({ ...plan, engine: "codex-local", env: { BOT_CODEX_KEY: "k", BOT_CODEX_BASE_URL: "https://ai-gateway.vercel.sh/v1" } })).toContain('base_url="https://ai-gateway.vercel.sh/v1"');
   });
 });
 
@@ -104,6 +108,11 @@ describe("reading a run", () => {
     expect(ok.outcome).toMatchObject({ ok: true });
     const failed = parseLook(`exit:1\n---\n${JSON.stringify({ type: "turn.failed", error: { message: "usage limit reached" } })}\n`, 0);
     expect(failed.outcome).toMatchObject({ ok: false, error: "usage limit reached" });
+    // A retry is not the end of the turn, and a key the provider repeats is hidden.
+    const retried = parseLook(`exit:\n---\n${JSON.stringify({ type: "error", message: "Reconnecting... 1/5 (401 Unauthorized: Incorrect API key provided: vck_0sx2********UwLB.)" })}\n`, 0);
+    expect(retried.outcome).toBeNull();
+    const refused = parseLook(`exit:1\n---\n${JSON.stringify({ type: "turn.failed", error: { message: "Incorrect API key provided: vck_0sx2********UwLB." } })}\n`, 0);
+    expect(refused.outcome?.error).toBe("Incorrect API key provided: [a key, hidden].");
   });
 });
 

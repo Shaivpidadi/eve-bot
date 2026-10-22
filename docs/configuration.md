@@ -255,8 +255,10 @@ secret that is good for that run only and forgotten when it stops. The CLI's
 own shell and file tools only with `BOT_ENGINE_BUILTINS=1`.
 
 What it costs: a plan's turns use your plan's limits and are charged $0 here
-(they still count as the job's turns); with a key, the cost the CLI reports is
-charged to the job and the Usage page. Owner's workspace only. Use your own plan
+(they still count as the job's turns). With a key, Claude Code's own report of
+what the turn cost is charged to the job and the Usage page; Codex reports
+tokens but no cost, so a Codex turn on a key is not charged here, and the
+spend caps do not see it: watch that key's own usage page. Owner's workspace only. Use your own plan
 for your own Bots: a plan's terms may not allow sharing it with others.
 
 ## Observability: Vercel Agent Runs

@@ -110,7 +110,6 @@ export async function startLocalRun(
   const runEnv: Record<string, string> = {
     ...login.env,
     BOT_RUN_SECRET: secret,
-    ...(env.BOT_LOCAL_CODEX_BASE_URL?.trim() ? { BOT_CODEX_BASE_URL: env.BOT_LOCAL_CODEX_BASE_URL.trim() } : {}),
     ...(Object.keys(login.files).length > 0 ? { CODEX_HOME: `${dir}/codex-home` } : {}),
   };
   const started = await io.run(runCommand(launch, { workingDirectory: folder, env: runEnv, runId }), { timeoutMs: 30_000 });
@@ -128,8 +127,14 @@ export async function lookAtLocalRun(engine: LocalEngine, runId: string, cursor:
   if (io === null) return { kind: "working", cursor, spend: [], said: [], partial: "", heard: cursor };
   const read = await io.run(readCommand(runId, offset), { timeoutMs: 30_000 });
   const look = parseLook(read.stdout, offset);
-  const stderr = look.ended && look.outcome?.ok !== true ? (await io.run(`tail -c 2000 ${quote(`${runDir(runId)}/stderr.log`)} 2>/dev/null`, { timeoutMs: 15_000 })).stdout : "";
-  const result = lookResult(look, stderr);
+  let result = lookResult(look, "");
+  if (look.ended && look.outcome === null && look.exitCode !== 0) {
+    // How the turn ended may have been read on an earlier look: the stream's last lines say it again, else the CLI's errors.
+    const tail = await io.run(`tail -c 16384 ${quote(`${runDir(runId)}/events.jsonl`)} 2>/dev/null | tail -n +2`, { timeoutMs: 15_000 });
+    const earlier = parseLook(`exit:${look.exitCode}\n---\n${tail.stdout}`, 0).outcome;
+    const stderr = earlier === null ? (await io.run(`tail -c 2000 ${quote(`${runDir(runId)}/stderr.log`)} 2>/dev/null`, { timeoutMs: 15_000 })).stdout : "";
+    result = earlier?.ok === false ? { kind: "ended", ok: false, error: earlier.error ?? "The turn failed." } : lookResult(look, stderr);
+  }
   const env = await effectiveEnv().catch(() => process.env);
   // Spend: what the CLI says the turn cost where a key pays for it; a plan's turn costs nothing here, and still counts.
   const paid = signIn(engine, env)?.paid ?? false;
