@@ -2,7 +2,7 @@ import { getBot } from "../bots";
 import { computerControl } from "../computer/control";
 import { killRunCommand, runCommand } from "../computer/shell";
 import { bindRun, describeRunRefusal, getJob } from "../jobs";
-import { origin } from "../self";
+import { publicOrigin } from "../self";
 import { effectiveEnv } from "../settings/store";
 import { deleteDoc, readDoc, writeDoc } from "../store";
 import { harnessBuiltins, harnessInstructions } from "./harness-options";
@@ -49,7 +49,7 @@ export async function startLocalRun(
   const login = signIn(engine, env);
   if (login === null) return { ok: false, error: `${name} has no sign-in saved (Settings → Engines).` };
   const io = await computerControl().io().catch(() => null);
-  if (io === null) return { ok: false, error: `The team's computer is not up yet. Give an eve Bot a job once, or open the computer in the console, then run this again.` };
+  if (io === null) return { ok: false, error: `The team's computer starts with the first job an eve Bot runs, and it has not started yet. Give an eve Bot something to do once, then run this again.` };
 
   const installed = await io.run(installCommand(engine), { timeoutMs: 600_000 });
   if (installed.exitCode !== 0) return { ok: false, error: `Could not install ${name} on the team's computer: ${(installed.stdout + installed.stderr).trim().slice(-400)}` };
@@ -94,7 +94,7 @@ export async function startLocalRun(
   for (const [path, text] of Object.entries(files)) await io.writeBinaryFile(`${dir}/${path}`, encoder.encode(text));
   await io.run(`chmod -R g+rw ${quote(dir)}`, { timeoutMs: 15_000 });
 
-  const base = (await origin()) ?? `http://localhost:${process.env.PORT ?? "3000"}`;
+  const base = (await publicOrigin()) ?? `http://localhost:${process.env.PORT ?? "3000"}`;
   const launch = launchCommand({
     engine,
     runId,

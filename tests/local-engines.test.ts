@@ -145,3 +145,14 @@ describe("the MCP endpoint a run's CLI reaches", () => {
     expect(brief.result.isError).toBe(true);
   });
 });
+
+describe("the address a run's CLI is given", () => {
+  it("is the one the console reached, not eve's own port behind next dev's proxy", async () => {
+    const { noteOrigin, publicOrigin } = await import("../agent/lib/self");
+    await noteOrigin(new Request("http://localhost:56889/bot/v1/state", { headers: { host: "localhost:56889", "x-forwarded-host": "localhost:3401", "x-forwarded-proto": "http" } }));
+    expect(await publicOrigin()).toBe("http://localhost:3401");
+    vi.stubEnv("BOT_PUBLIC_URL", "https://bot.example.com/");
+    vi.resetModules();
+    expect(await (await import("../agent/lib/self")).publicOrigin()).toBe("https://bot.example.com");
+  });
+});
