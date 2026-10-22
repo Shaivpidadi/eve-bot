@@ -321,5 +321,45 @@ export function normalizeValue(def: SettingDef, raw: unknown): { ok: true; value
   if (text.length > max) return { ok: false, error: `${def.label} is at most ${max} characters.` };
   // Nothing that could break out of an environment-style value.
   if (/[\u0000-\u001f]/.test(text)) return { ok: false, error: `${def.label} has a character it can't hold.` };
+  const problem = text === "" ? null : (VALUE_CHECKS[def.env]?.(text) ?? null);
+  if (problem !== null) return { ok: false, error: `${def.label}: ${problem}` };
   return { ok: true, value: text };
 }
+
+/** An http or https address, as every address setting but the database's is. */
+const webAddress = (text: string): string | null => {
+  try {
+    const url = new URL(text);
+    return url.protocol === "http:" || url.protocol === "https:" ? null : "an http:// or https:// address.";
+  } catch {
+    return "an http:// or https:// address, such as http://localhost:8888.";
+  }
+};
+
+/** Five fields, each from cron's own alphabet: a typo would otherwise stop the schedule without a word. */
+const cronLine = (text: string): string | null =>
+  text.split(/\s+/).length === 5 && /^[\d*,/\-\sA-Za-z?LW#]+$/.test(text) ? null : "a cron line of five fields, such as */5 * * * *.";
+
+/** A timezone the server knows: routines and standups are reckoned in it. */
+const timezone = (text: string): string | null => {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: text });
+    return null;
+  } catch {
+    return `${text} is not a timezone; use an IANA name such as Europe/Berlin.`;
+  }
+};
+
+/** What a text setting must look like beyond being text, so a typo is refused when saved rather than failing later. */
+const VALUE_CHECKS: Readonly<Record<string, (text: string) => string | null>> = {
+  BOT_TIMEZONE: timezone,
+  BOT_TICK_CRON: cronLine,
+  BOT_STANDUP_CRON: cronLine,
+  BOT_PUBLIC_URL: webAddress,
+  BOT_MODEL_BASE_URL: webAddress,
+  BOT_SEARCH_URL: webAddress,
+  BOT_EMAIL_WEBHOOK: webAddress,
+  BOT_ENGINE_TOOLS_URL: webAddress,
+  BOT_LOCAL_CLAUDE_BASE_URL: webAddress,
+  BOT_LOCAL_CODEX_BASE_URL: webAddress,
+};
