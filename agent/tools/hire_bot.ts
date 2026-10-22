@@ -2,17 +2,19 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { findBot, getBot, hireBot } from "../lib/bots";
-import { ENGINE_LABELS, ENGINES, type Engine, engineRefusal, enginesOn } from "../lib/engines";
+import { ENGINE_LABELS, ENGINES, type Engine, engineRefusal, engineChoiceOffered } from "../lib/engines";
 import { operator } from "../lib/session";
+import { effectiveEnv } from "../lib/settings/store";
 import { writeIntro } from "../lib/intro";
 import { within } from "../lib/cancel";
 
 /**
- * Offered only where the owner turned an engine on (`BOT_ENGINES`), so HQ's
+ * Offered only where another engine can run (`BOT_ENGINES`, or a standalone
+ * server's own computer for the owner's plan), so HQ's
  * tools read exactly as before everywhere else. Every Bot runs on eve unless
  * the person asks for another.
  */
-const engineField = enginesOn()
+const engineField = engineChoiceOffered()
   ? {
       engine: z
         .enum(ENGINES)
@@ -55,7 +57,7 @@ export default defineTool({
     }
     const engine = (input as { engine?: Engine }).engine;
     if (engine !== undefined) {
-      const refused = engineRefusal(engine, { workspaceId: who.workspaceId });
+      const refused = engineRefusal(engine, { workspaceId: who.workspaceId, env: await effectiveEnv(who.workspaceId) });
       if (refused !== null) return { hired: false as const, reason: refused };
     }
     // In a Bot's own thread, the operator is asking that Bot to grow the team.

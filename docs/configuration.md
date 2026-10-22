@@ -181,7 +181,7 @@ built, what is not, and what the live checks showed.
 same `AI_GATEWAY_API_KEY` (or OIDC token) eve uses, so they are billed as
 Gateway credits, like every other Bot. A Claude Pro/Max or ChatGPT
 subscription is not used, and cannot be: the library has no way to sign in
-with one. Each job also uses a Vercel Sandbox and a Drive of its own, billed
+with one. On a standalone server, the plan engines below can. Each job also uses a Vercel Sandbox and a Drive of its own, billed
 by Vercel as Sandbox time and storage.
 
 What such a Bot gets, and does not:
@@ -225,6 +225,39 @@ Locally, sessions run on the local Workflow World (`.workflow-data`), but each
 job's Sandbox is still on Vercel, so a local server needs the project's
 credentials (`vercel env pull` for a `VERCEL_OIDC_TOKEN`, or `VERCEL_TOKEN`,
 `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`).
+
+## Bots on Claude Code or Codex with your own plan (standalone, experimental)
+
+On a standalone server whose team computer is local (`BOT_COMPUTER=local`), a
+Bot can also run on **Claude Code (your plan)** or **Codex (your plan)**: the
+CLI itself, on the team's computer, in the Bot's own folder there, signed in
+with your own Claude Pro/Max or ChatGPT plan. No Vercel Sandbox, durable-harness
+or AI Gateway is involved, and nothing needs a rebuild: an engine is offered in
+the hire dialog as soon as its sign-in is saved in **Settings → Engines**
+(owner only, stored sealed).
+
+| Setting | Does |
+| --- | --- |
+| `BOT_LOCAL_CLAUDE_TOKEN` | Claude Code's sign-in: the token `claude setup-token` prints (your plan), or an Anthropic API key (`sk-ant-api…`, billed per token), or with the address below, that service's key |
+| `BOT_LOCAL_CLAUDE_MODEL` / `BOT_LOCAL_CLAUDE_BASE_URL` | the model (`sonnet`, `opus`, or a full name) and, only to send its calls elsewhere (AI Gateway, a proxy), the API address |
+| `BOT_LOCAL_CODEX_AUTH` | Codex's sign-in: the contents of `~/.codex/auth.json` after `codex login --device-auth` (your ChatGPT plan). Codex refreshes it while it runs, and the saved copy follows |
+| `BOT_LOCAL_CODEX_API_KEY` / `BOT_LOCAL_CODEX_BASE_URL` / `BOT_LOCAL_CODEX_MODEL` | instead of a plan, a key billed per token, for OpenAI or another address that speaks the Responses API; and the model |
+| `BOT_ENGINE_TOOLS_URL` | where the computer's container reaches this server's tools. Docker Desktop, OrbStack and Colima reach it as `host.docker.internal` on its own port, the default; on Docker on Linux set it (`http://172.17.0.1:3000/bot/v1/engine/mcp`) |
+
+How it runs: the first job installs the pinned CLI once into
+`/workspace/.engines` (left out of the computer's backups). Each job starts the
+CLI in the background as the computer's `bot` user, under the same network
+fence as a Bot's own shell, and eve-bot reads its event stream about every 20
+seconds: its words appear in the Bot's thread and the job ends with its turn.
+Its tools are eve-bot's (read the job, log a step, record the result, propose
+an email, the team's connectors under their gates), reached over MCP with a
+secret that is good for that run only and forgotten when it stops. The CLI's
+own shell and file tools only with `BOT_ENGINE_BUILTINS=1`.
+
+What it costs: a plan's turns use your plan's limits and are charged $0 here
+(they still count as the job's turns); with a key, the cost the CLI reports is
+charged to the job and the Usage page. Owner's workspace only. Use your own plan
+for your own Bots: a plan's terms may not allow sharing it with others.
 
 ## Observability: Vercel Agent Runs
 

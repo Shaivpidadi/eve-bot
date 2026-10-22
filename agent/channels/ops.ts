@@ -202,7 +202,7 @@ async function hireFromForm(
   // What runs its jobs: eve unless the person picked an engine the owner turned on (see lib/engines).
   const engine = body?.engine === undefined || body.engine === "eve" ? "eve" : isEngine(body.engine) ? body.engine : null;
   if (engine === null) return { error: `engine must be one of ${ENGINES.join(", ")}.`, status: 400 };
-  const engineRefused = engineRefusal(engine, { workspaceId: access.workspaceId });
+  const engineRefused = engineRefusal(engine, { workspaceId: access.workspaceId, env: await effectiveEnv(access.workspaceId) });
   if (engineRefused !== null) return { error: engineRefused, status: 400 };
   const template = templateById(body?.template);
   const skills = Array.isArray(body?.skills)
@@ -461,6 +461,48 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * The background worker's pass (see lib/worker.ts): the watchdog's work, asked
      * for every 30 seconds by this project's own Vercel Daemon, or by the server.
      */
+    /**
+     * The tools of a Claude Code or Codex run on the owner's plan (see
+     * lib/engines/local.ts), as an MCP server the CLI reaches from the team's
+     * computer: JSON-RPC over HTTP, one answer per request. Only a running
+     * run's secret gets in, and each tool still checks the job's run itself.
+     */
+    POST("/bot/v1/engine/mcp", async (request) => {
+      const secret = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
+      const { runForSecret } = await import("../lib/engines/local-run");
+      const run = await runForSecret(secret);
+      if (run === null) return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "This run has stopped, or never was." } }, 401);
+      const message = (await readJson(request)) as { id?: unknown; method?: unknown; params?: Record<string, unknown> } | null;
+      const id = message?.id ?? null;
+      const reply = (result: unknown) => json({ jsonrpc: "2.0", id, result });
+      const method = typeof message?.method === "string" ? message.method : "";
+      // Notifications get no answer.
+      if (message?.id === undefined || method.startsWith("notifications/")) return new Response(null, { status: 202 });
+      const { HOST_TOOLS } = await import("../lib/engines/host-tools");
+      if (method === "initialize") {
+        const asked = typeof message.params?.protocolVersion === "string" ? message.params.protocolVersion : "2025-06-18";
+        return reply({ protocolVersion: asked, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "eve-bot", version: appVersion } });
+      }
+      if (method === "ping") return reply({});
+      if (method === "tools/list") return reply({ tools: HOST_TOOLS.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })) });
+      if (method === "tools/call") {
+        const name = typeof message.params?.name === "string" ? message.params.name : "";
+        const tool = HOST_TOOLS.find((candidate) => candidate.name === name);
+        if (tool === undefined) return json({ jsonrpc: "2.0", id, error: { code: -32602, message: `No tool ${name}.` } });
+        const text = await tool
+          .execute(message.params?.arguments ?? {}, { ctx: { runId: run.runId, config: { workspaceId: run.workspaceId, jobId: run.jobId } } })
+          .catch((error: unknown) => JSON.stringify({ ok: false, message: error instanceof Error ? error.message : String(error) }));
+        let failed = false;
+        try {
+          failed = (JSON.parse(text) as { ok?: unknown }).ok === false;
+        } catch {
+          // Not JSON: a plain answer.
+        }
+        return reply({ content: [{ type: "text", text }], isError: failed });
+      }
+      return json({ jsonrpc: "2.0", id, error: { code: -32601, message: `${method} is not offered here.` } });
+    }),
+
     POST("/bot/v1/internal/tick", async (request, { attachSession, from }) => {
       if (!(await isProjectWorker(request)) && !(await isInternal(request))) return json({ error: "not found" }, 404);
       // The daemon takes its pace from the answer, so Settings change it without a redeploy.
@@ -998,7 +1040,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const engine = body?.engine === undefined ? undefined : isEngine(body.engine) ? body.engine : null;
       if (engine === null) return json({ error: `engine must be one of ${ENGINES.join(", ")}.` }, 400);
       if (engine !== undefined) {
-        const refused = engineRefusal(engine, { workspaceId });
+        const refused = engineRefusal(engine, { workspaceId, env: await effectiveEnv(workspaceId) });
         if (refused !== null) return json({ error: refused }, 400);
       }
       if (status === undefined && name === undefined && role === undefined && persona === undefined && engine === undefined && !placement) {

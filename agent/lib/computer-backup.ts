@@ -89,6 +89,8 @@ function archiveCommand(generation: string): string {
   const excludes = [
     "workspace/sessions",
     "workspace/attachments",
+    // Claude Code and Codex on the owner's plan: their CLIs (reinstalled on use) and each run's files.
+    "workspace/.engines",
     // Browser profiles are large and mostly cache; sign-ins travel in the
     // identity jar, which is kept.
     "workspace/.computer/chrome",

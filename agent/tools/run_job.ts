@@ -537,9 +537,9 @@ async function claimForRun(
     return refused(`${bot.name} is paused. Resume them to run this job.`);
   }
   // Checked again at every run, so a data control turned on since the Bot was set up stops it here.
-  const { engineOf, engineRefusal } = await import("../lib/engines");
+  const [{ engineOf, engineRefusal }, { effectiveEnv }] = await Promise.all([import("../lib/engines"), import("../lib/settings/store")]);
   const engine = engineOf(bot);
-  const engineRefused = engineRefusal(engine, { workspaceId });
+  const engineRefused = engineRefusal(engine, { workspaceId, env: await effectiveEnv(workspaceId) });
   if (engineRefused !== null) {
     await releaseJob(workspaceId, jobId);
     return refused(`${bot.name} runs on another engine that cannot run here: ${engineRefused}`);

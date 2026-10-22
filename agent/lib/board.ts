@@ -19,7 +19,7 @@ import { ledgerTotal, NO_USAGE, readLedger, type Usage } from "./usage";
 import { HQ_ROOM, roomForBot } from "./rooms";
 import { getRoomState, type AnsweredInput, type Branch, type RoomState } from "./roomstate";
 import type { ActivityEvent, Bot, Job } from "./types";
-import { liveEnv } from "./settings/store";
+import { effectiveEnv, liveEnv } from "./settings/store";
 import { type Engine, engineChoices, engineOf } from "./engines";
 
 /**
@@ -268,7 +268,7 @@ export async function buildBoard(
     },
     budget,
     exportable: exportEnabled(liveEnv()),
-    engines: engineChoices(workspaceId),
+    engines: engineChoices(workspaceId, await effectiveEnv(workspaceId)),
     health: jobHealth(open, {
       now,
       pausedBotIds: new Set(bots.filter((bot) => bot.status !== "active").map((bot) => bot.id)),

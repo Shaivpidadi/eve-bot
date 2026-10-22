@@ -24,7 +24,7 @@ import { bindRun, describeRunRefusal, patchJob } from "../jobs";
 import { chargeUsage } from "../spend";
 import { addUsage, type Usage } from "../usage";
 import { DEFAULT_CODEX_MODEL } from "./codex";
-import { type HarnessEngine, SPEND_STREAMS } from "./index";
+import { type DurableEngine, type HarnessEngine, isLocalEngine, SPEND_STREAMS } from "./index";
 import type { HarnessSessionConfig } from "./host-tools";
 
 /** How long one look at the live stream waits for news before it reports "still working". */
@@ -81,10 +81,10 @@ const harnessModule = (entry: string): Promise<unknown> => {
 };
 
 
-const loaded = new Map<HarnessEngine, Promise<HarnessDeps>>();
+const loaded = new Map<DurableEngine, Promise<HarnessDeps>>();
 
 /** The engine's agent, made once per process from the same options its queue route uses. */
-function load(engine: HarnessEngine): Promise<HarnessDeps> {
+function load(engine: DurableEngine): Promise<HarnessDeps> {
   let deps = loaded.get(engine);
   if (deps === undefined) {
     deps = (async (): Promise<HarnessDeps> => {
@@ -112,12 +112,12 @@ function load(engine: HarnessEngine): Promise<HarnessDeps> {
  * The model a record names when it names none: Codex's spend records carry
  * only the cost, and a Codex agent runs one model (`./codex`).
  */
-function defaultModelOf(engine: HarnessEngine, env: Readonly<Record<string, string | undefined>> = process.env): string | null {
+function defaultModelOf(engine: DurableEngine, env: Readonly<Record<string, string | undefined>> = process.env): string | null {
   return engine === "codex" ? env.BOT_CODEX_MODEL?.trim() || DEFAULT_CODEX_MODEL : null;
 }
 
 /** The priced model calls in a session's log: the engine's spend stream, folded from completed journal effects. */
-export function spendOf(engine: HarnessEngine, state: { readonly effectOrder?: readonly { name: string; status: string; input?: unknown }[] }): SpendRecord[] {
+export function spendOf(engine: DurableEngine, state: { readonly effectOrder?: readonly { name: string; status: string; input?: unknown }[] }): SpendRecord[] {
   const stream = SPEND_STREAMS[engine];
   const fallback = defaultModelOf(engine);
   const records: SpendRecord[] = [];
@@ -143,6 +143,7 @@ export async function startHarnessRun(
   input: { readonly workspaceId: string; readonly jobId: string; readonly token: string; readonly brief: string },
   deps?: HarnessDeps,
 ): Promise<HarnessStart> {
+  if (isLocalEngine(engine)) return (await import("./local-run")).startLocalRun(engine, input);
   const { sessions, deleteSandbox } = deps ?? (await load(engine));
   let sessionId: string;
   try {
@@ -177,6 +178,8 @@ export async function lookAtHarnessRun(
   /** The text the last look caught mid-stretch, which this one goes on with. */
   carried = "",
 ): Promise<HarnessLook> {
+  // A plan engine's lines arrive whole: nothing is ever carried over a look.
+  if (isLocalEngine(engine)) return (await import("./local-run")).lookAtLocalRun(engine, sessionId, cursor);
   const { sessions } = deps ?? (await load(engine));
   const state = await sessions.inspect(sessionId);
   const spend = spendOf(engine, state);
@@ -306,10 +309,13 @@ async function stopSession(deps: HarnessDeps, sessionId: string): Promise<void> 
 
 /** Tells a running session something as a follow-up message, such as what a person decided about its email. */
 export async function tellHarnessSession(engine: HarnessEngine, sessionId: string, text: string, deps?: HarnessDeps): Promise<void> {
+  // A plan engine's CLI takes no follow-ups mid-turn; what was decided is in the job's feed.
+  if (isLocalEngine(engine)) return;
   await (deps ?? (await load(engine))).sessions.send(sessionId, text, "followUp");
 }
 
 /** Stops a session for good: closes it and deletes its Sandbox and Drive. Best effort and idempotent. */
 export async function stopHarnessRun(engine: HarnessEngine, sessionId: string, deps?: HarnessDeps): Promise<void> {
+  if (isLocalEngine(engine)) return (await import("./local-run")).stopLocalRun(engine, sessionId);
   await stopSession(deps ?? (await load(engine)), sessionId);
 }

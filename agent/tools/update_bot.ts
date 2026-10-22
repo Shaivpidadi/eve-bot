@@ -3,14 +3,16 @@ import { z } from "zod";
 
 import { record } from "../lib/activity";
 import { findBot, patchBot, teachBot } from "../lib/bots";
-import { ENGINE_LABELS, ENGINES, engineRefusal, enginesOn, type Engine } from "../lib/engines";
+import { ENGINE_LABELS, ENGINES, engineRefusal, engineChoiceOffered, type Engine } from "../lib/engines";
 import { operator } from "../lib/session";
+import { effectiveEnv } from "../lib/settings/store";
 
 /**
- * Offered only where the owner turned an engine on (`BOT_ENGINES`), so HQ's
+ * Offered only where another engine can run (`BOT_ENGINES`, or a standalone
+ * server's own computer for the owner's plan), so HQ's
  * tools read exactly as before everywhere else.
  */
-const engineField = enginesOn()
+const engineField = engineChoiceOffered()
   ? {
       engine: z
         .enum(ENGINES)
@@ -56,7 +58,7 @@ export default defineTool({
 
     const engine = (input as { engine?: Engine }).engine;
     if (engine !== undefined) {
-      const refused = engineRefusal(engine, { workspaceId: who.workspaceId });
+      const refused = engineRefusal(engine, { workspaceId: who.workspaceId, env: await effectiveEnv(who.workspaceId) });
       if (refused !== null) return { updated: false as const, reason: refused };
     }
 

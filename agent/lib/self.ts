@@ -27,7 +27,8 @@ export async function noteOrigin(request: Request): Promise<void> {
   await writeDoc(ORIGIN_KEY, { origin, at: new Date().toISOString() }).catch(() => undefined);
 }
 
-async function origin(): Promise<string | null> {
+/** The address this server is reached by (Settings, the environment, or the console's last request), or null before any. */
+export async function origin(): Promise<string | null> {
   // Settings (Server) over the environment, where npm start puts its own address when none is set.
   const { liveEnv } = await import("./settings/store");
   const pinned = liveEnv().BOT_PUBLIC_URL?.trim();
