@@ -80,7 +80,8 @@ let endpointList: { readonly catalog: Catalog; readonly until: number; readonly 
  * The models your own provider serves, from its `/models` list, in the shape of
  * Gateway's (no prices or capabilities: the list says only their names, so a
  * model is taken to see screenshots and answer in a fixed format until a job
- * shows otherwise). Read for the page and when settings are saved.
+ * shows otherwise, except on Ollama, which says what each model can do).
+ * Read for the page and when settings are saved.
  */
 export async function endpointCatalog(): Promise<Catalog> {
   const endpoint = customEndpoint();
@@ -94,16 +95,43 @@ export async function endpointCatalog(): Promise<Catalog> {
     if (!response.ok) throw new Error(`Your provider answered ${response.status}.`);
     const body = (await response.json()) as { data?: readonly { id?: unknown }[] };
     const host = new URL(endpoint.baseURL).host;
-    const models = (body.data ?? [])
-      .map((entry) => entry.id)
-      .filter((id): id is string => typeof id === "string" && isEndpointModelId(id))
-      .map((id): CatalogModel => ({ id, name: id, provider: host, free: false, inputPerM: null, priceVaries: false, outputPerM: null, context: endpoint.contextWindowTokens, vision: true, structured: true, reasoning: false, zdr: "none" }));
+    const ids = (body.data ?? []).map((entry) => entry.id).filter((id): id is string => typeof id === "string" && isEndpointModelId(id));
+    const abilities = await ollamaCapabilities(endpoint.baseURL, ids);
+    const models = ids.map((id): CatalogModel => {
+      const known = abilities.get(id);
+      return { id, name: id, provider: host, free: false, inputPerM: null, priceVaries: false, outputPerM: null, context: endpoint.contextWindowTokens, vision: known === undefined ? true : known.includes("vision"), structured: true, reasoning: known?.includes("thinking") ?? false, zdr: "none" };
+    });
     catalog = { models, at: new Date().toISOString(), error: null };
   } catch (error) {
     catalog = { models: [], at: null, error: error instanceof Error ? error.message : "Your provider did not answer." };
   }
   endpointList = { catalog, until: Date.now() + ENDPOINT_CACHE_MS, baseURL: endpoint.baseURL };
   return catalog;
+}
+
+/**
+ * What each model can do, where the provider is Ollama: its own `/api/show`
+ * names a model's capabilities ("vision", "tools", "thinking"), which the
+ * OpenAI-style list leaves out. Empty for any other provider, whose models
+ * keep the assumption above.
+ */
+async function ollamaCapabilities(baseURL: string, ids: readonly string[]): Promise<Map<string, readonly string[]>> {
+  const found = new Map<string, readonly string[]>();
+  const root = baseURL.replace(/\/v1\/?$/, "");
+  if (root === baseURL || ids.length === 0) return found;
+  await Promise.all(
+    ids.slice(0, 50).map(async (id) => {
+      try {
+        const response = await fetch(`${root}/api/show`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: id }), signal: AbortSignal.timeout(5_000) });
+        if (!response.ok) return;
+        const capabilities = ((await response.json()) as { capabilities?: unknown }).capabilities;
+        if (Array.isArray(capabilities)) found.set(id, capabilities.filter((entry): entry is string => typeof entry === "string"));
+      } catch {
+        // Not Ollama, or it did not answer: this model keeps the assumption.
+      }
+    }),
+  );
+  return found;
 }
 
 const cache = new Map<string, { readonly settings: ModelSettings; readonly until: number }>();

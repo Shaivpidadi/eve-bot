@@ -29,6 +29,13 @@ export const NO_USAGE: Usage = { inputTokens: 0, outputTokens: 0, cacheReadToken
 const num = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 
 /** The usage one `step.completed` event reports, as this ledger counts it. */
+/**
+ * One name per model: eve names a step's model by how it was handed over, so
+ * the same model reads `gateway/minimax/…` or `custom/gpt-oss:20b` from one
+ * session and `minimax/…` or `gpt-oss:20b` from another.
+ */
+export const modelName = (modelId: string): string => modelId.replace(/^(gateway|custom)\//, "");
+
 export function usageOfStep(data: unknown, modelId: string | null): Usage {
   const raw = (data as { usage?: Record<string, unknown> } | null)?.usage ?? {};
   return {
@@ -38,7 +45,7 @@ export function usageOfStep(data: unknown, modelId: string | null): Usage {
     cacheWriteTokens: num(raw.cacheWriteTokens),
     costUsd: num(raw.costUsd),
     steps: 1,
-    models: modelId === null ? {} : { [modelId]: 1 },
+    models: modelId === null ? {} : { [modelName(modelId)]: 1 },
   };
 }
 

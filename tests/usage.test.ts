@@ -16,9 +16,12 @@ describe("usage", () => {
       cacheWriteTokens: 5,
       costUsd: 0.01,
       steps: 1,
-      models: { "gateway/anthropic/claude-sonnet-5": 1 },
+      models: { "anthropic/claude-sonnet-5": 1 },
     });
     expect(usageOfStep({}, null)).toEqual({ ...NO_USAGE, steps: 1 });
+    // One model, one name, however eve was handed it.
+    expect(usageOfStep({}, "custom/gpt-oss:20b").models).toEqual({ "gpt-oss:20b": 1 });
+    expect(usageOfStep({}, "gateway/minimax/minimax-m3.1-flash").models).toEqual({ "minimax/minimax-m3.1-flash": 1 });
     expect(usageOfStep({ usage: { inputTokens: Number.NaN, costUsd: "3" } }, null)).toEqual({ ...NO_USAGE, steps: 1 });
   });
 
@@ -31,7 +34,7 @@ describe("usage", () => {
     // A record from before cache writes were kept adds up as zero there.
     const old = { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, costUsd: 0, steps: 1, models: {} } as unknown as typeof sum;
     expect(addUsage(old, step(1, 1, 0)).cacheWriteTokens).toBe(5);
-    expect(sum.models).toEqual({ "gateway/anthropic/claude-sonnet-5": 2, qwen: 1 });
+    expect(sum.models).toEqual({ "anthropic/claude-sonnet-5": 2, qwen: 1 });
   });
 
   it("keeps the ledger by who, by model and by day, and lets old days fall off", () => {
@@ -42,7 +45,7 @@ describe("usage", () => {
 
     expect(ledger.hq.steps).toBe(1);
     expect(ledger.bots.bot_a?.steps).toBe(2);
-    expect(Object.keys(ledger.byModel ?? {}).sort()).toEqual(["gateway/anthropic/claude-sonnet-5", UNREPORTED_MODEL, "qwen"].sort());
+    expect(Object.keys(ledger.byModel ?? {}).sort()).toEqual(["anthropic/claude-sonnet-5", UNREPORTED_MODEL, "qwen"].sort());
     expect(ledger.byDay?.["2026-09-21"]?.costUsd).toBe(0.06);
     expect(ledger.byDay?.["2026-09-22"]?.steps).toBe(1);
 

@@ -47,6 +47,29 @@ describe("the Models page on your own provider", () => {
     expect(await settings.runModel("ws", "quick")).toBeNull();
   });
 
+  it("knows which of Ollama's models see screenshots, from Ollama itself", async () => {
+    vi.stubEnv("BOT_MODEL_BASE_URL", OLLAMA);
+    vi.stubEnv("BOT_MODEL", "gpt-oss:20b");
+    const shows: Record<string, string[]> = { "gpt-oss:20b": ["completion", "tools", "thinking"], "llava:latest": ["completion", "vision"] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (String(url) === `${OLLAMA}/models`) return Response.json({ data: [{ id: "gpt-oss:20b" }, { id: "llava:latest" }, { id: "other:1b" }] });
+        if (String(url).endsWith("/api/show")) {
+          const model = (JSON.parse(String(init?.body)) as { model: string }).model;
+          return model in shows ? Response.json({ capabilities: shows[model] }) : new Response("{}", { status: 404 });
+        }
+        return new Response("{}", { status: 404 });
+      }),
+    );
+    const settings = await import("../agent/lib/model-settings");
+    const byId = Object.fromEntries((await settings.endpointCatalog()).models.map((model) => [model.id, model]));
+    expect(byId["gpt-oss:20b"]).toMatchObject({ vision: false, reasoning: true });
+    expect(byId["llava:latest"]).toMatchObject({ vision: true });
+    // A model Ollama says nothing about keeps the assumption.
+    expect(byId["other:1b"]).toMatchObject({ vision: true });
+  });
+
   it('keeps "Free models only" to AI Gateway', async () => {
     onOllama();
     const settings = await import("../agent/lib/model-settings");
