@@ -771,7 +771,7 @@ function AddForm({
   onSubmit,
 }: {
   adding: NonNullable<Adding>;
-  /** Vercel Connect can hand out tokens here (on Vercel, or with a pulled OIDC token). */
+  /** This is a Vercel deployment, where Vercel Connect can sign connectors in. */
   connectAvailable: boolean;
   busy: boolean;
   onCancel: () => void;

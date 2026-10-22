@@ -112,22 +112,17 @@ if (platform === "standalone") {
 }
 
 // ── Models ─────────────────────────────────────────────────────────────────
-// AI Gateway works the same on a standalone server as on Vercel (with a key),
-// and everything that leans on it comes with it. Your own endpoint keeps every
-// call on your side, without those.
-say();
-say("AI Gateway brings the Models page, Jev (the page pilot and the close review), memory search by meaning,");
-say("eve's web search and Zero Data Retention. Your own endpoint keeps every call on your side, without those.");
+// Any OpenAI-compatible provider runs Bot, a standalone server's default; AI
+// Gateway is one of them, and Vercel's default. Only eve's own web search and
+// Zero Data Retention need the Gateway.
 const modelChoices = [
-  platform === "vercel" ? "Vercel AI Gateway (recommended)" : "Vercel AI Gateway, with an API key (recommended: everything works)",
   "Ollama on this machine (http://localhost:11434/v1)",
   "LM Studio on this machine (http://localhost:1234/v1)",
   "OpenRouter (https://openrouter.ai/api/v1, with an API key)",
   "Another OpenAI-compatible API (vLLM, a company proxy, ...)",
+  platform === "vercel" ? "Vercel AI Gateway (the default on Vercel)" : "Vercel AI Gateway, with an API key",
 ];
-const picked = await choose("Where do the models come from?", modelChoices, 1);
-// The endpoint choices keep their old numbers (1 to 4) below; 5 is the Gateway.
-const modelChoice = picked === 1 ? 5 : picked - 1;
+const modelChoice = await choose("Where do the models come from?", modelChoices, platform === "vercel" ? 5 : 1);
 
 let customEndpoint = null;
 if (modelChoice === 5) {

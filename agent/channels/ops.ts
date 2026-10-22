@@ -1550,8 +1550,8 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     GET("/bot/v1/connectors", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      // Vercel Connect hands out tokens only with a Vercel OIDC token: on Vercel, or after `vercel env pull`.
-      const connectAvailable = process.env.VERCEL === "1" || Boolean(process.env.VERCEL_OIDC_TOKEN?.trim());
+      // Vercel Connect is for a Vercel deployment; anywhere else connectors sign in through the app's own OAuth.
+      const connectAvailable = process.env.VERCEL === "1";
       return json({ connectors: (await listConnectors(gate.access.workspaceId)).map(publicConnector), catalog: CATALOG, connectAvailable });
     }),
 
