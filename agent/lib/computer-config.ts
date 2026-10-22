@@ -199,13 +199,24 @@ export function computerImage(
   return env.BOT_COMPUTER === "local" ? { kind: "dockerfile" } : { kind: "default" };
 }
 
+let warnedUnfenced = false;
+
 /** Options the machine is opened with: local providers take their network policy here, and a Vercel computer its drive. */
 export function computerOpenOptions(env: Env = liveEnv()): object | undefined {
   if (computerMode() !== "local") {
     const mounts = driveMounts(env);
     return mounts === undefined ? undefined : { mounts };
   }
-  return localComputer() === "docker" ? { networkPolicy: allowedDomains(env).length > 0 ? "deny-all" : "allow-all" } : { networkPolicy: networkPolicy(env) };
+  if (localComputer() === "docker") {
+    // Docker can only allow everything or nothing: a list it cannot enforce fails closed, and says so.
+    if (allowedDomains(env).length === 0) return { networkPolicy: "allow-all" };
+    if (!warnedUnfenced) {
+      warnedUnfenced = true;
+      console.warn("[bot] BOT_SANDBOX_ALLOW_DOMAINS is set, and a Docker computer cannot keep to a list: it gets no network at all, and its live view goes with it. Unset it, or use microsandbox (BOT_COMPUTER_LOCAL=microsandbox), which can.");
+    }
+    return { networkPolicy: "deny-all" };
+  }
+  return { networkPolicy: networkPolicy(env) };
 }
 
 /**

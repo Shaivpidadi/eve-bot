@@ -8,7 +8,7 @@ import { ENGINE_LABELS, ENGINES, engineOf, engineRefusal, isEngine } from "../li
 import { readArtifact } from "../lib/artifacts";
 import { buildBoard } from "../lib/board";
 import { findBot, getBot, hireBot, isHq, listBots, patchBot, retireBot } from "../lib/bots";
-import { computerMode, vercelCredentialsError } from "../lib/computer-config";
+import { computerMode, localComputer, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
 import { cancelJobRun, describeInterruption, interruptVia, within } from "../lib/cancel";
@@ -31,6 +31,8 @@ import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
 import { isProjectWorker, workerEverySeconds, workerTick } from "../lib/worker";
 import { gatewayCatalog } from "../lib/gateway-models";
+import { customEndpoint } from "../lib/models";
+import { dockerReady, modelsReady } from "../lib/setup-probe";
 import { modelsEditable, modelsReport, saveModelSettings, settingsInput } from "../lib/model-settings";
 import { effectiveEnv, saveSettings, settingsReport, workerPaused } from "../lib/settings/store";
 import type { SettingDef } from "../lib/settings/registry";
@@ -249,6 +251,9 @@ function settingApplies(def: SettingDef): boolean {
   if (def.where === "local-computer") return computerMode() === "local";
   if (def.where === "vercel") return process.env.VERCEL === "1";
   if (def.where === "worker") return /^(1|true|on|yes)$/i.test(process.env.BOT_WORKER?.trim() ?? "");
+  if (def.where === "gateway") return customEndpoint() === null;
+  if (def.where === "endpoint") return customEndpoint() !== null;
+  if (def.where === "fenced-computer") return computerMode() === "vercel" || localComputer() === "microsandbox";
   return true;
 }
 
@@ -399,7 +404,12 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           driver,
           ready: driver !== "vercel-blob" || Boolean(process.env.BLOB_STORE_ID || process.env.BLOB_READ_WRITE_TOKEN),
         },
-        computer: { backend, ready: backend !== "vercel" || vercelCredentialsError() === null },
+        // A local computer is ready when Docker answers (a microsandbox VM needs no daemon); see lib/setup-probe.ts.
+        computer: {
+          backend,
+          ready: backend === "vercel" ? vercelCredentialsError() === null : localComputer() !== "docker" || (await dockerReady()),
+        },
+        models: await modelsReady(),
       });
     }),
 
@@ -1540,7 +1550,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     GET("/bot/v1/connectors", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      return json({ connectors: (await listConnectors(gate.access.workspaceId)).map(publicConnector), catalog: CATALOG });
+      // Vercel Connect hands out tokens only with a Vercel OIDC token: on Vercel, or after `vercel env pull`.
+      const connectAvailable = process.env.VERCEL === "1" || Boolean(process.env.VERCEL_OIDC_TOKEN?.trim());
+      return json({ connectors: (await listConnectors(gate.access.workspaceId)).map(publicConnector), catalog: CATALOG, connectAvailable });
     }),
 
     /** Connects a connector, from the catalog by id or a custom MCP server: it must answer with its tools before it is saved. */

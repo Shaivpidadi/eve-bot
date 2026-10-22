@@ -78,11 +78,11 @@ Same code, two homes.
 | --- | --- | --- |
 | Setup | one click | `npm run setup` |
 | The team's computer | Vercel Sandbox | Docker on your machine |
-| Models | AI Gateway | Ollama, LM Studio, OpenRouter, any OpenAI-compatible API |
+| Models | AI Gateway | AI Gateway with a key (everything works), or Ollama, LM Studio, OpenRouter, any OpenAI-compatible API |
 | Storage and memory | Vercel Blob | disk |
-| Schedules | Vercel Cron | the server's own cron |
-| Web search | eve's, through AI Gateway | your SearXNG, or Brave, Tavily, Exa |
-| Costs | model usage at provider prices through AI Gateway, plus Sandbox and Blob on your Vercel plan | free with Ollama or LM Studio on your own hardware; per token on OpenRouter or any hosted API. Spend caps hold either way |
+| Schedules and background work | Vercel Cron, and a Vercel Daemon on Pro if you add one | the server's own cron, and `npm start` does the watchdog's work every 30 seconds |
+| Web search | eve's, through AI Gateway | eve's with AI Gateway, or your SearXNG, Brave, Tavily, Exa |
+| Costs | model usage at provider prices through AI Gateway, plus Sandbox and Blob on your Vercel plan | free with Ollama or LM Studio on your own hardware; per token on AI Gateway, OpenRouter or any hosted API. Spend caps in dollars hold on AI Gateway and OpenRouter, or with prices set (`BOT_MODEL_PRICES`); token caps always |
 
 ### Vercel
 

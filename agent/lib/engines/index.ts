@@ -107,5 +107,14 @@ export function engineRefusal(
   if ((env.BOT_MODEL_BASE_URL ?? "").trim() !== "") {
     return `This deployment uses its own model endpoint (BOT_MODEL_BASE_URL), and ${name} jobs run only through AI Gateway.`;
   }
+  if (!hasSandboxCredentials(env)) {
+    return `Each ${name} job runs in a Vercel Sandbox, and this server has no Vercel credentials for one: run "vercel link && vercel env pull" (a VERCEL_OIDC_TOKEN, good for 12 hours), or set VERCEL_TOKEN with VERCEL_TEAM_ID and VERCEL_PROJECT_ID.`;
+  }
   return null;
+}
+
+/** Whether a job's Sandbox can be made from here: on Vercel, or with credentials a standalone server was given. */
+function hasSandboxCredentials(env: Env): boolean {
+  const set = (name: string) => (env[name] ?? "").trim() !== "";
+  return env.VERCEL === "1" || set("VERCEL_OIDC_TOKEN") || (set("VERCEL_TOKEN") && (set("VERCEL_TEAM_ID") || set("VERCEL_ORG_ID")) && set("VERCEL_PROJECT_ID"));
 }

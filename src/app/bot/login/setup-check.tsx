@@ -14,6 +14,8 @@ interface Setup {
   readonly tokens: boolean;
   readonly storage: { readonly driver: string; readonly ready: boolean };
   readonly computer: { readonly backend: string; readonly ready: boolean };
+  /** Whether the Bots can reach a model (absent from a server older than this page). */
+  readonly models?: { readonly via: "gateway" | "endpoint"; readonly ready: boolean };
 }
 
 const PROTECTION_SETTINGS =
@@ -115,9 +117,27 @@ function StandaloneSteps({ setup }: { setup: Setup }) {
             <code>vercel link &amp;&amp; vercel env pull</code> to use Vercel Sandbox.
           </>
         ) : (
-          <>The computer runs in Docker. Make sure Docker is running before a Bot starts a job.</>
+          <>
+            The computer runs in Docker, and Docker is not answering. Start Docker Desktop, OrbStack or Colima, or point{" "}
+            <code>EVE_DOCKER_PATH</code> at your docker CLI, then reload this page.
+          </>
         )}
       </Step>
+      {setup.models === undefined ? null : (
+        <Step done={setup.models.ready} title="Models">
+          {setup.models.via === "gateway" ? (
+            <>
+              Put <code>AI_GATEWAY_API_KEY</code> in <code>.env</code> (vercel.com → AI Gateway → API Keys), or point{" "}
+              <code>BOT_MODEL_BASE_URL</code> at your own OpenAI-compatible endpoint. <code>npm run setup</code> asks.
+            </>
+          ) : (
+            <>
+              Nothing answered at <code>BOT_MODEL_BASE_URL</code>. Start your model server (Ollama, LM Studio, …), or check the
+              address and <code>BOT_MODEL_API_KEY</code> in <code>.env</code>, then reload this page.
+            </>
+          )}
+        </Step>
+      )}
     </ul>
   );
 }

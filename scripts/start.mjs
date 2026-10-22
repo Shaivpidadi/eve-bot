@@ -14,6 +14,7 @@
  * and reattaches to it on the next start.
  */
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -52,9 +53,14 @@ if (needed || templateMissing) {
         : "[bot] Building the agent..."
       : "[bot] Building the agent with the team computer's template...",
   );
-  // eve's own entry, run by this Node, as on every platform (`.bin/eve` is a `.cmd` on Windows).
-  const built = spawnSync(process.execPath, [join(process.cwd(), "node_modules", "eve", "bin", "eve.js"), "build"], { stdio: "inherit" });
-  if (built.status === 0) savedSettings("record");
+  // A due build is the whole one (scripts/build.mjs: the agent, and the console, whose build
+  // carries the engines' route and the saved settings); a missing template only needs the agent's.
+  // Both run their tools' own entries with this Node (`.bin/*` are `.cmd` files on Windows).
+  const built = needed
+    ? spawnSync(process.execPath, [join(process.cwd(), "scripts", "build.mjs")], { stdio: "inherit" })
+    : spawnSync(process.execPath, [join(process.cwd(), "node_modules", "eve", "bin", "eve.js"), "build"], { stdio: "inherit" });
+  // scripts/build.mjs records what it used itself.
+  if (built.status === 0 && !needed) savedSettings("record");
   else if (needed) {
     console.error("[bot] The agent did not build; see above.");
     process.exit(built.status ?? 1);
@@ -94,6 +100,35 @@ if (process.env.BOT_TICK_ON_START !== "off") {
       console.warn(`[bot] start sweep failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }, 60_000).unref();
+}
+
+// The background worker, as a Vercel Daemon is on Vercel: the watchdog's work
+// (due jobs, routines, teammates' notes, the outbox) every 30 seconds, so none
+// of it waits for a console to be open. Settings → Background work pauses it or
+// changes the pace; BOT_WORKER=off leaves it to the daily tick. The calls carry
+// a secret made for this start and go to the agent itself, which also uses
+// that address to call itself (BOT_PUBLIC_URL, unless set).
+process.env.BOT_INTERNAL_SECRET ||= randomBytes(32).toString("base64url");
+process.env.BOT_PUBLIC_URL ||= `http://127.0.0.1:${agentPort}`;
+const workerOn = !/^(0|off|false|no)$/i.test(process.env.BOT_WORKER?.trim() ?? "");
+if (workerOn) {
+  process.env.BOT_WORKER = "on";
+  let every = 30;
+  const pass = async () => {
+    try {
+      const response = await fetch(`http://127.0.0.1:${agentPort}/bot/v1/internal/tick`, {
+        method: "POST",
+        headers: { "x-bot-internal": process.env.BOT_INTERNAL_SECRET },
+        signal: AbortSignal.timeout(120_000),
+      });
+      const body = await response.json().catch(() => null);
+      if (response.ok && typeof body?.everySeconds === "number" && body.everySeconds >= 10) every = body.everySeconds;
+    } catch {
+      // The agent is still starting, or restarting: the next pass tries again.
+    }
+    setTimeout(pass, every * 1000).unref();
+  };
+  setTimeout(pass, 45_000).unref();
 }
 
 // The console, which starts the agent (above) with this environment.

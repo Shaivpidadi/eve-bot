@@ -131,7 +131,7 @@ paid option: $30 buys $80 of usage on the models it covers.
 | `BOT_DEPLOY_HOOK` | a Vercel deploy hook URL (Settings, Git, Deploy Hooks in Vercel), so **Rebuild now** applies a saved setting that waits for a build (the spend caps, where the computer runs, the engines) from the console; best saved in Settings (Updates), sealed. Only an `api.vercel.com` deploy hook is ever called |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
-| `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | Vercel Pro, production, once the worker is declared (see [The background worker](#the-background-worker)): `on` makes it ask the app for the watchdog's work every `30` seconds, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. Settings can pause it or change its pace without a redeploy |
+| `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | standalone: on unless `off` (`npm start` runs it). Vercel Pro, production, once the worker is declared (see [The background worker](#the-background-worker)): `on` makes it ask the app for the watchdog's work every `30` seconds, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. Settings can pause it or change its pace without a redeploy |
 | `BOT_TICK_ON_START` | `off` stops a standalone server sweeping for stranded jobs a minute after it starts |
 | `BOT_WORKFLOW_WORLD` | a shared Workflow world package for a standalone server, such as `@workflow/world-postgres` (with `WORKFLOW_POSTGRES_URL`), so conversations survive rebuilds; experimental, see `docs/decisions/0002-workflow-world.md` |
 | `BOT_BUILD_ID` | overrides the build id leases are stamped with (see `docs/safety.md`, run fencing) |
@@ -309,7 +309,13 @@ reports the mode as `shell`.
 
 ## The background worker
 
-`daemon/` holds a small worker that asks the app for the watchdog's work every 30 seconds with its OIDC token
+On a standalone server, `npm start` is the worker: every 30 seconds it asks the agent for the watchdog's work, with a
+secret it makes for each start, so due work, routines, teammates' notes and the outbox move with no console open.
+**Settings → Background work** pauses it or changes its pace; `BOT_WORKER=off` leaves the work to the console's polls
+and the daily tick. It also gives the agent its own address (`BOT_PUBLIC_URL`, unless you set one). The rest of this
+section is about Vercel.
+
+On Vercel, `daemon/` holds a small worker that asks the app for the watchdog's work every 30 seconds with its OIDC token
 (`POST /bot/v1/internal/tick`), so due work, teammates' notes and idle browsers move with no console open. Without
 it the same work happens on the console's polls, the daily cron and the server's own passes; it is only slower when
 nobody has the console open.

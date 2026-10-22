@@ -38,10 +38,12 @@ export type SettingArea =
 /**
  * Where a setting means anything: everywhere, on Vercel's computer, on a local
  * one, with the background worker deployed on, on a copy Vercel builds from
- * its own GitHub repository (which can update itself), or on any Vercel
- * deployment.
+ * its own GitHub repository (which can update itself), on any Vercel
+ * deployment, with models on AI Gateway, with models on your own endpoint, or
+ * on a computer that can fence its network (Vercel Sandbox, microsandbox; not
+ * Docker, which can only allow everything or nothing).
  */
-export type SettingWhere = "always" | "vercel-computer" | "local-computer" | "worker" | "copy" | "vercel";
+export type SettingWhere = "always" | "vercel-computer" | "local-computer" | "worker" | "copy" | "vercel" | "gateway" | "endpoint" | "fenced-computer";
 
 export interface SettingDef {
   readonly env: string;
@@ -80,14 +82,14 @@ export const SETTINGS: readonly SettingDef[] = [
   { env: "BOT_BUDGET_DAILY_USD", area: "Spend", label: "Daily budget", help: "The same, for one day.", scope: "workspace", tier: "live", kind: usd, fallback: "No limit" },
   { env: "BOT_HQ_COST_LIMIT_USD", area: "Spend", label: "Most one HQ thread may spend", help: "A runaway stop for one conversation with HQ.", scope: "deployment", tier: "rebuild", kind: usd, fallback: "$10" },
   { env: "BOT_JOB_COST_LIMIT_USD", area: "Spend", label: "Most one job may spend", help: "A runaway stop for one Bot's job.", scope: "deployment", tier: "rebuild", kind: usd, fallback: "$5" },
-  { env: "BOT_HQ_INPUT_TOKEN_LIMIT", area: "Spend", label: "HQ input token cap", help: "Backs the dollar cap up on an endpoint that reports no prices. 0 or off: no cap.", scope: "deployment", tier: "rebuild", kind: { type: "number", min: 0, integer: true, unit: "tokens" }, fallback: "40,000,000" },
-  { env: "BOT_HQ_OUTPUT_TOKEN_LIMIT", area: "Spend", label: "HQ output token cap", help: "As above, for what HQ writes.", scope: "deployment", tier: "rebuild", kind: { type: "number", min: 0, integer: true, unit: "tokens" }, fallback: "2,000,000" },
-  { env: "BOT_JOB_INPUT_TOKEN_LIMIT", area: "Spend", label: "Job input token cap", help: "As above, for one job.", scope: "deployment", tier: "rebuild", kind: { type: "number", min: 0, integer: true, unit: "tokens" }, fallback: "10,000,000" },
-  { env: "BOT_JOB_OUTPUT_TOKEN_LIMIT", area: "Spend", label: "Job output token cap", help: "As above, for what one job writes.", scope: "deployment", tier: "rebuild", kind: { type: "number", min: 0, integer: true, unit: "tokens" }, fallback: "500,000" },
-  { env: "BOT_COMPUTER_USD_PER_HOUR", area: "Spend", label: "Computer cost per hour", help: "What the team's computer costs while it runs, so its time counts against the budget. Unset: its time is not counted.", scope: "deployment", tier: "live", kind: usd, fallback: "Not counted" },
-  { env: "BOT_COMPUTER_USD_PER_CPU_HOUR", area: "Spend", label: "Computer cost per active CPU hour", help: "Vercel Sandbox bills active CPU; adds to the hourly rate.", scope: "deployment", tier: "live", kind: usd, fallback: "Not counted" },
-  { env: "BOT_COMPUTER_USD_PER_GB_HOUR", area: "Spend", label: "Computer cost per GB-hour of memory", help: "Vercel Sandbox bills provisioned memory; adds to the hourly rate.", scope: "deployment", tier: "live", kind: usd, fallback: "Not counted" },
-  { env: "BOT_MODEL_PRICES", area: "Spend", label: "Model prices off AI Gateway", help: "model=input/output USD per million tokens, comma separated, so spend caps hold on your own endpoint.", scope: "deployment", tier: "live", kind: { type: "text", placeholder: "my/model=0.5/1.5" }, fallback: "Read from OpenRouter, else unknown" },
+  { env: "BOT_HQ_INPUT_TOKEN_LIMIT", area: "Spend", label: "HQ input token cap", help: "Backs the dollar cap up on an endpoint that reports no prices. 0 or off: no cap.", scope: "deployment", tier: "rebuild", kind: { type: "number", min: 0, integer: true, unit: "tokens" }, fallback: "40,000,000", where: "endpoint" },
+  { env: "BOT_HQ_OUTPUT_TOKEN_LIMIT", area: "Spend", label: "HQ output token cap", help: "As above, for what HQ writes.", scope: "deployment", tier: "rebuild", kind: { type: "number", min: 0, integer: true, unit: "tokens" }, fallback: "2,000,000", where: "endpoint" },
+  { env: "BOT_JOB_INPUT_TOKEN_LIMIT", area: "Spend", label: "Job input token cap", help: "As above, for one job.", scope: "deployment", tier: "rebuild", kind: { type: "number", min: 0, integer: true, unit: "tokens" }, fallback: "10,000,000", where: "endpoint" },
+  { env: "BOT_JOB_OUTPUT_TOKEN_LIMIT", area: "Spend", label: "Job output token cap", help: "As above, for what one job writes.", scope: "deployment", tier: "rebuild", kind: { type: "number", min: 0, integer: true, unit: "tokens" }, fallback: "500,000", where: "endpoint" },
+  { env: "BOT_COMPUTER_USD_PER_HOUR", area: "Spend", label: "Computer cost per hour", help: "What the team's computer costs while it runs, so its time counts against the budget. Unset: its time is not counted.", scope: "deployment", tier: "live", kind: usd, fallback: "Not counted", where: "vercel-computer" },
+  { env: "BOT_COMPUTER_USD_PER_CPU_HOUR", area: "Spend", label: "Computer cost per active CPU hour", help: "Vercel Sandbox bills active CPU; adds to the hourly rate.", scope: "deployment", tier: "live", kind: usd, fallback: "Not counted", where: "vercel-computer" },
+  { env: "BOT_COMPUTER_USD_PER_GB_HOUR", area: "Spend", label: "Computer cost per GB-hour of memory", help: "Vercel Sandbox bills provisioned memory; adds to the hourly rate.", scope: "deployment", tier: "live", kind: usd, fallback: "Not counted", where: "vercel-computer" },
+  { env: "BOT_MODEL_PRICES", area: "Spend", label: "Model prices off AI Gateway", help: "model=input/output USD per million tokens, comma separated, so spend caps hold on your own endpoint.", scope: "deployment", tier: "live", kind: { type: "text", placeholder: "my/model=0.5/1.5" }, fallback: "Read from OpenRouter, else unknown", where: "endpoint" },
 
   // ─── Models (edited on the Models page) ──────────────────────────────────
   { env: "BOT_HQ_MODEL", area: "Models", label: "HQ's model", help: "", scope: "workspace", tier: "live", kind: { type: "text" }, fallback: "anthropic/claude-sonnet-5", page: "models" },
@@ -96,16 +98,16 @@ export const SETTINGS: readonly SettingDef[] = [
   { env: "BOT_MODEL_STANDARD", area: "Models", label: "Standard jobs' model", help: "", scope: "workspace", tier: "live", kind: { type: "text" }, fallback: "anthropic/claude-sonnet-5", page: "models" },
   { env: "BOT_MODEL_DEEP", area: "Models", label: "Deep jobs' model", help: "", scope: "workspace", tier: "live", kind: { type: "text" }, fallback: "anthropic/claude-opus-5", page: "models" },
   { env: "BOT_MEMORY_MODEL", area: "Models", label: "Helper's model", help: "", scope: "workspace", tier: "live", kind: { type: "text" }, fallback: "anthropic/claude-haiku-4-5", page: "models" },
-  { env: "BOT_HQ_REASONING", area: "Models", label: "HQ's reasoning", help: "How hard HQ thinks before it answers. On AI Gateway; fixed at build on your own endpoint.", scope: "workspace", tier: "live", kind: REASONING, fallback: "Low" },
-  { env: "BOT_TEAMMATE_REASONING", area: "Models", label: "Bots' reasoning", help: "How hard a Bot thinks at each step of a job. On AI Gateway; fixed at build on your own endpoint.", scope: "workspace", tier: "live", kind: REASONING, fallback: "Medium" },
+  { env: "BOT_HQ_REASONING", area: "Models", label: "HQ's reasoning", help: "How hard HQ thinks before it answers. On your own endpoint, BOT_HQ_REASONING in the environment sets it.", scope: "workspace", tier: "live", kind: REASONING, fallback: "Low", where: "gateway" },
+  { env: "BOT_TEAMMATE_REASONING", area: "Models", label: "Bots' reasoning", help: "How hard a Bot thinks at each step of a job. On your own endpoint, BOT_TEAMMATE_REASONING in the environment sets it.", scope: "workspace", tier: "live", kind: REASONING, fallback: "Medium", where: "gateway" },
 
   // ─── Memory & decisions ──────────────────────────────────────────────────
-  { env: "BOT_MEMORY_FLOOR", area: "Memory & decisions", label: "How sure memory must be", help: "How confident the decision model must be before a memory is kept, from 0 to 1.", scope: "workspace", tier: "live", kind: { type: "number", min: 0, max: 1 }, fallback: "Jev's own floor" },
-  { env: "BOT_MEMORY_EMBEDDINGS", area: "Memory & decisions", label: "Find memories by meaning", help: "Ranks memories by meaning with embeddings, not just words. A small charge per memory.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "On" },
-  { env: "BOT_MEMORY_EMBEDDING_MODEL", area: "Memory & decisions", label: "Embedding model", help: "The model that turns memories into vectors.", scope: "deployment", tier: "live", kind: { type: "text", placeholder: "openai/text-embedding-3-small" }, fallback: "openai/text-embedding-3-small" },
-  { env: "BOT_JEV", area: "Memory & decisions", label: "Second opinion on small decisions", help: "Jev, a decision model, answers small questions (is this a sign-in wall, does this result meet the brief) as a probability. Off: those checks are skipped.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "On" },
-  { env: "BOT_JEV_MODEL", area: "Memory & decisions", label: "Decision model", help: "Another decision model on AI Gateway.", scope: "deployment", tier: "live", kind: { type: "text", placeholder: "typesafe-ai/jev" }, fallback: "typesafe-ai/jev" },
-  { env: "BOT_JEV_CONFIDENCE", area: "Memory & decisions", label: "How sure a decision must be", help: "Below this, the decision is not taken, from 0 to 1.", scope: "deployment", tier: "live", kind: { type: "number", min: 0, max: 1 }, fallback: "0.8" },
+  { env: "BOT_MEMORY_FLOOR", area: "Memory & decisions", label: "How sure memory must be", help: "How confident the decision model must be before a memory is kept, from 0 to 1.", scope: "workspace", tier: "live", kind: { type: "number", min: 0, max: 1 }, fallback: "Jev's own floor", where: "gateway" },
+  { env: "BOT_MEMORY_EMBEDDINGS", area: "Memory & decisions", label: "Find memories by meaning", help: "Ranks memories by meaning with embeddings, not just words. A small charge per memory.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "On", where: "gateway" },
+  { env: "BOT_MEMORY_EMBEDDING_MODEL", area: "Memory & decisions", label: "Embedding model", help: "The model that turns memories into vectors.", scope: "deployment", tier: "live", kind: { type: "text", placeholder: "openai/text-embedding-3-small" }, fallback: "openai/text-embedding-3-small", where: "gateway" },
+  { env: "BOT_JEV", area: "Memory & decisions", label: "Second opinion on small decisions", help: "Jev, a decision model, answers small questions (is this a sign-in wall, does this result meet the brief) as a probability. Off: those checks are skipped.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "On", where: "gateway" },
+  { env: "BOT_JEV_MODEL", area: "Memory & decisions", label: "Decision model", help: "Another decision model on AI Gateway.", scope: "deployment", tier: "live", kind: { type: "text", placeholder: "typesafe-ai/jev" }, fallback: "typesafe-ai/jev", where: "gateway" },
+  { env: "BOT_JEV_CONFIDENCE", area: "Memory & decisions", label: "How sure a decision must be", help: "Below this, the decision is not taken, from 0 to 1.", scope: "deployment", tier: "live", kind: { type: "number", min: 0, max: 1 }, fallback: "0.8", where: "gateway" },
 
   // ─── Team computer ───────────────────────────────────────────────────────
   { env: "BOT_COMPUTER_IDLE_MINUTES", area: "Team computer", label: "Stop an idle browser after", help: "A browser nobody used for this long is stopped; it starts again on the next use.", scope: "deployment", tier: "live", kind: minutes(24 * 60), fallback: "15 minutes" },
@@ -116,9 +118,9 @@ export const SETTINGS: readonly SettingDef[] = [
   { env: "BOT_BACKUP_MAX_MB", area: "Team computer", label: "Largest backup", help: "A backup bigger than this, compressed, is refused with the reason.", scope: "deployment", tier: "live", kind: { type: "number", min: 16, max: 4096, integer: true, unit: "MB" }, fallback: "512 MB" },
   { env: "BOT_COMPUTER_DRIVE", area: "Team computer", label: "Keep work on a Vercel Drive", help: "The work folders and browser profiles live on a drive, so a lost machine loses nothing. Applies from the computer's next start.", scope: "deployment", tier: "next-start", kind: SWITCH, fallback: "Off", where: "vercel-computer" },
   { env: "BOT_COMPUTER_DRIVE_GB", area: "Team computer", label: "Drive size", help: "Applies when the drive is made.", scope: "deployment", tier: "next-start", kind: { type: "number", min: 1, integer: true, unit: "GB" }, fallback: "Vercel's default", where: "vercel-computer" },
-  { env: "BOT_SANDBOX_VCPUS", area: "Team computer", label: "CPUs", help: "2 GB of memory per CPU. From the computer's next session.", scope: "deployment", tier: "next-start", kind: { type: "number", min: 1, max: 8, integer: true }, fallback: "4" },
+  { env: "BOT_SANDBOX_VCPUS", area: "Team computer", label: "CPUs", help: "2 GB of memory per CPU. From the computer's next session.", scope: "deployment", tier: "next-start", kind: { type: "number", min: 1, max: 8, integer: true }, fallback: "4", where: "vercel-computer" },
   { env: "BOT_SANDBOX_TIMEOUT_MINUTES", area: "Team computer", label: "Computer stays up for", help: "How long the computer runs between uses before it idles out. Applied to the running computer.", scope: "deployment", tier: "next-start", kind: minutes(5 * 60), fallback: "30 minutes", where: "vercel-computer" },
-  { env: "BOT_SANDBOX_ALLOW_DOMAINS", area: "Team computer", label: "Sites the computer may reach", help: "Comma separated; empty allows all. Applied at the firewall, outside the computer. On a local computer, from its next start.", scope: "deployment", tier: "next-start", kind: { type: "list", placeholder: "*.github.com, api.linear.app" }, fallback: "Everything" },
+  { env: "BOT_SANDBOX_ALLOW_DOMAINS", area: "Team computer", label: "Sites the computer may reach", help: "Comma separated; empty allows all. Applied at the firewall, outside the computer, on Vercel; by microsandbox from its next start. A Docker computer can't keep to a list, so this is not offered there.", scope: "deployment", tier: "next-start", kind: { type: "list", placeholder: "*.github.com, api.linear.app" }, fallback: "Everything", where: "fenced-computer" },
   { env: "BOT_COMPUTER_CHROME_FLAGS", area: "Team computer", label: "Extra Chrome flags", help: "From the browser's next start, e.g. --lang=en-GB.", scope: "deployment", tier: "next-start", kind: { type: "text", placeholder: "--lang=en-GB" }, fallback: "None" },
   { env: "BOT_COMPUTER_APT_MIRROR", area: "Team computer", label: "Package mirror", help: "An Ubuntu mirror for installing the computer's software, when Ubuntu's own archive can't be reached.", scope: "deployment", tier: "next-start", kind: { type: "text", placeholder: "https://mirrors.edge.kernel.org/ubuntu" }, fallback: "mirrors.edge.kernel.org" },
   { env: "BOT_BROWSER_PROXY", area: "Team computer", label: "Browser proxy", help: "The browser's traffic goes through this proxy, from its next start.", scope: "deployment", tier: "next-start", kind: { type: "text", placeholder: "http://proxy.example:8080" }, fallback: "None", sensitive: true },
@@ -144,8 +146,8 @@ export const SETTINGS: readonly SettingDef[] = [
   { env: "BOT_EMAIL_WEBHOOK_TIMEOUT_MS", area: "Email", label: "Webhook timeout", help: "How long to wait for the sender to answer.", scope: "deployment", tier: "live", kind: { type: "number", min: 1000, max: 120_000, integer: true, unit: "ms" }, fallback: "30,000 ms" },
 
   // ─── Background work ─────────────────────────────────────────────────────
-  { env: "BOT_WORKER", area: "Background work", label: "Background worker", help: "Does the watchdog's work every few seconds, so nothing waits for a console. Turned on for the deployment with BOT_WORKER=on; here it can be paused.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "On", where: "worker" },
-  { env: "BOT_WORKER_EVERY_SECONDS", area: "Background work", label: "Worker runs every", help: "Each pass is about 3 Blob operations.", scope: "deployment", tier: "live", kind: { type: "number", min: 10, max: 3600, integer: true, unit: "seconds" }, fallback: "30 seconds", where: "worker" },
+  { env: "BOT_WORKER", area: "Background work", label: "Background worker", help: "Does the watchdog's work every few seconds, so nothing waits for a console. On Vercel it is turned on with BOT_WORKER=on; a standalone server's npm start runs it unless BOT_WORKER=off. Here it can be paused.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "On", where: "worker" },
+  { env: "BOT_WORKER_EVERY_SECONDS", area: "Background work", label: "Worker runs every", help: "Each pass is about 3 store operations (Blob operations on Vercel).", scope: "deployment", tier: "live", kind: { type: "number", min: 10, max: 3600, integer: true, unit: "seconds" }, fallback: "30 seconds", where: "worker" },
   { env: "BOT_TICK_BATCH", area: "Background work", label: "Jobs started per pass", help: "How many due jobs the watchdog starts at once.", scope: "deployment", tier: "live", kind: { type: "number", min: 1, max: 100, integer: true }, fallback: "10" },
 
   // ─── Team ────────────────────────────────────────────────────────────────
@@ -155,8 +157,8 @@ export const SETTINGS: readonly SettingDef[] = [
   { env: "BOT_ACTIVITY_RETAIN", area: "Team", label: "Activity kept", help: "How many feed entries each workspace keeps.", scope: "deployment", tier: "live", kind: { type: "number", min: 50, max: 10_000, integer: true, unit: "entries" }, fallback: "500" },
 
   // ─── Data controls ───────────────────────────────────────────────────────
-  { env: "BOT_ZDR", area: "Data controls", label: "Zero Data Retention", help: "Only AI Gateway providers that keep nothing serve calls (Pro and Enterprise). Free models offer none.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "Off" },
-  { env: "BOT_INFERENCE_REGION", area: "Data controls", label: "Keep inference in", help: "Gateway fails a call it can't serve there rather than run it elsewhere.", scope: "deployment", tier: "live", kind: { type: "choice", options: [{ value: "us", label: "United States" }, { value: "eu", label: "Europe" }] }, fallback: "Anywhere" },
+  { env: "BOT_ZDR", area: "Data controls", label: "Zero Data Retention", help: "Only AI Gateway providers that keep nothing serve calls (Pro and Enterprise). Free models offer none.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "Off", where: "gateway" },
+  { env: "BOT_INFERENCE_REGION", area: "Data controls", label: "Keep inference in", help: "Gateway fails a call it can't serve there rather than run it elsewhere.", scope: "deployment", tier: "live", kind: { type: "choice", options: [{ value: "us", label: "United States" }, { value: "eu", label: "Europe" }] }, fallback: "Anywhere", where: "gateway" },
   { env: "BOT_EXPORT", area: "Data controls", label: "Export from the console", help: "Lets the owner download the workspace as an export file.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "Off" },
 
   // ─── Engines ─────────────────────────────────────────────────────────────

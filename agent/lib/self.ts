@@ -36,6 +36,9 @@ async function origin(): Promise<string | null> {
 
 export async function internalSecret(): Promise<string> {
   if (secret !== null) return secret;
+  // A standalone server's start script makes one for each start and calls the server with it (scripts/start.mjs).
+  const given = process.env.BOT_INTERNAL_SECRET?.trim();
+  if (given !== undefined && given.length >= 32) return (secret = given);
   const stored = await readDoc<{ secret: string }>(SECRET_KEY);
   if (stored !== null) return (secret = stored.value.secret);
   const fresh = randomBytes(32).toString("base64url");
