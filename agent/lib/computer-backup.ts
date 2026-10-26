@@ -133,7 +133,7 @@ async function architecture(computer: Computer): Promise<string | null> {
 }
 
 let verifiedAt = 0;
-let restoring: Promise<void> | null = null;
+let restoring: Promise<boolean> | null = null;
 let lastCheckpointAt = 0;
 let checkpointing: Promise<void> | null = null;
 let lastFailureNoticeAt = 0;
@@ -156,14 +156,16 @@ export function restoresOnto(manifest: { readonly kind?: string }, kind: HandsKi
 
 /**
  * Restores the latest backup if this computer is a replacement. Best-effort:
- * a failed restore is reported in the feed and the job carries on.
+ * a failed restore is reported in the feed and the job carries on. False when
+ * the computer may still be missing its files, so nothing may be backed up over
+ * the latest backup.
  */
-export async function ensureComputerRestored(ctx: ToolContext): Promise<void> {
-  if (Date.now() - verifiedAt < VERIFIED_FOR_MS) return;
+export async function ensureComputerRestored(ctx: ToolContext): Promise<boolean> {
+  if (Date.now() - verifiedAt < VERIFIED_FOR_MS) return true;
   restoring ??= restoreIfReplaced(ctx).finally(() => {
     restoring = null;
   });
-  await restoring;
+  return restoring;
 }
 
 /**
@@ -189,7 +191,7 @@ async function currentGeneration(computer: Computer): Promise<string | null> {
   return value === "" ? null : value;
 }
 
-async function restoreIfReplaced(ctx: ToolContext): Promise<void> {
+async function restoreIfReplaced(ctx: ToolContext): Promise<boolean> {
   let drive: DriveBinding | null = null;
   if (driveWanted()) {
     try {
@@ -199,12 +201,14 @@ async function restoreIfReplaced(ctx: ToolContext): Promise<void> {
     }
     if (drive !== null && !drive.fresh) {
       verifiedAt = Date.now();
-      return;
+      return true;
     }
   }
-  if ((await restoreFromBackup(ctx)) && drive?.fresh === true) {
+  if (!(await restoreFromBackup(ctx))) return false;
+  if (drive?.fresh === true) {
     await claimDrive(sandboxIo(await ctx.getSandbox(), ctx.abortSignal)).catch((error: unknown) => noteFailure(ctx, `Could not mark the computer's drive: ${message(error)}`));
   }
+  return true;
 }
 
 /** Restores the latest backup onto a replacement machine. False when that failed (reported in the feed). */
@@ -268,8 +272,11 @@ async function checkpoint(ctx: ToolContext, minIntervalMs: number): Promise<void
       lastCheckpointAt = Date.parse(previous.at);
       return;
     }
-    // Never archive a replacement machine before its files are back.
-    await ensureComputerRestored(ctx);
+    // Never archive a replacement machine before its files are back: the new
+    // archive would replace the latest backup, and the old one is deleted below.
+    if (!(await ensureComputerRestored(ctx))) {
+      throw new Error("its files have not been restored from the latest backup yet, so that backup was kept");
+    }
 
     const computer = await ctx.getSandbox();
     // Browser profiles are not archived, so save the team's sign-ins into the
