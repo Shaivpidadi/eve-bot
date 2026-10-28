@@ -440,5 +440,11 @@ bot per deployment: a laptop and a deployment sharing one bot take it from each 
 the store and never shown again.
 
 The Telegram chat is its own conversation with HQ, separate from HQ's thread in the console; jobs, the board, and the
-feed are the same in both. Alerts follow the choices and quiet hours of whoever connected the bot (Settings →
-Notifications), and carry a link to the console when it is reachable from the phone.
+feed are the same in both. Work started from the chat reports back to it: a scheduled job or routine wakes HQ in the
+chat when it is due, its sign-off arrives there as buttons, and a Bot's answer to something HQ asked from the chat
+comes back to the chat. While no chat is paired, that work goes to HQ's thread in the console instead.
+`BOT_STANDUP_ROOM=telegram` (Settings → Team) posts the daily standup there too.
+
+Alerts follow the choices and quiet hours of whoever connected the bot (Settings → Notifications), and carry a link
+to the console when it is reachable from the phone. What the chat already shows (its own approvals and jobs) is not
+sent again; a Bot that needs you to take over its browser is, since that is done from the console.
