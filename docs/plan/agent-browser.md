@@ -39,17 +39,18 @@ What 0.40 (27 Oct) adds, and what we take from it. Checked by hand against a loc
 - `[done]` A batch whose command failed still gives the others' results (the CLI exits 1).
 - **Done when:** unit tests cover reading a batch answer, a failed step in it, and output that is not a batch.
 
-### A3. Page tools (WebMCP) `[to-do]`
-- `[to-do]` Chrome starts with WebMCP on (`CHROME_FLAGS` in `computer/script.ts`); a browser started before
+### A3. Page tools (WebMCP) `[done]`
+- `[done]` Chrome starts with WebMCP on (`CHROME_FLAGS` in `computer/script.ts`); a browser started before
   picks it up when it next starts, and the tool says so meanwhile.
-- `[to-do]` `page_tools`: the tools the page offers (name, description, frame), or one tool's input schema.
-- `[to-do]` `page_tool`: call one. Through the same gate as a click: a tool whose name or description reads
+- `[done]` `page_tools`: the tools the page offers (name, description, frame), or one tool's input schema.
+- `[done]` `page_tool`: call one. Through the same gate as a click: a tool whose name or description reads
   like send, pay, delete or publish, or that calls itself destructive, waits for a person (`page_confirm`);
   any other runs with the network guard on, and becomes a proposal if it tries to send anything but a read.
   The page's own `readOnlyHint` never lets anything through.
-- `[to-do]` `page_confirm` carries out an approved tool call only if the page is the same and the tool still
+- `[done]` `page_confirm` carries out an approved tool call only if the page is the same and the tool still
   says the same thing (name, description and schema).
 - **Done when:** unit tests cover the classification, the proposal's description, and the drift check.
+  Done: `tests/agent-browser.test.ts` and the fake shop in `tests/browser-gate.test.ts`.
 
 ### A4. Recording a job's browser `[to-do]`
 - `[to-do]` Setting `BOT_BROWSER_RECORDING` (off by default, Settings → Browser): a job's browser work is

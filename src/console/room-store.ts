@@ -120,6 +120,8 @@ const TOOL_WORDS: Readonly<Record<string, string>> = {
   browse: "Opening a page",
   page_click: "Clicking",
   page_fill: "Typing",
+  page_tools: "Looking for page tools",
+  page_tool: "Using a page tool",
   task_update: "Checking in",
 };
 

@@ -295,7 +295,7 @@ WIDTH=__WIDTH__
 HEIGHT=__HEIGHT__
 PACKAGES="tigervnc-standalone-server websockify xdotool x11-utils x11-xserver-utils xauth iptables nftables fonts-noto-core fonts-noto-color-emoji fonts-liberation ca-certificates curl openbox tint2 pcmanfm xfce4-terminal dbus-x11"
 DESK="__DESKTOP__"
-CHROME_FLAGS="--remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --password-store=basic --disable-dev-shm-usage --window-position=0,0 --start-maximized --restore-last-session --hide-crash-restore-bubble --noerrdialogs --test-type --disable-features=Translate,MediaRouter __EXTRA_CHROME_FLAGS__"
+CHROME_FLAGS="--remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --password-store=basic --disable-dev-shm-usage --window-position=0,0 --start-maximized --restore-last-session --hide-crash-restore-bubble --noerrdialogs --test-type --disable-features=Translate,MediaRouter --enable-features=WebMCPTesting,DevToolsWebMCPSupport __EXTRA_CHROME_FLAGS__"
 
 # Chrome keeps its renderers in their own user namespaces. An ordinary Docker
 # container forbids creating those, so Chrome must run without its sandbox

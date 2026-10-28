@@ -5,12 +5,13 @@ import { z } from "zod";
 import { operator } from "../../../lib/session";
 
 import { carryOut, loadProposal, sameWords } from "../lib/gate";
+import { toolReturned, UNTRUSTED_TOOLS } from "../lib/page-tools";
 
 /**
  * The only way a consequential browser action happens: a person approves it.
  *
- * `page_click`, `page_fill` with submit, `page_set`, `page_upload` and
- * `page_pilot` never send, pay, publish or delete on their own. When the gate
+ * `page_click`, `page_fill` with submit, `page_set`, `page_upload`,
+ * `page_tool` and `page_pilot` never send, pay, publish or delete on their own. When the gate
  * in `lib/gate.ts` flags an action they stop and hand back a proposal; this
  * tool asks for it. The approval is eve's, required on every call, and it is
  * bound to that one stored proposal: the request shows the person the
@@ -70,11 +71,13 @@ export default defineTool({
     if (!done.result.ok) {
       return { done: false as const, proposal, reason: "failed", error: done.result.error, detail: done.result.detail };
     }
-    const { ok: _ok, ...seen } = done.result;
+    const { ok: _ok, returned, ...seen } = done.result;
     return {
       done: true as const,
       proposal,
       action: done.proposal.description,
+      // A page tool's call answers with the tool's own result.
+      ...(done.proposal.kind === "tool" ? { ...toolReturned(returned ?? null), untrusted: UNTRUSTED_TOOLS } : {}),
       ...seen,
       verify: "Confirm on the page that it did what was intended, and keep a screenshot of the confirmation.",
     };

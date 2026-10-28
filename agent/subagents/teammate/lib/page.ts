@@ -2,7 +2,7 @@ import type { ToolContext } from "eve/tools";
 
 import type { Stopped } from "../../../lib/computer/netguard";
 
-import { browser, browserBatch, type BrowserResult, refreshScreen, textOf } from "./browser";
+import { browser, browserBatch, type BrowserResult, payload, refreshScreen, textOf } from "./browser";
 import { journalPage } from "./journal";
 import { treeIndex, type TreeFacts } from "./consequence";
 import { sessionState } from "./session-state";
@@ -370,6 +370,8 @@ export interface Acted {
   readonly stopped?: readonly Stopped[];
   /** With `guard`: the action ran, but what it sent could not be accounted for. */
   readonly unwatched?: string;
+  /** With `keep`: what the command itself answered, such as a page tool's result. */
+  readonly returned?: Record<string, unknown> | null;
 }
 
 export type ActFailed = { readonly ok: false; readonly error: string; readonly detail: string; readonly unwatched?: string };
@@ -379,13 +381,17 @@ export type ActFailed = { readonly ok: false; readonly error: string; readonly d
  * only when it changed: an action that changed nothing says so, which is the
  * signal a Bot needs to stop retrying the same click.
  */
-export async function act(ctx: ToolContext, args: readonly string[], options: { readonly guard?: boolean } = {}): Promise<Acted | ActFailed> {
+export async function act(ctx: ToolContext, args: readonly string[], options: { readonly guard?: boolean; readonly keep?: boolean } = {}): Promise<Acted | ActFailed> {
   const before = lastLook.get(ctx.session.id);
   const result = await browser(ctx, args, options);
   if (!result.ok) {
     return { ok: false, error: result.error ?? "The action failed.", detail: result.output, ...(result.unwatched === undefined ? {} : { unwatched: result.unwatched }) };
   }
-  const guard = { ...(result.stopped === undefined ? {} : { stopped: result.stopped }), ...(result.unwatched === undefined ? {} : { unwatched: result.unwatched }) };
+  const guard = {
+    ...(result.stopped === undefined ? {} : { stopped: result.stopped }),
+    ...(result.unwatched === undefined ? {} : { unwatched: result.unwatched }),
+    ...(options.keep === true ? { returned: payload(result) } : {}),
+  };
   await refreshScreen(ctx);
   const after = await look(ctx);
   if (!isLook(after)) return { ok: false, error: after.error, detail: after.detail };

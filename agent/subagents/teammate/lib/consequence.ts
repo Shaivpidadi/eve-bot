@@ -33,8 +33,10 @@ export type Verdict = "safe" | "consequential" | "unknown";
  * - submit: pressing Enter in a field, which submits whatever it belongs to.
  * - select / check / uncheck: setting a dropdown or a checkbox.
  * - upload: attaching files to a file input.
+ * - tool: calling a tool the page offers (WebMCP, see `page-tools.ts`), which
+ *   `classifyTool` there decides on, not `classifyAction`.
  */
-export type ActionKind = "click" | "fill" | "submit" | "select" | "check" | "uncheck" | "upload";
+export type ActionKind = "click" | "fill" | "submit" | "select" | "check" | "uncheck" | "upload" | "tool";
 
 /** The element as the accessibility tree describes it. */
 export interface TreeFacts {
@@ -161,7 +163,7 @@ const UI_LOCAL_LABEL = new RegExp(
 const ADDRESS_WORDS = wordList(COMMITTING);
 
 /** Paths where a plain-looking button is likely to spend. */
-const MONEY_PATH = /(^|[/._-])(checkout|payment|payments|pay|cart|basket|purchase|transfer|wire|donate|subscribe|upgrade)([/._-]|$)/i;
+export const MONEY_PATH = /(^|[/._-])(checkout|payment|payments|pay|cart|basket|purchase|transfer|wire|donate|subscribe|upgrade)([/._-]|$)/i;
 
 /** Roles a click on moves around or reveals, rather than commits. */
 const NAVIGATING_ROLES = new Set([

@@ -19,6 +19,18 @@ import {
   type TreeFacts,
 } from "./consequence";
 import { act, type ActFailed, type Acted, refsSeen } from "./page";
+import {
+  classifyTool,
+  invokeArgs,
+  listTools,
+  PAGE_TOOLS_OFF,
+  pageUrl,
+  pickTool,
+  shownParams,
+  toolPrint,
+  UNTRUSTED_TOOLS,
+  type PageTool,
+} from "./page-tools";
 import type { Target } from "./target";
 
 /**
@@ -79,6 +91,8 @@ export interface Proposal {
   readonly reasons: readonly string[];
   /** What the person approves, word for word. */
   readonly description: string;
+  /** For a page tool's call: which tool, in which frame, saying what (`toolPrint`) when it was proposed. */
+  readonly tool?: { readonly name: string; readonly frame: string; readonly print: string };
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly usedAt?: string;
@@ -372,8 +386,8 @@ export async function loadProposal(workspaceId: string, sessionId: string, id: s
 }
 
 export interface GateRequest {
-  /** Never "fill": typing alone changes nothing outside the page, and is not gated. */
-  readonly kind: Exclude<ActionKind, "fill">;
+  /** Never "fill": typing alone changes nothing outside the page, and is not gated. A page tool goes through `callPageTool`. */
+  readonly kind: Exclude<ActionKind, "fill" | "tool">;
   readonly target: Target;
   /** The command that acts, given the selector the element was pinned to. */
   readonly action: (selector: string) => string[];
@@ -674,6 +688,8 @@ export async function carryOut(ctx: ToolContext, id: string, approvedText: strin
     return { ok: false, reason: "expired", message: "That approval is too old to rely on. Read the page and propose the action again." };
   }
 
+  if (stored.kind === "tool") return carryOutTool(ctx, stored);
+
   const now = await inspect(ctx, { target: stored.selector });
   const drift: string[] = [];
   if (!samePage(stored.url, now.url)) drift.push(`the browser is on ${now.url || "another page"}, not ${stored.url}`);
@@ -700,4 +716,111 @@ export async function carryOut(ctx: ToolContext, id: string, approvedText: strin
     if (!prepared.ok) return { ok: false, reason: "failed", message: prepared.error ?? "The browser could not get ready for the action." };
   }
   return { ok: true, proposal: stored, result: await act(ctx, stored.action) };
+}
+
+/** The one line a person approves for a page tool's call. */
+export function describeToolCall(tool: Pick<PageTool, "name">, params: Readonly<Record<string, unknown>>, url: string, reasons: readonly string[]): string {
+  const why = reasons.length === 0 ? "" : ` (flagged: ${reasons.join("; ")})`;
+  return `Use the page's tool "${clip(tool.name, 80)}" with ${shownParams(params)} on ${address(url)}${why}`;
+}
+
+async function proposeTool(
+  ctx: ToolContext,
+  tool: PageTool,
+  params: Readonly<Record<string, unknown>>,
+  url: string,
+  classification: Pick<Classification, "verdict" | "reasons">,
+): Promise<Proposal> {
+  const { workspaceId } = operator(ctx);
+  const now = Date.now();
+  const proposal: Proposal = {
+    id: newId("act"),
+    workspaceId,
+    sessionId: ctx.session.id,
+    kind: "tool",
+    url,
+    selector: tool.name,
+    prepare: [],
+    action: invokeArgs(tool, params),
+    element: { tree: null, dom: null },
+    verdict: classification.verdict,
+    reasons: classification.reasons,
+    description: describeToolCall(tool, params, url, classification.reasons),
+    tool: { name: tool.name, frame: tool.frame, print: toolPrint(tool) },
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + PROPOSAL_TTL_MS).toISOString(),
+  };
+  await writeDoc(proposalKey(workspaceId, ctx.session.id, proposal.id), proposal);
+  return proposal;
+}
+
+const TOOL_STOPPED_NOTE =
+  "The page's tool ran, but what it tried to send was stopped before it left the browser, so nothing was sent; the page may show an error for it. Its name did not show it, so a person approves it first. If the brief calls for it, call page_confirm with proposal and action exactly as given here, and the tool is called again with nothing held back; otherwise take another route.";
+
+export type ToolCalled = { readonly ok: true; readonly acted: Acted } | { readonly ok: false; readonly result: Record<string, unknown> };
+
+/**
+ * Calls one tool the page offers, through the gate the way a click goes: a
+ * tool whose name reads like send, pay, delete or save, or that calls itself
+ * destructive, is proposed for a person; any other runs with the network guard
+ * on, and becomes a proposal if it tries to send anything but a read.
+ */
+export async function callPageTool(ctx: ToolContext, name: string, params: Readonly<Record<string, unknown>>, frame?: string): Promise<ToolCalled> {
+  const listed = await listTools(ctx);
+  if (!listed.ok) return { ok: false, result: { needsApproval: false, error: listed.error } };
+  const picked = pickTool(listed.tools, name, frame);
+  if ("problem" in picked) {
+    return { ok: false, result: { needsApproval: false, error: `This was not done: ${picked.problem}.`, hint: "Call page_tools to see what this page offers now." } };
+  }
+  const { tool } = picked;
+  const url = await pageUrl(ctx);
+  const classification = classifyTool(tool, url);
+  if (classification.verdict !== "safe") {
+    return { ok: false, result: { ...proposalResult(await proposeTool(ctx, tool, params, url, classification)), untrusted: UNTRUSTED_TOOLS } };
+  }
+
+  const run = await guardSideEffect(ctx);
+  if (!run.ok) return { ok: false, result: { needsApproval: false, reason: run.reason, error: run.message } };
+  const acted = await act(ctx, invokeArgs(tool, params), { guard: true, keep: true });
+  if (acted.ok && acted.stopped !== undefined && acted.stopped.length > 0) {
+    const reasons = acted.stopped.slice(0, 3).map((sent) => `it sent ${sent.method} ${clip(sent.url, 160)}, which the guard stopped before it left the browser`);
+    const proposal = await proposeTool(ctx, tool, params, url, { verdict: "consequential", reasons });
+    return { ok: false, result: { ...proposalResult(proposal), note: TOOL_STOPPED_NOTE, untrusted: UNTRUSTED_TOOLS } };
+  }
+  if (!acted.ok && acted.unwatched !== undefined) {
+    const proposal = await proposeTool(ctx, tool, params, url, { verdict: "consequential", reasons: [`what it sends could not be watched (${acted.unwatched})`] });
+    return { ok: false, result: { ...proposalResult(proposal), note: UNWATCHED_NOTE, untrusted: UNTRUSTED_TOOLS } };
+  }
+  if (!acted.ok) {
+    const off = /WebMCP/.test(`${acted.error} ${acted.detail}`) && /does not expose|unavailable/i.test(acted.detail);
+    return { ok: false, result: { needsApproval: false, error: off ? PAGE_TOOLS_OFF : acted.error, detail: acted.detail } };
+  }
+  return { ok: true, acted };
+}
+
+/**
+ * Carries out an approved page tool's call, if the page is the same and the
+ * tool is still there saying what it said: a page that changed its tool's
+ * description or schema since gets a fresh request, never the old approval.
+ */
+async function carryOutTool(ctx: ToolContext, stored: Proposal): Promise<Confirmed> {
+  const drift: string[] = [];
+  const url = await pageUrl(ctx);
+  if (!samePage(stored.url, url)) drift.push(`the browser is on ${url || "another page"}, not ${stored.url}`);
+  const listed = await listTools(ctx);
+  if (!listed.ok) return { ok: false, reason: "failed", message: listed.error };
+  const picked = stored.tool === undefined ? { problem: "the proposal names no tool" } : pickTool(listed.tools, stored.tool.name, stored.tool.frame);
+  if ("problem" in picked) drift.push(picked.problem);
+  else if (toolPrint(picked.tool) !== stored.tool?.print) drift.push("the page's tool now describes itself differently");
+  if (drift.length > 0) {
+    return {
+      ok: false,
+      reason: "changed",
+      drift,
+      message: "Nothing was done: the page no longer matches what was approved. Call page_tools, and if the call is still right, make it again so a person can approve it as it is now.",
+    };
+  }
+  const run = await guardSideEffect(ctx);
+  if (!run.ok) return { ok: false, reason: run.reason, message: run.message };
+  return { ok: true, proposal: stored, result: await act(ctx, stored.action, { keep: true }) };
 }
