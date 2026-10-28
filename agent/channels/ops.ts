@@ -33,6 +33,8 @@ import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
 import { isProjectWorker, workerEverySeconds, workerTick } from "../lib/worker";
+import { connectFromEnv, connectOptions, connectTelegram, disconnectTelegram, readTelegramLink, repairTelegram, sendToPairedChat, statusOf, TelegramError } from "../lib/telegram";
+import { ensureTelegramPolling } from "../lib/telegram-poll";
 import { gatewayCatalog } from "../lib/gateway-models";
 import { customEndpoint } from "../lib/models";
 import { dockerReady, modelsReady } from "../lib/setup-probe";
@@ -439,6 +441,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       waitUntil(deliverNotes(sendInto(from, attachSession), { workspaceId: gate.access.workspaceId }).catch(() => 0));
       // Pushes waiting for a retry go out with the console's poll too, so they need no background worker.
       waitUntil(flushPushQueue().catch(() => 0));
+      ensureTelegramPolling();
       const board = await buildBoard(gate.access.workspaceId, {
         ...(after !== null && !Number.isNaN(Date.parse(after)) ? { after } : {}),
       });
@@ -509,6 +512,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       // The daemon takes its pace from the answer, so Settings change it without a redeploy.
       const everySeconds = workerEverySeconds(await effectiveEnv());
       if (await workerPaused()) return json({ ok: true, paused: true, due: 0, dispatched: 0, notes: 0, everySeconds });
+      // A token from the environment connects on the first pass; a laptop's bot is polled from here on.
+      await connectFromEnv().catch(() => null);
+      ensureTelegramPolling();
       const outcome = await workerTick(sendInto(from, attachSession));
       if (outcome.dispatch.due > 0 || outcome.notes > 0) {
         console.log(`[bot] worker: ${outcome.dispatch.due} due, ${outcome.dispatch.dispatched} dispatched, ${outcome.notes} notes, ${outcome.dispatch.ms}ms`);
@@ -1183,6 +1189,63 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         tell: tellHarnessSession,
       });
       return decision.ok ? json(decision) : json({ error: decision.error }, decision.status);
+    }),
+
+    /**
+     * Telegram (see lib/telegram.ts): whether a bot is connected, its pairing
+     * link, and the chat it talks to. Owner only: the bot speaks for HQ.
+     */
+    GET("/bot/v1/telegram", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!gate.access.owner) return json({ error: "Only this deployment's owner can set up Telegram." }, 403);
+      const link = await readTelegramLink();
+      return json(link === null ? { connected: false } : statusOf(link));
+    }),
+
+    /** Connects a bot from its @BotFather token: a webhook on a public address, polling anywhere else. */
+    POST("/bot/v1/telegram", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!gate.access.owner) return json({ error: "Only this deployment's owner can set up Telegram." }, 403);
+      await noteOrigin(request);
+      const body = await readJson(request);
+      if (typeof body?.token !== "string") return json({ error: "Paste the token @BotFather gave you." }, 400);
+      try {
+        const status = await connectTelegram({ workspaceId: gate.access.workspaceId, token: body.token, by: gate.access.user, ...(await connectOptions()) });
+        if (status.mode === "polling") ensureTelegramPolling();
+        await record({ workspaceId: gate.access.workspaceId, kind: "bot.updated", botId: null, text: `${gate.access.user} connected Telegram (@${status.username}).` }).catch(() => undefined);
+        return json(status);
+      } catch (error) {
+        return json({ error: error instanceof TelegramError ? error.message : "Telegram could not be set up." }, 400);
+      }
+    }),
+
+    /** Lets another chat pair: the paired one is let go. */
+    POST("/bot/v1/telegram/pair", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!gate.access.owner) return json({ error: "Only this deployment's owner can set up Telegram." }, 403);
+      const status = await repairTelegram();
+      return status === null ? json({ error: "No Telegram bot is connected." }, 404) : json(status);
+    }),
+
+    /** Sends the paired chat a hello, to show it works. */
+    POST("/bot/v1/telegram/test", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!gate.access.owner) return json({ error: "Only this deployment's owner can set up Telegram." }, 403);
+      const sent = await sendToPairedChat("Hello from HQ. Messages here reach your chief of staff.");
+      return sent ? json({ ok: true }) : json({ error: "Nothing was sent: pair a chat first, or check the server's log." }, 400);
+    }),
+
+    DELETE("/bot/v1/telegram", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!gate.access.owner) return json({ error: "Only this deployment's owner can set up Telegram." }, 403);
+      await disconnectTelegram();
+      await record({ workspaceId: gate.access.workspaceId, kind: "bot.updated", botId: null, text: `${gate.access.user} disconnected Telegram.` }).catch(() => undefined);
+      return json({ connected: false });
     }),
 
     /** Push notifications on this person's devices (see lib/push.ts): the key a browser subscribes with, and the devices on. */

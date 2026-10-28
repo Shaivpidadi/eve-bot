@@ -39,7 +39,7 @@ export async function noteOrigin(request: Request): Promise<void> {
 }
 
 /** The address this server is reached by (Settings, the environment, or the console's last request), or null before any. */
-async function origin(): Promise<string | null> {
+export async function selfOrigin(): Promise<string | null> {
   // Settings (Server) over the environment, where npm start puts its own address when none is set.
   const { liveEnv } = await import("./settings/store");
   const pinned = liveEnv().BOT_PUBLIC_URL?.trim();
@@ -88,7 +88,7 @@ export async function isInternal(request: Request): Promise<boolean> {
  * durable, and the console's poll and the watchdog deliver it otherwise.
  */
 export async function flushOutboxSoon(): Promise<boolean> {
-  const base = await origin();
+  const base = await selfOrigin();
   if (base === null) return false;
   const headers: Record<string, string> = { [INTERNAL_HEADER]: await internalSecret() };
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();

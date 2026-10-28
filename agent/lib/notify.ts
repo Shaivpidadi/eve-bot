@@ -121,8 +121,9 @@ function repeated(workspaceId: string, tag: string, now: number): boolean {
  */
 export async function deliver(workspaceId: string, alert: Alert): Promise<number> {
   const [{ holdPush, sendPush, subscriptions }, { readPrefs }] = await Promise.all([import("./push"), import("./push-prefs")]);
+  const telegram = await toTelegram(workspaceId, alert).catch(() => 0);
   const people = [...new Set((await subscriptions(workspaceId)).map((subscription) => subscription.person))];
-  if (people.length === 0) return 0;
+  if (people.length === 0) return telegram;
   const [{ effectiveEnv }, { defaultTimezone }] = await Promise.all([import("./settings/store"), import("./schedule")]);
   const timezone = defaultTimezone(await effectiveEnv(workspaceId).catch(() => process.env));
   let reached = 0;
@@ -136,7 +137,28 @@ export async function deliver(workspaceId: string, alert: Alert): Promise<number
     else await sendPush(workspaceId, message, { person });
     reached += 1;
   }
-  return reached;
+  return reached + telegram;
+}
+
+/**
+ * The same alert to the paired Telegram chat (see lib/telegram.ts), as the
+ * person who connected it chose for their devices; outside quiet hours unless
+ * it needs them, and dropped rather than held. A link to the console when it
+ * is reachable from the phone.
+ */
+async function toTelegram(workspaceId: string, alert: Alert): Promise<number> {
+  const { readTelegramLink, sendToPairedChat, telegramOrigin, modeFor } = await import("./telegram");
+  const link = await readTelegramLink();
+  if (link === null || link.chat === null || link.workspaceId !== workspaceId) return 0;
+  const [{ readPrefs }, { effectiveEnv }, { defaultTimezone }] = await Promise.all([import("./push-prefs"), import("./settings/store"), import("./schedule")]);
+  const prefs = await readPrefs(workspaceId, link.by);
+  const wanted = alert.kind === "needs-you" ? prefs.needsYou : alert.kind === "done" ? prefs.done : prefs.fromBots;
+  if (!wanted) return 0;
+  const timezone = defaultTimezone(await effectiveEnv(workspaceId).catch(() => process.env));
+  if (!alert.urgent && quietUntil(new Date(), timezone, prefs.quietFrom, prefs.quietTo) !== null) return 0;
+  const origin = await telegramOrigin().catch(() => null);
+  const open = origin !== null && modeFor(origin) === "webhook" ? `\n\n${origin}${alert.url}` : "";
+  return (await sendToPairedChat(`${alert.title}\n${alert.body}${open}`)) ? 1 : 0;
 }
 
 /**
