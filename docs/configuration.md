@@ -433,7 +433,9 @@ How messages arrive is chosen for you:
   Vercel Authentication for everything gets the project's automation bypass in the webhook's address, when the
   project has one (`VERCEL_AUTOMATION_BYPASS_SECRET`).
 - **On a laptop or a home server:** the server asks Telegram for new messages itself, so there is no tunnel or public
-  address to set up. It answers while the server runs.
+  address to set up. It answers while the server runs. `npm start` starts asking within a minute of booting (from
+  the background worker, or the start sweep when the worker is off); `npm run dev` starts when the console opens.
+  A standalone server with an `https` address (`BOT_PUBLIC_URL`) gets a webhook instead, like Vercel.
 
 Connecting again after the server's address changes (a custom domain, `BOT_PUBLIC_URL`) moves the webhook. Use one
 bot per deployment: a laptop and a deployment sharing one bot take it from each other. The token is kept sealed in

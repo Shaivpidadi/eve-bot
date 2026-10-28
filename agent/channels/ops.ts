@@ -1618,6 +1618,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     POST("/bot/v1/jobs/sweep", async (request, { attachSession, from, to }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
+      // npm start sweeps a minute after boot, so a laptop's Telegram bot is polled again even with the worker off.
+      await connectFromEnv().catch(() => null);
+      ensureTelegramPolling();
       if (Date.now() - lastSweepAt < SWEEP_EVERY_MS) return json({ swept: false, reason: "swept recently" });
       lastSweepAt = Date.now();
       const outcome = await dispatchDue((job, message) => sendInto(from, attachSession, to)(job.workspaceId, job.room, message));
