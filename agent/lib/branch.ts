@@ -1,13 +1,10 @@
-import { transcriptReducer } from "eve/client";
+import { transcriptOf } from "eve/client";
+import type { SessionStreamEvent } from "eve/client";
+
+import { textOfParts, textOfValue, threadKey } from "./events";
 
 /** The newest messages a branched session starts from. */
 export const BRANCH_MESSAGES = 40;
-
-interface StreamEvent {
-  readonly type?: string;
-  readonly meta?: { readonly id?: string; readonly at?: string };
-  readonly data?: { readonly message?: unknown };
-}
 
 /** The point a person went back to, and the conversation up to and including it. */
 export interface BranchPoint {
@@ -16,52 +13,55 @@ export interface BranchPoint {
   readonly messages: readonly { readonly role: string; readonly text: string }[];
 }
 
+interface Event {
+  readonly type?: string;
+  readonly data?: { readonly parts?: readonly { readonly kind: string; readonly text?: string }[]; readonly kind?: string; readonly value?: unknown };
+  readonly meta?: { readonly position?: { readonly line: number; readonly index: number }; readonly at?: string };
+}
+
+/** What a person said, or a finished text the Bot wrote: the only things a branch can go back to. */
+function said(event: Event): { readonly role: "user" | "assistant"; readonly text: string } | null {
+  if (event.type === "delivery.consumed") return { role: "user", text: textOfParts(event.data?.parts as never) };
+  if (event.type === "content.completed" && event.data?.kind === "text") return { role: "assistant", text: textOfValue(event.data.value) };
+  return null;
+}
+
 /**
  * Reads a thread's sessions in order, oldest first, and folds its conversation
- * up to and including the message whose event id is `eventId`, with eve's own
- * transcript reducer (user text and completed assistant text). Only a message,
- * said by the person or by the Bot, can be a branch point. Null when the thread
- * has no such message.
+ * up to and including the event whose thread key is `eventId` (see
+ * `threadKey`; the room's stream route numbers events the same way), with
+ * eve's own transcript (user text and completed assistant text). Only a
+ * message, said by the person or by the Bot, can be a branch point. Null when
+ * the thread has no such message.
  */
 export async function foldUntil(
   sessionIds: readonly string[],
   read: (sessionId: string) => AsyncIterable<unknown>,
   eventId: string,
 ): Promise<BranchPoint | null> {
-  // One reducer per session: eve numbers a session's messages from zero, so a
-  // single reducer across sessions would let a later one overwrite an earlier.
+  // Each session's transcript is its own: a later one's must not overwrite an earlier one's.
   const before: { role: string; text: string }[] = [];
+  let offset = 0;
   for (const sessionId of sessionIds) {
-    const reducer = transcriptReducer({ maxMessages: BRANCH_MESSAGES });
-    let transcript = reducer.initial();
+    const events: SessionStreamEvent[] = [];
+    let lines = 0;
     for await (const value of read(sessionId)) {
-      transcript = reducer.reduce(transcript, value as never);
-      const event = value as StreamEvent;
-      if (event.meta?.id !== eventId) continue;
-      if (event.type !== "message.received" && event.type !== "message.completed") return null;
-      const text = typeof event.data?.message === "string" ? event.data.message : "";
-      const role = event.type === "message.received" ? "user" : "assistant";
-      const messages = [...before, ...transcript.messages.map((message) => ({ role: message.role as string, text: message.text }))];
-      // The reducer may settle a message only when its turn does; the point itself always belongs.
+      const event = value as Event;
+      events.push(value as SessionStreamEvent);
+      const position = event.meta?.position;
+      if (position === undefined) continue;
+      lines = Math.max(lines, position.line + 1);
+      if (threadKey(offset, position) !== eventId) continue;
+      const point = said(event);
+      if (point === null) return null;
+      const messages = [...before, ...transcriptOf(events, { maxMessages: BRANCH_MESSAGES }).messages.map((message) => ({ role: message.role as string, text: message.text }))];
+      // The transcript keeps a message only once its line is whole; the point itself always belongs.
       const last = messages.at(-1);
-      if (text !== "" && (last === undefined || last.role !== role || last.text !== text)) messages.push({ role, text });
-      return { eventAt: event.meta.at ?? new Date().toISOString(), text, messages: messages.slice(-BRANCH_MESSAGES) };
+      if (point.text !== "" && (last === undefined || last.role !== point.role || last.text !== point.text)) messages.push({ role: point.role, text: point.text });
+      return { eventAt: event.meta?.at ?? new Date().toISOString(), text: point.text, messages: messages.slice(-BRANCH_MESSAGES) };
     }
-    before.push(...transcript.messages.map((message) => ({ role: message.role as string, text: message.text })));
+    before.push(...transcriptOf(events, { maxMessages: BRANCH_MESSAGES }).messages.map((message) => ({ role: message.role as string, text: message.text })));
+    offset += lines;
   }
   return null;
-}
-
-/** A ReadableStream as an async iterable that stops reading when the loop ends early. */
-export async function* eventsOf(stream: ReadableStream<unknown>): AsyncIterable<unknown> {
-  const reader = stream.getReader();
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      yield value;
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined);
-  }
 }

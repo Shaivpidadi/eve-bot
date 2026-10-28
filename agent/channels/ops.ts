@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 
 import { DELETE, GET, PATCH, POST, PUT, SessionStrandedError, defineChannel, type RouteHandlerArgs } from "eve/channels";
-import { parseInputResponses } from "eve/client";
+import { parseAnswers } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
 
 import { authenticate, hasSignedInCookie, sessionCookie, setStoredName, signedInCookie, tokensConfigured, type Access, type Gate, workspaceForToken } from "../lib/access";
@@ -45,7 +45,8 @@ import type { SettingDef } from "../lib/settings/registry";
 import { acceptTrigger, recentTriggers, TRIGGER_PATH, verifiedTrigger } from "../lib/triggers";
 import { sessionIsGone } from "../lib/gone";
 import { worldIsLocal } from "../lib/world";
-import { eventsOf, foldUntil } from "../lib/branch";
+import { foldUntil } from "../lib/branch";
+import { inThread } from "../lib/events";
 import { writeIntro } from "../lib/intro";
 import { templateById } from "../lib/templates";
 import { MAX_PROPOSED, proposeRoster } from "../lib/roster";
@@ -158,7 +159,7 @@ async function restartWedgedRoom(
   return generation;
 }
 
-type Sender = (address: string) => { send: (message: string, options: { auth: SessionAuthContext }) => Promise<{ id: string }> };
+type Sender = (address: string) => { send: (message: string, options: { auth: SessionAuthContext }) => Promise<{ readonly sessionId: string }> };
 type Attacher = (sessionId: string) => { cancel(options?: { turnId?: string }): Promise<unknown> };
 
 /**
@@ -173,13 +174,13 @@ async function sendToRoom(
   room: string,
   message: string,
   auth: SessionAuthContext,
-): Promise<{ readonly session: { id: string }; readonly moved: boolean }> {
+): Promise<{ readonly sessionId: string; readonly moved: boolean }> {
   try {
-    return { session: await from(await addressOf(workspaceId, room)).send(message, { auth }), moved: false };
+    return { sessionId: (await from(await addressOf(workspaceId, room)).send(message, { auth })).sessionId, moved: false };
   } catch (error) {
     if (!sessionIsGone(error)) throw error;
     await restartWedgedRoom(workspaceId, room, attachSession, "gone");
-    return { session: await from(await addressOf(workspaceId, room)).send(message, { auth }), moved: true };
+    return { sessionId: (await from(await addressOf(workspaceId, room)).send(message, { auth })).sessionId, moved: true };
   }
 }
 
@@ -361,26 +362,36 @@ async function resolveRoom(access: Access, raw: string | undefined): Promise<str
 }
 
 /**
- * How many events a session that is no longer the room's recorded, read once:
- * an earlier session's history does not change.
+ * The console's answers as eve's: it names a request by `requestId` (the
+ * interaction's id) and still says "cancel" for eve's old Deny.
  */
-const recordedLengths = new Map<string, number>();
-/** A session's recorded events, read once to the end. */
-async function* streamOf(session: { getEventStream(options: { startIndex?: number; follow?: boolean }): Promise<ReadableStream<unknown>> }): AsyncIterable<unknown> {
-  yield* eventsOf(await session.getEventStream({ startIndex: 0, follow: false }));
+function asAnswers(raw: unknown): unknown {
+  if (!Array.isArray(raw)) return raw;
+  return raw.map((entry: unknown) => {
+    if (!isRecord(entry)) return entry;
+    const { requestId, interactionId, optionId, ...rest } = entry;
+    return { ...rest, interactionId: interactionId ?? requestId, ...(optionId === undefined ? {} : { optionId: optionId === "cancel" ? "deny" : optionId }) };
+  });
 }
 
-async function recordedLength(session: { readonly id?: string; getEventStream(options: { startIndex?: number; follow?: boolean }): Promise<ReadableStream<unknown>> }): Promise<number> {
+/** How to read a session's events: eve 0.84's fixed session handle. */
+type SessionReadable = { readonly id?: string; stream(options?: { startIndex?: number; follow?: boolean; signal?: AbortSignal }): AsyncIterable<unknown> };
+
+/**
+ * How many lines a session that is no longer the room's recorded, read once:
+ * an earlier session's history does not change. The last event's line, plus
+ * one, the same way `foldUntil` counts it, so the thread's keys agree.
+ */
+const recordedLengths = new Map<string, number>();
+async function recordedLength(session: SessionReadable): Promise<number> {
   const id = session.id ?? "";
   const known = recordedLengths.get(id);
   if (known !== undefined) return known;
   let length = 0;
   try {
-    const reader = (await session.getEventStream({ startIndex: 0, follow: false })).getReader();
-    for (;;) {
-      const { done } = await reader.read();
-      if (done) break;
-      length += 1;
+    for await (const event of session.stream({ startIndex: -1, follow: false })) {
+      const line = (event as { meta?: { position?: { line?: number } } }).meta?.position?.line;
+      if (typeof line === "number") length = Math.max(length, line + 1);
     }
   } catch {
     // Unreadable: count it as empty rather than block the thread.
@@ -388,6 +399,9 @@ async function recordedLength(session: { readonly id?: string; getEventStream(op
   if (id !== "") recordedLengths.set(id, length);
   return length;
 }
+
+/** A session's recorded events, read once to the end. */
+const streamOf = (session: SessionReadable): AsyncIterable<unknown> => session.stream({ startIndex: 0, follow: false });
 
 /** The room's current session address: its generation changes each time it is started over. */
 const addressOf = async (workspaceId: string, room: string): Promise<string> =>
@@ -650,10 +664,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const { workspaceId } = gate.access;
       const recovered = isWedged(await getRoomState(workspaceId, room)) ? await restartWedgedRoom(workspaceId, room, attachSession) : false;
 
-      const { session, moved } = await sendToRoom(from, attachSession, workspaceId, room, message, principal(gate.access, room));
+      const { sessionId, moved } = await sendToRoom(from, attachSession, workspaceId, room, message, principal(gate.access, room));
       await noteSent(workspaceId, room).catch(() => undefined);
       waitUntil(deliverNotes(sendInto(from, attachSession, to), { workspaceId }).catch(() => 0));
-      return json({ room, sessionId: session.id, ...(recovered || moved ? { recovered: true } : {}) });
+      return json({ room, sessionId, ...(recovered || moved ? { recovered: true } : {}) });
     }),
 
     /**
@@ -700,9 +714,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const generation = await restartWedgedRoom(workspaceId, room, attachSession);
       let sessionId: string | null = null;
       if (message !== null) {
-        const session = await from(await addressOf(workspaceId, room)).send(message, { auth: principal(gate.access, room) });
+        const delivery = await from(await addressOf(workspaceId, room)).send(message, { auth: principal(gate.access, room) });
         await noteSent(workspaceId, room).catch(() => undefined);
-        sessionId = session.id;
+        sessionId = delivery.sessionId;
       }
       return json({ room, recovered: true, generation, sessionId, redelivered: message !== null });
     }),
@@ -722,7 +736,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (room instanceof Response) return room;
       const { workspaceId } = gate.access;
       const body = await readJson(request);
-      const eventId = typeof body?.eventId === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(body.eventId) ? body.eventId : null;
+      const eventId = typeof body?.eventId === "string" && /^e\d{1,9}_\d{1,6}$/.test(body.eventId) ? body.eventId : null;
       if (eventId === null) return json({ error: "eventId is required" }, 400);
 
       const state = await getRoomState(workspaceId, room);
@@ -745,9 +759,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * Answers a pending approval or question.
      *
      * A plain message does not resolve one: it starts a new turn while the
-     * request stays pending. Structured responses are keyed by the `requestId`
-     * carried on the `input.requested` stream event, which is what lets a bot
-     * that asked hours ago pick up exactly where it parked.
+     * request stays pending. Structured responses are keyed by the
+     * `interactionId` of the `interaction.opened` fact (the console calls it
+     * `requestId`), which is what lets a bot that asked hours ago pick up
+     * exactly where it parked.
      */
     POST("/bot/v1/rooms/:room/respond", async (request, { from, params }) => {
       const gate = await authenticate(request);
@@ -756,9 +771,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (room instanceof Response) return room;
 
       const body = await readJson(request);
-      let responses;
+      let answers;
       try {
-        responses = parseInputResponses(body?.responses);
+        answers = parseAnswers(asAnswers(body?.responses));
       } catch (error) {
         return json(
           {
@@ -768,14 +783,15 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           400,
         );
       }
-      if (responses.length === 0) return json({ error: "no responses" }, 400);
+      if (answers.length === 0) return json({ error: "no responses" }, 400);
 
-      const session = await from(await addressOf(gate.access.workspaceId, room)).respond(responses, {
+      const delivery = await from(await addressOf(gate.access.workspaceId, room)).respond(answers, {
         auth: principal(gate.access, room),
       });
-      await noteAnswered(gate.access.workspaceId, room, responses);
-      await clearHandovers(gate.access.workspaceId, responses.map((response) => response.requestId));
-      return json({ room, sessionId: session.id, answered: responses.length });
+      const answered = answers.map((answer) => ({ requestId: answer.interactionId, ...(answer.optionId === undefined ? {} : { optionId: answer.optionId }) }));
+      await noteAnswered(gate.access.workspaceId, room, answered);
+      await clearHandovers(gate.access.workspaceId, answered.map((answer) => answer.requestId));
+      return json({ room, sessionId: delivery.sessionId, answered: answers.length });
     }),
 
     POST("/bot/v1/rooms/:room/cancel", async (request, { from, params }) => {
@@ -895,7 +911,6 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       // skips blank lines. eve hands the event stream over only once it has
       // something to say, so it is opened inside the response, not before it.
       const encoder = new TextEncoder();
-      let reader: ReadableStreamDefaultReader<unknown> | null = null;
       let heartbeat: ReturnType<typeof setInterval> | undefined;
       let open = true;
       const ndjson = new ReadableStream<Uint8Array>({
@@ -903,7 +918,6 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           const stop = () => {
             open = false;
             clearInterval(heartbeat);
-            void reader?.cancel().catch(() => undefined);
           };
           heartbeat = setInterval(() => {
             if (!open) return;
@@ -919,36 +933,42 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
           void (async () => {
             try {
-              const pipe = async (events: ReadableStream<unknown>) => {
-                if (!open) return void events.cancel().catch(() => undefined);
-                reader = events.getReader();
-                for (;;) {
-                  const { value, done } = await reader.read();
-                  if (done || !open) break;
-                  controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+              const reading = new AbortController();
+              request.signal.addEventListener("abort", () => reading.abort(), { once: true });
+              // Each event goes out with its place in the thread (see `inThread`), so the reader's cursor runs across sessions.
+              const pipe = async (events: AsyncIterable<unknown>, offset: number): Promise<number> => {
+                let next = 0;
+                for await (const event of events) {
+                  if (!open) break;
+                  const placed = inThread(event as never, offset);
+                  if (placed.cursor !== undefined) next = placed.cursor - offset;
+                  controller.enqueue(encoder.encode(`${JSON.stringify(placed)}\n`));
                 }
+                return next;
               };
               let skip = startIndex;
+              let offset = 0;
               for (const id of earlier) {
                 if (!open) return;
                 const length = await recordedLength(attachSession(id));
                 if (skip >= length) {
                   skip -= length;
+                  offset += length;
                   continue;
                 }
-                await pipe(await attachSession(id).getEventStream({ startIndex: skip, follow: false }));
+                await pipe(attachSession(id).stream({ startIndex: skip, follow: false, signal: reading.signal }), offset);
                 skip = 0;
+                offset += length;
               }
               if (session === null) return;
-              let events: ReadableStream<unknown>;
               try {
-                events = await session.getEventStream({ startIndex: skip });
+                const read = await pipe(session.stream({ startIndex: skip, signal: reading.signal }), offset);
+                skip = Math.max(skip, read);
               } catch (error) {
                 // A session an older eve made is stranded: its history still reads, without following.
                 if (!SessionStrandedError.is(error)) throw error;
-                events = await session.getEventStream({ startIndex: skip, follow: false });
+                await pipe(session.stream({ startIndex: skip, follow: false, signal: reading.signal }), offset);
               }
-              await pipe(events);
             } catch {
               // The session is gone or the reader left; either way the stream ends.
             } finally {
@@ -967,7 +987,6 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         cancel() {
           open = false;
           clearInterval(heartbeat);
-          void reader?.cancel().catch(() => undefined);
         },
       });
 

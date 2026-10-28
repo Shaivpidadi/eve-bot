@@ -3,7 +3,7 @@ import "../../lib/settings/built";
 import type { ModelMessage } from "ai";
 import { defineAgent, defineDynamic } from "eve";
 
-import type { DynamicResolveContext } from "eve";
+import type { DynamicModelContext } from "eve";
 
 import { customEndpoint, effortInBrief, endpointModel, gatewaySelection, modelForEffort, modelInBrief, type ReasoningLevel, reasoningFor, sessionUsage, withOutputLimit } from "../../lib/models";
 
@@ -36,37 +36,24 @@ type Chosen = {
  * `model-settings.ts`), on AI Gateway or your own provider, so every step
  * agrees on any instance; a brief that names none picks by its effort.
  */
-const chosen = new Map<string, Chosen>();
-const MAX_REMEMBERED = 500;
-
-function modelFor(ctx: Pick<DynamicResolveContext, "session" | "messages">): Chosen {
-  const remembered = chosen.get(ctx.session.id);
-  if (remembered !== undefined) return remembered;
-  const brief = briefText(ctx.messages);
+function modelFor(brief: string): Chosen {
   const named = modelInBrief(brief);
-  const model: Chosen = named === null ? { id: modelForEffort(effortInBrief(brief)), context: null, reasoning: null } : { ...named, picked: true };
-  if (chosen.size >= MAX_REMEMBERED) chosen.delete(chosen.keys().next().value as string);
-  chosen.set(ctx.session.id, model);
-  return model;
+  return named === null ? { id: modelForEffort(effortInBrief(brief)), context: null, reasoning: null } : { ...named, picked: true };
 }
 
-/**
- * On Vercel AI Gateway the model is chosen once per turn by name. A custom
- * endpoint's model is a live object, which eve accepts only per model step, so
- * it is chosen there, with the context window eve cannot look up.
- */
+/** Your own provider's model is a live object, handed over with the context window eve cannot look up. */
 const endpoint = customEndpoint();
 
 /**
  * A run that was cancelled or halted by the budget makes no further model
- * call, compaction included: eve resolves the model for a step before it
- * compacts a long history, and a throw here fails that step (the `fence` and
- * `usage` hooks stop the model request itself, after compaction). Loaded
+ * call: eve evaluates the model before every model call, and a throw here
+ * fails the turn before it pays for one (the `fence` and `usage` hooks stop
+ * the model request itself). Loaded
  * lazily, so the store stays out of whatever loads the agent's definition.
  */
-async function refuseStoppedRun(event: unknown, ctx: DynamicResolveContext): Promise<void> {
-  const [{ stepOf, stopReason }, { operator }] = await Promise.all([import("./lib/stops"), import("../../lib/session")]);
-  const reason = await stopReason(ctx.session.id, () => operator(ctx).workspaceId, stepOf((event as { data?: unknown } | null)?.data));
+async function refuseStoppedRun(ctx: DynamicModelContext): Promise<void> {
+  const [{ stopReason }, { operator }] = await Promise.all([import("./lib/stops"), import("../../lib/session")]);
+  const reason = await stopReason(ctx.session.id, () => operator(ctx).workspaceId);
   if (reason !== null) throw new Error(reason);
 }
 
@@ -84,26 +71,15 @@ const selection = (model: Chosen) => gatewaySelection(model);
 export default defineAgent({
   description:
     "Does the actual work of a job end to end: research, browser sessions, files, and drafts. Give it the full brief; it cannot see this conversation.",
-  model: defineDynamic({
-    events:
-      endpoint === null
-        ? {
-            "turn.started": (_event, ctx) => selection(modelFor(ctx)),
-            "step.started": async (event, ctx) => {
-              await refuseStoppedRun(event, ctx);
-              const model = modelFor(ctx);
-              if (model.picked !== true) return selection(model);
-              // A model picked in the console is handed over live with its output limit (see `withOutputLimit`).
-              const { listedModel } = await import("../../lib/gateway-models");
-              return withOutputLimit(selection(model), await listedModel(model.id));
-            },
-          }
-        : {
-            "step.started": async (event, ctx) => {
-              await refuseStoppedRun(event, ctx);
-              return { model: endpointModel(endpoint, modelFor(ctx).id), modelContextWindowTokens: endpoint.contextWindowTokens };
-            },
-          },
+  model: defineDynamic(async (ctx: DynamicModelContext) => {
+    await refuseStoppedRun(ctx);
+    // Chosen once for the job's session, from the brief, and kept with it.
+    const model = await ctx.memo(["model", ctx.session.id], async () => modelFor(briefText((await ctx.messages()) as readonly ModelMessage[])));
+    if (endpoint !== null) return { model: endpointModel(endpoint, model.id), modelContextWindowTokens: endpoint.contextWindowTokens };
+    if (model.picked !== true) return selection(model);
+    // A model picked in the console is handed over live with its output limit (see `withOutputLimit`).
+    const { listedModel } = await import("../../lib/gateway-models");
+    return withOutputLimit(selection(model), await listedModel(model.id));
   }),
   ...reasoningFor(process.env.BOT_TEAMMATE_REASONING, "medium"),
   compaction: {

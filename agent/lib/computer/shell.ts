@@ -129,9 +129,9 @@ export function forgetIsolation(): void {
 }
 
 /** Runs one helper command, setting the fence up first and once more if the computer lost it. */
-async function helper(session: Session, command: string, abortSignal?: AbortSignal): Promise<CommandResult> {
+async function helper(session: Session, command: string, signal?: AbortSignal): Promise<CommandResult> {
   await isolated(session);
-  const run = () => session.run({ command, ...(abortSignal === undefined ? {} : { abortSignal }) });
+  const run = () => session.run({ command, ...(signal === undefined ? {} : { signal }) });
   let result = await run();
   if (refusedBy(result) !== null) {
     forgetIsolation();
@@ -155,18 +155,18 @@ function sliceLines(text: string, startLine?: number, endLine?: number): string 
  * rather than quietly done as the computer's own user.
  */
 export function isolatedSandbox(session: RuntimeSandboxSession, runId?: string): RuntimeSandboxSession {
-  const readBinaryFile = async (options: { path: string; abortSignal?: AbortSignal }): Promise<Uint8Array | null> => {
-    const result = await helper(session, helperCommand("read", [encode(session.resolvePath(options.path))]), options.abortSignal);
+  const readBinaryFile = async (options: { path: string; signal?: AbortSignal }): Promise<Uint8Array | null> => {
+    const result = await helper(session, helperCommand("read", [encode(session.resolvePath(options.path))]), options.signal);
     if (result.exitCode === 44) return null;
     if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Could not read ${options.path}.`);
     return new Uint8Array(Buffer.from(result.stdout.trim(), "base64"));
   };
-  const writeBinaryFile = async (options: { path: string; content: Uint8Array; abortSignal?: AbortSignal }): Promise<void> => {
+  const writeBinaryFile = async (options: { path: string; content: Uint8Array; signal?: AbortSignal }): Promise<void> => {
     // Staged as the computer's user in its private run folder; the helper hands the bytes to the Bot's own write.
     const stage = `/tmp/bot-computer/stage-${randomUUID()}`;
     await session.writeBinaryFile({ path: stage, content: options.content });
     try {
-      const result = await helper(session, helperCommand("write", [encode(session.resolvePath(options.path)), stage]), options.abortSignal);
+      const result = await helper(session, helperCommand("write", [encode(session.resolvePath(options.path)), stage]), options.signal);
       if (result.exitCode !== 0) throw new Error(result.stderr.trim() || `Could not write ${options.path}.`);
     } finally {
       await Promise.resolve(session.run({ command: `rm -f ${shellQuote(stage)}` })).catch(() => undefined);
@@ -174,7 +174,7 @@ export function isolatedSandbox(session: RuntimeSandboxSession, runId?: string):
   };
   const methods: Partial<RuntimeSandboxSession> = {
     async run(options: SandboxRunOptions) {
-      const { command, workingDirectory, env, abortSignal } = options;
+      const { command, workingDirectory, env, signal } = options;
       return helper(
         session,
         runCommand(command, {
@@ -182,7 +182,7 @@ export function isolatedSandbox(session: RuntimeSandboxSession, runId?: string):
           ...(env === undefined ? {} : { env }),
           ...(runId === undefined ? {} : { runId }),
         }),
-        abortSignal,
+        signal,
       );
     },
     /**
@@ -193,7 +193,7 @@ export function isolatedSandbox(session: RuntimeSandboxSession, runId?: string):
      * also when the launcher lets go of a command it was told to background.
      */
     spawn(options: SandboxRunOptions) {
-      const { command, workingDirectory, env, abortSignal } = options;
+      const { command, workingDirectory, env, signal } = options;
       const done = helper(
         session,
         runCommand(command, {
@@ -201,7 +201,7 @@ export function isolatedSandbox(session: RuntimeSandboxSession, runId?: string):
           ...(env === undefined ? {} : { env }),
           ...(runId === undefined ? {} : { runId }),
         }),
-        abortSignal,
+        signal,
       );
       done.catch(() => undefined);
       const stream = (pick: "stdout" | "stderr") =>
@@ -238,7 +238,7 @@ export function isolatedSandbox(session: RuntimeSandboxSession, runId?: string):
       await writeBinaryFile({
         path: options.path,
         content: new Uint8Array(Buffer.from(options.content, (options.encoding ?? "utf8") as BufferEncoding)),
-        ...(options.abortSignal === undefined ? {} : { abortSignal: options.abortSignal }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
     },
   };

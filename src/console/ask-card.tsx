@@ -1,6 +1,6 @@
 "use client";
 
-import type { InputOption, InputRequest, InputResolution } from "eve/client";
+import type { InputOption, InputRequest, InputResolution } from "./asks";
 
 import { useCallback, useEffect, useState } from "react";
 

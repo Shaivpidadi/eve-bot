@@ -4,6 +4,7 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { updateDoc } from "../store";
+import { sessionBinding } from "../computer/screens";
 import { getBot } from "../bots";
 import { getJob } from "../jobs";
 import { attribute, operator } from "../session";
@@ -142,15 +143,16 @@ export function workspaceMemory(slot: MemorySlot, options: WorkspaceMemoryOption
   return defineMemoryProvider({
     recall: {
       "turn.started": recall,
-      "compaction.completed": recall,
     },
     async tools(ctx) {
       const workspaceId = workspaceOf(ctx);
       const source = async (): Promise<MemorySource> => {
         const who = operator(ctx);
         if (options.owner === "hq") return { who: "hq", room: who.room };
-        const job = await jobOf(workspaceId, ctx.turn.input);
-        return { who: "bot", name: job?.botName, room: who.room, jobId: job?.jobId ?? null };
+        // The job this session works on, from the screen job_brief bound (eve 0.84 gives tools no turn input).
+        const binding = await sessionBinding(workspaceId, ctx.session.id).catch(() => null);
+        const bot = binding === null ? null : await getBot(workspaceId, binding.botId).catch(() => null);
+        return { who: "bot", name: bot?.name, room: who.room, jobId: binding?.jobId ?? null };
       };
       return {
         remember: defineTool({

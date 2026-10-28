@@ -42,7 +42,7 @@ export type SettingArea =
  * one, with the background worker deployed on, on a copy Vercel builds from
  * its own GitHub repository (which can update itself), on any Vercel
  * deployment, on a standalone server, with models on AI Gateway, with models on your own endpoint, or
- * on a computer that can fence its network (Vercel Sandbox, microsandbox; not
+ * on a computer that can fence its network (Vercel Sandbox; not
  * Docker, which can only allow everything or nothing).
  */
 export type SettingWhere = "always" | "vercel-computer" | "local-computer" | "worker" | "copy" | "vercel" | "standalone" | "gateway" | "endpoint" | "fenced-computer";
@@ -145,7 +145,6 @@ export const SETTINGS: readonly SettingDef[] = [
   { env: "BOT_SHELL_TCP_PORTS", area: "Team computer", label: "Extra ports the shell may reach", help: "Comma separated, e.g. 5432,6379. From the shell fence's next setup.", scope: "deployment", tier: "next-start", kind: { type: "list", placeholder: "5432, 6379" }, fallback: "The defaults" },
   { env: "BOT_COMPUTER_IMAGE", area: "Team computer", label: "Computer image", help: "Where the computer's software comes from: a Vercel Container Registry image, or default. Machines are built from it, so it applies with the next build.", scope: "deployment", tier: "rebuild", kind: { type: "text", placeholder: "vcr.vercel.com/team/project/bot-computer:latest" }, fallback: "Install on first boot (Vercel), the Dockerfile (local)" },
   { env: "BOT_COMPUTER", area: "Team computer", label: "Where the computer runs", help: "Vercel Sandbox, or this machine. Applies with the next build.", scope: "deployment", tier: "rebuild", kind: { type: "choice", options: [{ value: "vercel", label: "Vercel Sandbox" }, { value: "local", label: "This machine" }] }, fallback: "Vercel Sandbox" },
-  { env: "BOT_COMPUTER_LOCAL", area: "Team computer", label: "Local computer", help: "Docker, which the console can watch, or a microsandbox VM. Applies with the next build.", scope: "deployment", tier: "rebuild", kind: { type: "choice", options: [{ value: "docker", label: "Docker" }, { value: "microsandbox", label: "microsandbox VM" }] }, fallback: "Docker", where: "local-computer" },
   { env: "BOT_COMPUTER_LOCAL_PORT", area: "Team computer", label: "Local live view port", help: "Applies with the next build.", scope: "deployment", tier: "rebuild", kind: { type: "number", min: 1024, max: 65535, integer: true }, fallback: "16080", where: "local-computer" },
   { env: "BOT_COMPUTER_LOCAL_BIND", area: "Team computer", label: "Local live view address", help: "127.0.0.1 keeps it to this machine; 0.0.0.0 lets other devices watch. Applies with the next build.", scope: "deployment", tier: "rebuild", kind: { type: "text", placeholder: "127.0.0.1" }, fallback: "127.0.0.1", where: "local-computer" },
   { env: "BOT_COMPUTER_FORWARDER_IMAGE", area: "Team computer", label: "Local forwarder image", help: "The small container that publishes the live view. Applies with the next build.", scope: "deployment", tier: "rebuild", kind: { type: "text", placeholder: "alpine/socat" }, fallback: "alpine/socat", where: "local-computer" },

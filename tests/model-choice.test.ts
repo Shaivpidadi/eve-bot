@@ -28,7 +28,19 @@ const catalog = {
 };
 
 const auth = (workspaceId: string) => ({ current: { principalId: "op", principalType: "user", authenticator: "test", attributes: { workspaceId, room: "desk" } }, initiator: null });
-type Handlers = { model: { events: Record<string, (event: unknown, ctx: unknown) => unknown> } };
+/** An agent's dynamic model (eve 0.84): evaluated before every model call, with what it kept for the session. */
+type Handlers = { model: { evaluate: (ctx: unknown) => unknown } };
+
+/** One session as the model sees it: its memo, kept across calls, and the turn the call is in. */
+function sessionOf(id: string, workspaceId: string, messages: readonly unknown[] = []) {
+  const kept = new Map<string, unknown>();
+  const memo = async (key: unknown, fn: (occurrence: unknown) => unknown) => {
+    const name = JSON.stringify(key);
+    if (!kept.has(name)) kept.set(name, await fn({ idempotencyKey: name, abortSignal: new AbortController().signal }));
+    return kept.get(name);
+  };
+  return (turn = "turn_0") => ({ session: { id, auth: auth(workspaceId) }, turn: { id: turn, status: "running", input: [] }, memo, messages: async () => messages });
+}
 
 beforeEach(() => {
   vi.resetModules();
@@ -50,26 +62,33 @@ describe("the brief's model line", () => {
 });
 
 describe("HQ", () => {
+  // Gateway's listing is not reached here: a picked model goes to eve by name.
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 503 })));
+    return () => vi.unstubAllGlobals();
+  });
+
   it("runs on the deployment's default until the workspace picks a model, then on that from the next turn", async () => {
     const hq = ((await import("../agent/agent")) as { default: Handlers }).default;
-    const turn = hq.model.events["turn.started"]!;
-    const ctx = { session: { id: "s1", auth: auth("ws1") }, messages: [] };
-    expect(await turn({}, ctx)).toEqual({ model: "anthropic/claude-sonnet-5" });
+    const s1 = sessionOf("s1", "ws1");
+    expect(await hq.model.evaluate(s1("turn_0"))).toEqual({ model: "anthropic/claude-sonnet-5" });
     const { saveModelSettings } = await import("../agent/lib/model-settings");
     await saveModelSettings("ws1", { roles: { hq: "free/eyes" } }, "op", catalog);
+    // A turn keeps the model it started with; the pick applies from the next one.
+    expect(await hq.model.evaluate(s1("turn_0"))).toEqual({ model: "anthropic/claude-sonnet-5" });
     // A model Gateway lists is left for eve to look up, so its output limit comes with it rather than a 4,096-token default.
-    expect(await turn({}, ctx)).toEqual({ model: "free/eyes", reasoning: "provider-default" });
+    expect(await hq.model.evaluate(s1("turn_1"))).toEqual({ model: "free/eyes", reasoning: "provider-default" });
     // One it doesn't list gets a context window, since eve could not look one up.
     await saveModelSettings("ws1", { roles: { hq: "acme/unlisted" } }, "op", catalog);
-    expect(await turn({}, ctx)).toMatchObject({ model: "acme/unlisted", modelContextWindowTokens: 128_000 });
+    expect(await hq.model.evaluate(s1("turn_2"))).toMatchObject({ model: "acme/unlisted", modelContextWindowTokens: 128_000 });
     // Another workspace keeps its own.
-    expect(await turn({}, { ...ctx, session: { id: "s2", auth: auth("ws2") } })).toEqual({ model: "anthropic/claude-sonnet-5" });
+    expect(await hq.model.evaluate(sessionOf("s2", "ws2")())).toEqual({ model: "anthropic/claude-sonnet-5" });
   });
 
   it("keeps Zero Data Retention on whatever model is picked", async () => {
     vi.stubEnv("BOT_ZDR", "1");
     const hq = ((await import("../agent/agent")) as { default: Handlers }).default;
-    expect(await hq.model.events["turn.started"]!({}, { session: { id: "s1", auth: auth("ws1") }, messages: [] })).toEqual({
+    expect(await hq.model.evaluate(sessionOf("s1", "ws1")())).toEqual({
       model: "anthropic/claude-sonnet-5",
       modelOptions: { providerOptions: { gateway: { zeroDataRetention: true } } },
     });
@@ -79,7 +98,7 @@ describe("HQ", () => {
 describe("a Bot's job", () => {
   it("runs on the model its brief names, and by its effort when the brief names none", async () => {
     const teammate = ((await import("../agent/subagents/teammate/agent")) as { default: Handlers }).default;
-    const turn = teammate.model.events["turn.started"]!;
+    const turn = (_event: unknown, ctx: { session: { id: string; auth?: unknown }; messages: readonly unknown[] }) => teammate.model.evaluate(sessionOf(ctx.session.id, "ws1", ctx.messages)());
     const brief = (lines: string) => [{ role: "user", content: `## Job\nid: job_1\n${lines}\n\nDo the thing.` }];
     expect(await turn({}, { session: { id: "run_a", auth: auth("ws1") }, messages: brief("effort: quick\nmodel: free/eyes context=1000000 reasoning=no") })).toEqual({
       model: "free/eyes",
@@ -101,7 +120,7 @@ describe("a model picked in the console", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(listing))));
     try {
       const teammate = ((await import("../agent/subagents/teammate/agent")) as { default: Handlers }).default;
-      const step = teammate.model.events["step.started"]!;
+      const step = (_event: unknown, ctx: { session: { id: string; auth?: unknown }; messages: readonly unknown[] }) => teammate.model.evaluate(sessionOf(ctx.session.id, "ws1", ctx.messages)());
       const brief = (lines: string) => [{ role: "user", content: `## Job\nid: job_1\n${lines}\n\nDo the thing.` }];
       const picked = (await step({}, { session: { id: "run_p", auth: auth("ws1") }, messages: brief("effort: quick\nmodel: free/eyes") })) as { model: unknown; modelContextWindowTokens: number };
       // A live model rather than an id, told the listed context window too.

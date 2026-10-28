@@ -107,7 +107,8 @@ describe("the team computer's hooks", () => {
     vi.stubEnv("BOT_STORE", "memory");
     const { TeamComputer, innerImplementation, readMachineRecord } = await import("../agent/lib/team-computer");
     const events: string[] = [];
-    const sandbox = { id: "native" };
+    const stop = vi.fn(async () => undefined);
+    const native = { spawn: vi.fn(), readFile: vi.fn(), writeFiles: vi.fn(), removePath: vi.fn(), stop };
     const inner = {
       prepare: async () => ({}),
       resume: async () => {
@@ -115,7 +116,7 @@ describe("the team computer's hooks", () => {
       },
       start: async (_ctx: unknown, open: unknown) => {
         events.push(`start ${JSON.stringify(open)}`);
-        return { handle: { sandbox, onRuntimeShutdown: async () => undefined }, state: { sandboxName: "eve-sbx-vercel-1" } };
+        return { connection: native, state: { sandboxName: "eve-sbx-vercel-1" } };
       },
     };
     const environment = { [Symbol.for("eve.sandbox-provider-runtime")]: { implementation: inner } };
@@ -134,8 +135,10 @@ describe("the team computer's hooks", () => {
       }),
     );
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const handle = await team.resume({ session: { id: "s1" } } as never, {} as never, { team: true } as never);
-    expect((handle.sandbox as unknown as { id: string }).id).toBe("s1");
+    const connection = await team.resume({ session: { id: "s1" } } as never, {} as never, { team: true } as never);
+    // The machine is the team's: a conversation stopping its connection leaves it running.
+    await connection.stop();
+    expect(stop).not.toHaveBeenCalled();
     expect(events).toEqual([
       "beforeStart",
       'start {"mounts":{"/team":{"drive":"bot-computer","mode":"read-write"}}}',
@@ -170,7 +173,7 @@ describe("starting while the drive is still held", () => {
       start: async () => {
         tries += 1;
         if (tries < 3) throw new Error('Failed to open Vercel sandbox session "bot-computer": Status code 409 is not ok: Drive `bot-computer` is already attached as read-write to sandbox old.');
-        return { handle: { sandbox: {}, onRuntimeShutdown: async () => undefined }, state: { sandboxName: "eve-sbx-vercel-2" } };
+        return { connection: { spawn: vi.fn(), readFile: vi.fn(), writeFiles: vi.fn(), removePath: vi.fn(), stop: vi.fn() }, state: { sandboxName: "eve-sbx-vercel-2" } };
       },
     };
     const environment = { [Symbol.for("eve.sandbox-provider-runtime")]: { implementation: inner } };

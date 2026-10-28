@@ -49,7 +49,7 @@ export function sandboxIo(sandbox: Sandbox, abortSignal?: AbortSignal): Computer
         .filter((signal): signal is AbortSignal => signal !== undefined);
       const result = await sandbox.run({
         command,
-        ...(signals.length === 0 ? {} : { abortSignal: AbortSignal.any(signals) }),
+        ...(signals.length === 0 ? {} : { signal: AbortSignal.any(signals) }),
       });
       return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
     },

@@ -290,7 +290,7 @@ async function runCycle(
           .then((response) => response.result())
           .then(
             (result): Settled =>
-              result.status === "failed" ? { ok: false, error: result.error?.message ?? "The bot's turn failed." } : { ok: true, raw: result.data ?? result.message ?? null },
+              result.status === "failed" ? { ok: false, error: result.error?.message ?? "The bot's turn failed." } : { ok: true, raw: result.data ?? result.reply ?? null },
             (error: unknown): Settled => ({ ok: false, error: describeError(error) }),
           );
 

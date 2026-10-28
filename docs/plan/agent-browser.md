@@ -67,11 +67,33 @@ What 0.40 (27 Oct) adds, and what we take from it. Checked by hand against a loc
 ### A5. Docs `[done]`
 - `[done]` `docs/configuration.md` (recording), `docs/safety.md` (page tools through the gate), the README.
 
-### A6. eve 0.86 `[parked]`
-`@agent-browser/eve` 0.40 needs eve 0.84 or later. That release moved eve to new session events ("v27"),
-with renamed hooks, approvals and channel APIs. About 40 of our files use the old names, including the
-Telegram channel, and sessions that already exist are compacted when they move over. Nothing above needs it:
-the CLI is what changed, and we call it through `@agent-browser/sandbox`. It gets its own branch and plan.
+### A6. eve 0.86 `[done]`
+`@agent-browser/eve` 0.40 needs eve 0.84 or later, which moved eve to new session events ("v27") and
+renamed hooks, approvals and channel APIs. Done on this branch, at the user's word.
+
+- `[done]` Dynamic instructions, connections and models: `defineDynamic(ctx => value)`, with the
+  once-a-turn lookups kept in `ctx.memo` (`lib/dynamic.ts`). HQ keeps its model for a turn; a job for its session.
+- `[done]` Hooks on v27 facts: the ledgers on `usage.recorded` (a delegated call's spend left to the
+  agent it called), the feed and room state on `delivery.consumed` / `content.completed` /
+  `turn.settled` / `interaction.*`, memory capture, the takeover banner, tab closing.
+- `[done]` The team computer's provider on eve's connection API; sandbox calls take `signal`, not
+  `abortSignal` (so command timeouts and cancellation still apply, agent-browser's included).
+- `[done]` microsandbox removed (eve dropped it); `BOT_COMPUTER_LOCAL=microsandbox` is refused with a message.
+- `[done]` The ops channel: deliveries, `respond` with answers by `interactionId`, sessions read with
+  `stream()`. The thread stream tags each event with a key and a cursor that run across a thread's
+  sessions (`inThread` in `lib/events.ts`), and branching names its point by that key.
+- `[done]` The console reads v27 facts (`room-store.ts`), with the cards fed by `src/console/asks.ts`.
+- `[done]` `tests/turn-stop.test.ts` drove eve's own turn loop, which no longer evaluates dynamic
+  values itself; it now holds the guarantee at the boundary eve documents (the model is refused for a
+  stopped run). Since 0.84 compaction's summarising call skips dynamic values, so a stopped run can be
+  compacted once.
+- `[done]` `docs/updating.md`: what an upgrade does to conversations, and microsandbox.
+
+Found while checking: booting the build against the project's local workflow data (`.eve/.workflow-data`)
+marks it with world-local 5.1.2 (a marker only; 0.82 still reads it) and ends Bot job sessions left from
+0.82, which this release does on its first start anyway.
 
 ## Live check `[to-do]`
 On a Docker computer: a Bot reads a page (one batch), calls a page tool, and a recorded job shows its video.
+After eve 0.86: a message to HQ streams into the console, an approval card answers, going back to a
+message works, a Telegram message gets its reply and its buttons.

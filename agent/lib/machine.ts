@@ -1,4 +1,4 @@
-import type { SandboxPreparedArtifact } from "eve/sandbox/provider";
+import type { SandboxJson } from "eve/sandbox/provider";
 
 import { COMPUTER_NAME } from "./computer";
 
@@ -14,7 +14,7 @@ export type ComputerProviderName = "vercel" | "docker" | "microsandbox";
 export interface MachineRecord {
   readonly provider: ComputerProviderName;
   /** The built-in provider's own state for the machine: what it needs to reconnect. */
-  readonly state: SandboxPreparedArtifact;
+  readonly state: SandboxJson;
   readonly at: string;
 }
 

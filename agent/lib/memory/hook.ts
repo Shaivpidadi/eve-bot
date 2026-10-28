@@ -1,6 +1,8 @@
+import { call } from "eve/events";
 import type { HookContext, HookDefinition } from "eve/hooks";
 
 import { record } from "../activity";
+import { textOfParts, textOfValue } from "../events";
 import { operator } from "../session";
 import { sessionState } from "../session-state";
 import { sessionBinding } from "../computer/screens";
@@ -25,8 +27,8 @@ const REAL: HookDeps = { deps: defaultDeps, trace, record, jobOf, binding: sessi
  * Remembering, driven from the event stream.
  *
  * The exchange is gathered as it happens: what the person said from
- * `message.received`, what came back from `message.completed`, and, on a job,
- * what the tools returned from `action.result`. When the turn completes, the
+ * `delivery.consumed`, the reply from `content.completed`, and, on a job, what
+ * the tools returned from `call.settled`. When the turn settles completed, the
  * gatekeeper pipeline in `capture.ts` decides what to keep.
  *
  * This is a hook rather than the provider's own `capture` handler. Since eve
@@ -90,47 +92,55 @@ export function memoryCaptureHook(mode: CaptureMode, overrides: Partial<HookDeps
         if (exchange.turnId !== null && exchange.turnId !== event.data.turnId) exchanges.set(ctx.session.id, { ...fresh(), turnId: event.data.turnId });
         else exchange.turnId = event.data.turnId;
       },
-      "message.received"(event, ctx) {
+      "delivery.consumed"(event, ctx) {
         const auth = ctx.session.auth.current ?? ctx.session.auth.initiator;
         if (mode === "conversation" && auth?.principalType !== "user") return;
-        if (/^Background task /.test(event.data.message) || event.data.message.startsWith("Routine report:")) return;
-        current(ctx).person.push(event.data.message);
+        const message = textOfParts(event.data.parts);
+        if (message === "" || /^Background task /.test(message) || message.startsWith("Routine report:")) return;
+        current(ctx).person.push(message);
       },
-      "message.completed"(event, ctx) {
-        if (event.data.message !== null && event.data.message.trim() !== "") current(ctx).reply.push(event.data.message);
+      "content.completed"(event, ctx) {
+        if (event.data.kind !== "text" || event.data.phase !== "reply") return;
+        const message = textOfValue(event.data.value);
+        if (message.trim() !== "") current(ctx).reply.push(message);
       },
-      "action.result"(event, ctx) {
+      "call.settled"(event, ctx) {
         if (mode !== "job") return;
-        const note = describeResult(event.data.result);
+        const settled = call(ctx.view, event.data.callId);
+        if (settled === undefined || settled.kind === "control") return;
+        const note = describeResult({ toolName: settled.name, output: settled.output, error: settled.error?.message });
         if (note !== null) current(ctx).tools.push(note);
       },
-      "input.requested"(event, ctx) {
+      "interaction.opened"(event, ctx) {
         if (mode !== "job") return;
+        const { interactionId, request, subject } = event.data;
+        if (request.kind !== "approval" || !("callId" in subject)) return;
+        const asking = call(ctx.view, subject.callId);
         const pending = asked.get(ctx.session.id) ?? new Map<string, Asked>();
-        for (const request of event.data.requests) {
-          if (request.kind !== "tool-approval") continue;
-          pending.set(request.requestId, { toolName: request.action?.toolName ?? "a tool", prompt: request.prompt, input: request.action?.input });
-        }
+        pending.set(interactionId, { toolName: asking?.name ?? "a tool", prompt: request.prompt, input: asking?.input });
         asked.set(ctx.session.id, pending);
       },
-      async "approval.settled"(event, ctx) {
-        if (mode !== "job" || event.data.outcome !== "cancelled") return;
-        const request = asked.get(ctx.session.id)?.get(event.data.requestId);
+      async "interaction.settled"(event, ctx) {
+        if (mode !== "job") return;
+        const request = asked.get(ctx.session.id)?.get(event.data.interactionId);
         if (request === undefined) return;
-        asked.get(ctx.session.id)?.delete(event.data.requestId);
+        asked.get(ctx.session.id)?.delete(event.data.interactionId);
+        // Only a person's "no" is a lesson; one withdrawn or interrupted was never decided.
+        if (event.data.outcome !== "declined") return;
         const workspaceId = operator(ctx).workspaceId;
         try {
           const binding = await io.binding(workspaceId, ctx.session.id);
           if (binding === null) return;
-          await io.denial(workspaceId, { jobId: binding.jobId, botId: binding.botId, requestId: event.data.requestId, ...request });
+          await io.denial(workspaceId, { jobId: binding.jobId, botId: binding.botId, requestId: event.data.interactionId, ...request });
         } catch (error) {
           await io.trace(workspaceId, "craft", "failed", `denial: ${error instanceof Error ? error.message : String(error)}`);
         }
       },
-      async "turn.completed"(event, ctx) {
+      async "turn.settled"(event, ctx) {
         const exchange = exchanges.get(ctx.session.id);
         exchanges.delete(ctx.session.id);
-        if (exchange === undefined) return;
+        // Only a turn that finished says what was agreed; a failed or cancelled one is dropped.
+        if (exchange === undefined || event.data.outcome !== "completed") return;
         const who = operator(ctx);
         const workspaceId = who.workspaceId;
         try {

@@ -1,5 +1,5 @@
 import { defineTool, disableTool } from "eve/tools";
-import defaultWebSearch from "eve/tools/web_search";
+import { webSearch } from "eve/tools/web_search";
 import { z } from "zod";
 
 import { customEndpoint } from "../lib/models";
@@ -45,4 +45,4 @@ const searchTool = (provider: NonNullable<typeof config>) =>
     },
   });
 
-export default customEndpoint() === null ? defaultWebSearch : config === null ? disableTool() : searchTool(config);
+export default customEndpoint() === null ? webSearch({ provider: "exa" }) : config === null ? disableTool() : searchTool(config);

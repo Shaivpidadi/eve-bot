@@ -43,13 +43,10 @@ async function closeRunTab(ctx: AuthedContext & { readonly session: { readonly i
 
 export default defineHook({
   events: {
-    async "turn.completed"(_event, ctx) {
+    async "turn.settled"(_event, ctx) {
       await closeRunTab(ctx, true);
     },
-    async "session.completed"(_event, ctx) {
-      await closeRunTab(ctx, false);
-    },
-    async "session.failed"(_event, ctx) {
+    async "session.ended"(_event, ctx) {
       await closeRunTab(ctx, false);
     },
   },

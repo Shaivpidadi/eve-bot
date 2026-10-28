@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { emptySessionView, foldEvents, type SessionView } from "eve/events";
 import type { HookContext, HookDefinition } from "eve/hooks";
 
 import type { CaptureDeps, CaptureInput, Proposal } from "../agent/lib/memory/capture";
@@ -70,16 +71,30 @@ function harness(options: { readonly proposals?: readonly Proposal[]; readonly e
   return { io, captured, traces, recorded, denials };
 }
 
-const fire = async (hook: HookDefinition, name: keyof Events, event: unknown, ctx: HookContext) => {
+/**
+ * Each session's view as eve folds it from the facts so far: a hook reads a
+ * call's name and input from it (`call(ctx.view, callId)`).
+ */
+const views = new Map<string, { view: SessionView; line: number }>();
+const fire = async (hook: HookDefinition, name: keyof Events, event: { type: string; data: unknown; scope?: unknown }, ctx: HookContext) => {
   const handler = (hook.events as Record<string, Handler | undefined>)[name];
-  if (handler === undefined) throw new Error(`no handler for ${name}`);
-  await handler(event, ctx);
+  const kept = views.get(ctx.session.id) ?? { view: emptySessionView(), line: 0 };
+  const placed = { ...event, meta: { position: { line: kept.line, index: 0 }, at: "2026-10-15T10:00:00.000Z" } };
+  kept.view = foldEvents(kept.view, [placed as never]);
+  kept.line += 1;
+  views.set(ctx.session.id, kept);
+  await handler?.(placed, { ...ctx, view: kept.view, position: placed.meta.position } as HookContext);
 };
 
-const started = (turnId: string) => ({ type: "turn.started", data: { turnId, sequence: 1 } });
-const received = (message: string) => ({ type: "message.received", data: { message, sequence: 1, turnId: "t" } });
-const completedMessage = (message: string | null) => ({ type: "message.completed", data: { message, finishReason: "stop", sequence: 1, stepIndex: 0, turnId: "t" } });
-const completedTurn = (turnId: string) => ({ type: "turn.completed", data: { turnId, sequence: 2 } });
+const started = (turnId: string) => ({ type: "turn.started", data: { turnId, cause: {}, follows: null }, scope: { turnId } });
+const received = (message: string) => ({ type: "delivery.consumed", data: { deliveryId: `d_${message.length}`, turnId: "t", parts: [{ kind: "text", text: message }] }, scope: { turnId: "t" } });
+let parts = 0;
+const completedMessage = (message: string | null) => ({ type: "content.completed", data: { partId: `p${parts++}`, runId: "r1", kind: "text", phase: "reply", ...(message === null ? {} : { value: message }) }, scope: { turnId: "t", runId: "r1" } });
+const completedTurn = (turnId: string, outcome = "completed") => ({ type: "turn.settled", data: { turnId, outcome }, scope: { turnId } });
+const toolCall = (callId: string, name: string, input: unknown) => ({ type: "call.requested", data: { callId, owner: { runId: "r1" }, capability: { kind: "tool", name }, input }, scope: { turnId: "t", runId: "r1" } });
+const toolResult = (callId: string, output: unknown) => ({ type: "call.settled", data: { callId, outcome: "completed", output }, scope: { turnId: "t", runId: "r1" } });
+const asked = (interactionId: string, callId: string, prompt: string) => ({ type: "interaction.opened", data: { interactionId, subject: { callId }, request: { kind: "approval", prompt } } });
+const decided = (interactionId: string, outcome: "accepted" | "declined") => ({ type: "interaction.settled", data: { interactionId, outcome } });
 
 describe("the capture hook, on a conversation", () => {
   beforeEach(() => {
@@ -91,10 +106,10 @@ describe("the capture hook, on a conversation", () => {
     const hook = memoryCaptureHook("conversation", h.io);
     const ctx = ctxFor("s1");
     await fire(hook, "turn.started", started("t1"), ctx);
-    await fire(hook, "message.received", received("From now on I prefer three-bullet summaries."), ctx);
-    await fire(hook, "message.completed", completedMessage("Noted."), ctx);
-    await fire(hook, "message.completed", completedMessage(null), ctx);
-    await fire(hook, "turn.completed", completedTurn("t1"), ctx);
+    await fire(hook, "delivery.consumed", received("From now on I prefer three-bullet summaries."), ctx);
+    await fire(hook, "content.completed", completedMessage("Noted."), ctx);
+    await fire(hook, "content.completed", completedMessage(null), ctx);
+    await fire(hook, "turn.settled", completedTurn("t1"), ctx);
 
     expect(h.captured).toHaveLength(1);
     expect(h.captured[0]).toMatchObject({ workspaceId: "wsh", mode: "conversation", person: "From now on I prefer three-bullet summaries.", reply: "Noted.", operationId: "s1:t1" });
@@ -109,13 +124,13 @@ describe("the capture hook, on a conversation", () => {
     const hook = memoryCaptureHook("conversation", h.io);
     const ctx = ctxFor("s2");
     await fire(hook, "turn.started", started("t1"), ctx);
-    await fire(hook, "message.received", received("I always want dates like 21 Sep 2026."), ctx);
-    await fire(hook, "message.completed", completedMessage("Sure."), ctx);
-    await fire(hook, "turn.completed", completedTurn("t1"), ctx);
+    await fire(hook, "delivery.consumed", received("I always want dates like 21 Sep 2026."), ctx);
+    await fire(hook, "content.completed", completedMessage("Sure."), ctx);
+    await fire(hook, "turn.settled", completedTurn("t1"), ctx);
     await fire(hook, "turn.started", started("t2"), ctx);
-    await fire(hook, "message.received", received("I never want exclamation marks, remember that."), ctx);
-    await fire(hook, "message.completed", completedMessage("Understood."), ctx);
-    await fire(hook, "turn.completed", completedTurn("t2"), ctx);
+    await fire(hook, "delivery.consumed", received("I never want exclamation marks, remember that."), ctx);
+    await fire(hook, "content.completed", completedMessage("Understood."), ctx);
+    await fire(hook, "turn.settled", completedTurn("t2"), ctx);
     expect(h.captured.map((input) => input.person)).toEqual(["I always want dates like 21 Sep 2026.", "I never want exclamation marks, remember that."]);
     expect(h.captured[1]!.reply).toBe("Understood.");
   });
@@ -125,13 +140,13 @@ describe("the capture hook, on a conversation", () => {
     const hook = memoryCaptureHook("conversation", h.io);
     const scheduled = ctxFor("s3", { automated: true });
     await fire(hook, "turn.started", started("t1"), scheduled);
-    await fire(hook, "message.received", received("Write the daily standup."), scheduled);
-    await fire(hook, "turn.completed", completedTurn("t1"), scheduled);
+    await fire(hook, "delivery.consumed", received("Write the daily standup."), scheduled);
+    await fire(hook, "turn.settled", completedTurn("t1"), scheduled);
     const quiet = ctxFor("s4");
     await fire(hook, "turn.started", started("t1"), quiet);
-    await fire(hook, "message.received", received("Background task task_1 is completed."), quiet);
-    await fire(hook, "message.completed", completedMessage("Atlas finished."), quiet);
-    await fire(hook, "turn.completed", completedTurn("t1"), quiet);
+    await fire(hook, "delivery.consumed", received("Background task task_1 is completed."), quiet);
+    await fire(hook, "content.completed", completedMessage("Atlas finished."), quiet);
+    await fire(hook, "turn.settled", completedTurn("t1"), quiet);
     expect(h.captured).toEqual([]);
     expect(h.traces).toEqual(["profile:skipped automated turn", "profile:skipped no message from a person this turn"]);
     expect(h.recorded).toEqual([]);
@@ -142,17 +157,17 @@ describe("the capture hook, on a conversation", () => {
     const hook = memoryCaptureHook("conversation", h.io);
     const ctx = ctxFor("s5");
     await fire(hook, "turn.started", started("t1"), ctx);
-    await fire(hook, "message.received", received("I prefer short answers, always."), ctx);
-    await fire(hook, "message.completed", completedMessage("Ok."), ctx);
-    await fire(hook, "turn.completed", completedTurn("t1"), ctx);
+    await fire(hook, "delivery.consumed", received("I prefer short answers, always."), ctx);
+    await fire(hook, "content.completed", completedMessage("Ok."), ctx);
+    await fire(hook, "turn.settled", completedTurn("t1"), ctx);
     expect(h.recorded).toEqual([]);
     expect(h.traces.at(-1)).toMatch(/profile:done gate=cues proposed=0 .*extractor failed: Error: extractor down/);
   });
 
-  it("does nothing for a turn.completed it never saw the start of", async () => {
+  it("does nothing for a turn it never saw the start of", async () => {
     const h = harness();
     const hook = memoryCaptureHook("conversation", h.io);
-    await fire(hook, "turn.completed", completedTurn("t9"), ctxFor("s6"));
+    await fire(hook, "turn.settled", completedTurn("t9"), ctxFor("s6"));
     expect(h.captured).toEqual([]);
     expect(h.traces).toEqual([]);
   });
@@ -170,12 +185,14 @@ describe("the capture hook, on a job", () => {
     const hook = memoryCaptureHook("job", h.io);
     const ctx = ctxFor("j1", { room: "bot-bot_a" });
     await fire(hook, "turn.started", started("t1"), ctx);
-    await fire(hook, "message.received", received(brief), ctx);
-    await fire(hook, "action.result", { type: "action.result", data: { result: { toolName: "page_get", output: { title: "Example Domain" } }, status: "ok", sequence: 1, stepIndex: 1, turnId: "t1" } }, ctx);
+    await fire(hook, "delivery.consumed", received(brief), ctx);
+    await fire(hook, "call.requested", toolCall("c1", "page_get", { what: "title" }), ctx);
+    await fire(hook, "call.settled", toolResult("c1", { title: "Example Domain" }), ctx);
     // Without Jev a job's transcript has to have some substance before the gate opens; a real job's does.
-    await fire(hook, "action.result", { type: "action.result", data: { result: { toolName: "page_read", output: "Rows: " + "row of the report, ".repeat(30) }, status: "ok", sequence: 1, stepIndex: 2, turnId: "t1" } }, ctx);
-    await fire(hook, "message.completed", completedMessage("The PDF export lost rows, so I used CSV."), ctx);
-    await fire(hook, "turn.completed", completedTurn("t1"), ctx);
+    await fire(hook, "call.requested", toolCall("c2", "page_read", {}), ctx);
+    await fire(hook, "call.settled", toolResult("c2", "Rows: " + "row of the report, ".repeat(30)), ctx);
+    await fire(hook, "content.completed", completedMessage("The PDF export lost rows, so I used CSV."), ctx);
+    await fire(hook, "turn.settled", completedTurn("t1"), ctx);
 
     expect(h.captured).toHaveLength(1);
     const input = h.captured[0]!;
@@ -193,9 +210,9 @@ describe("the capture hook, on a job", () => {
     const hook = memoryCaptureHook("job", h.io);
     const ctx = ctxFor("j2");
     await fire(hook, "turn.started", started("t1"), ctx);
-    await fire(hook, "message.received", received("Do the thing, no id here."), ctx);
-    await fire(hook, "message.completed", completedMessage("Done."), ctx);
-    await fire(hook, "turn.completed", completedTurn("t1"), ctx);
+    await fire(hook, "delivery.consumed", received("Do the thing, no id here."), ctx);
+    await fire(hook, "content.completed", completedMessage("Done."), ctx);
+    await fire(hook, "turn.settled", completedTurn("t1"), ctx);
     expect(h.captured).toEqual([]);
     expect(h.traces).toEqual(["craft:skipped no job id in the brief"]);
   });
@@ -204,25 +221,23 @@ describe("the capture hook, on a job", () => {
     const h = harness();
     const hook = memoryCaptureHook("job", h.io);
     const ctx = ctxFor("j3");
-    const requests = [
-      { requestId: "req_send", kind: "tool-approval", prompt: "Send the report to the board?", action: { toolName: "send_email", input: { to: "board@acme.example" } } },
-      { requestId: "req_other", kind: "question", prompt: "Which quarter?" },
-    ];
-    await fire(hook, "input.requested", { type: "input.requested", data: { requests, sequence: 1, stepIndex: 1, turnId: "t1" } }, ctx);
-    await fire(hook, "approval.settled", { type: "approval.settled", data: { requestId: "req_send", outcome: "approved", responderPrincipalId: "operator", sequence: 1, stepIndex: 1, turnId: "t1" } }, ctx);
+    await fire(hook, "call.requested", toolCall("c_send", "send_email", { to: "board@acme.example" }), ctx);
+    await fire(hook, "interaction.opened", asked("req_send", "c_send", "Send the report to the board?"), ctx);
+    await fire(hook, "interaction.settled", decided("req_send", "accepted"), ctx);
     expect(h.denials).toEqual([]);
-    await fire(hook, "input.requested", { type: "input.requested", data: { requests, sequence: 1, stepIndex: 1, turnId: "t1" } }, ctx);
-    await fire(hook, "approval.settled", { type: "approval.settled", data: { requestId: "req_send", outcome: "cancelled", responderPrincipalId: "operator", sequence: 1, stepIndex: 1, turnId: "t1" } }, ctx);
+    await fire(hook, "interaction.opened", asked("req_send", "c_send", "Send the report to the board?"), ctx);
+    await fire(hook, "interaction.settled", decided("req_send", "declined"), ctx);
     expect(h.denials).toEqual([
       { jobId: "job_1", botId: "bot_a", requestId: "req_send", toolName: "send_email", prompt: "Send the report to the board?", input: { to: "board@acme.example" } },
     ]);
     // A decline for a request it never saw, or on a session with no job, is ignored.
-    await fire(hook, "approval.settled", { type: "approval.settled", data: { requestId: "req_unknown", outcome: "cancelled", responderPrincipalId: "operator", sequence: 1, stepIndex: 1, turnId: "t1" } }, ctx);
+    await fire(hook, "interaction.settled", decided("req_unknown", "declined"), ctx);
     expect(h.denials).toHaveLength(1);
     const unbound = harness({ binding: null });
     const other = memoryCaptureHook("job", unbound.io);
-    await fire(other, "input.requested", { type: "input.requested", data: { requests, sequence: 1, stepIndex: 1, turnId: "t1" } }, ctxFor("j4"));
-    await fire(other, "approval.settled", { type: "approval.settled", data: { requestId: "req_send", outcome: "cancelled", responderPrincipalId: "operator", sequence: 1, stepIndex: 1, turnId: "t1" } }, ctxFor("j4"));
+    await fire(other, "call.requested", toolCall("c_send", "send_email", { to: "board@acme.example" }), ctxFor("j4"));
+    await fire(other, "interaction.opened", asked("req_send", "c_send", "Send the report to the board?"), ctxFor("j4"));
+    await fire(other, "interaction.settled", decided("req_send", "declined"), ctxFor("j4"));
     expect(unbound.denials).toEqual([]);
   });
 
@@ -230,8 +245,9 @@ describe("the capture hook, on a job", () => {
     const h = harness();
     const hook = memoryCaptureHook("conversation", h.io);
     const ctx = ctxFor("c1");
-    await fire(hook, "input.requested", { type: "input.requested", data: { requests: [{ requestId: "r", kind: "tool-approval", prompt: "?", action: { toolName: "x" } }], sequence: 1, stepIndex: 1, turnId: "t1" } }, ctx);
-    await fire(hook, "approval.settled", { type: "approval.settled", data: { requestId: "r", outcome: "cancelled", responderPrincipalId: "operator", sequence: 1, stepIndex: 1, turnId: "t1" } }, ctx);
+    await fire(hook, "call.requested", toolCall("c_x", "x", {}), ctx);
+    await fire(hook, "interaction.opened", asked("r", "c_x", "?"), ctx);
+    await fire(hook, "interaction.settled", decided("r", "declined"), ctx);
     expect(h.denials).toEqual([]);
   });
 });

@@ -63,11 +63,20 @@ const runSessionName = (ctx: ToolContext) => `run-${ctx.session.id.replace(/[^A-
 
 /** Runs opened with their tab ready, so the label lookup happens once per run. */
 /**
- * agent-browser's eve types describe eve 0.58's tool context, whose sandbox
- * carried an `id`. It only names its own sessions by it, and every call here
- * passes the run's session name, so eve 0.79's context serves as is.
+ * The tool context as agent-browser's helper wants it. The helper passes its
+ * abort signal to `sandbox.run` as `abortSignal`, which eve 0.84 renamed
+ * `signal`; mapped here, so a cancelled run still stops a browser command.
  */
-const pluginContext = (ctx: ToolContext) => ctx as unknown as Parameters<typeof runAgentBrowser>[0];
+const pluginContext = (ctx: ToolContext) =>
+  ({
+    getSandbox: async () => {
+      const sandbox = await ctx.getSandbox();
+      return {
+        run: (options: { readonly command: string; readonly abortSignal?: AbortSignal }) =>
+          sandbox.run({ command: options.command, ...(options.abortSignal === undefined ? {} : { signal: options.abortSignal }) }),
+      };
+    },
+  }) as unknown as Parameters<typeof runAgentBrowser>[0];
 
 const openedTabs = sessionState<{ targetId: string; at: number }>();
 const TAB_TRUSTED_MS = 60_000;

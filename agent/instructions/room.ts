@@ -1,6 +1,7 @@
 import { defineDynamic, defineInstructions } from "eve/instructions";
 
 import { getBot } from "../lib/bots";
+import { perTurn } from "../lib/dynamic";
 import { attribute } from "../lib/session";
 
 /**
@@ -8,20 +9,15 @@ import { attribute } from "../lib/session";
  * text one teammate, so in that room HQ answers as that bot and routes the work
  * to it. Resolved per turn so a rename, persona edit, or pause lands at once.
  */
-export default defineDynamic({
-  events: {
-    "turn.started": async (_event, ctx) => {
-      const auth = ctx.session.auth.current ?? ctx.session.auth.initiator;
-      const botId = attribute(auth, "botId");
-      if (botId === undefined) return null;
-      const workspaceId =
-        attribute(auth, "workspaceId") ?? process.env.BOT_DEFAULT_WORKSPACE ?? "default";
-
-      const bot = await getBot(workspaceId, botId);
-      if (bot === null) return null;
-
-      return defineInstructions({
-        content: [
+export default defineDynamic(async (ctx) => {
+  const auth = ctx.session.auth.current ?? ctx.session.auth.initiator;
+  const botId = attribute(auth, "botId");
+  if (botId === undefined) return null;
+  const workspaceId = attribute(auth, "workspaceId") ?? process.env.BOT_DEFAULT_WORKSPACE ?? "default";
+  const content = await perTurn(ctx, async () => {
+    const bot = await getBot(workspaceId, botId);
+    if (bot === null) return null;
+    return [
           `## This is ${bot.name}'s thread`,
           "",
           `The operator opened the thread of ${bot.name} (${bot.role}) and is talking to ${bot.name}, not to HQ.`,
@@ -43,10 +39,9 @@ export default defineDynamic({
           bot.playbook.length > 0
             ? ["", "### Playbook", ...bot.playbook.map((lesson) => `- ${lesson}`)].join("\n")
             : "",
-        ]
-          .filter((line) => line !== "")
-          .join("\n"),
-      });
-    },
-  },
+    ]
+      .filter((line) => line !== "")
+      .join("\n");
+  });
+  return content === null ? null : defineInstructions({ content });
 });
