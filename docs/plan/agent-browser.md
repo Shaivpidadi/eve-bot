@@ -52,16 +52,20 @@ What 0.40 (27 Oct) adds, and what we take from it. Checked by hand against a loc
 - **Done when:** unit tests cover the classification, the proposal's description, and the drift check.
   Done: `tests/agent-browser.test.ts` and the fake shop in `tests/browser-gate.test.ts`.
 
-### A4. Recording a job's browser `[to-do]`
-- `[to-do]` Setting `BOT_BROWSER_RECORDING` (off by default, Settings → Browser): a job's browser work is
+### A4. Recording a job's browser `[done]`
+- `[done]` Setting `BOT_BROWSER_RECORDING` (off by default, Settings → Browser): a job's browser work is
   recorded at a few frames a second into its folder on the computer.
-- `[to-do]` ffmpeg is installed on the computer the first time it is needed (it is large; most teams won't).
-- `[to-do]` When the job finishes the recording is saved with its artifacts, so it is on the job's page.
-- `[to-do]` Docs say what it shows: the Bot's tab while it is on screen.
+- `[done]` ffmpeg is installed on the computer the first time it is needed (it is large; most teams won't).
+- `[done]` When the job finishes the recording is saved with its artifacts, so it is on the job's page.
+- `[done]` Docs say what it shows: the Bot's tab while it is on screen.
 - **Done when:** unit tests cover start/stop bookkeeping and the setting; a live run shows the video.
+  Unit tests done; the live run is in the live check below. Found while testing: closing a tab ends its
+  recording cleanly (ffmpeg exits, the file plays), so the tab sweep finishes the recordings of jobs that
+  were cancelled or failed; those are not kept. A recording longer than the 2 MB artifact limit is stored
+  apart (`saveLargeArtifact`, up to 50 MB) and plays from the job's files.
 
-### A5. Docs `[to-do]`
-- `[to-do]` `docs/configuration.md` (recording), the browser section of the README (page tools).
+### A5. Docs `[done]`
+- `[done]` `docs/configuration.md` (recording), `docs/safety.md` (page tools through the gate), the README.
 
 ### A6. eve 0.86 `[parked]`
 `@agent-browser/eve` 0.40 needs eve 0.84 or later. That release moved eve to new session events ("v27"),

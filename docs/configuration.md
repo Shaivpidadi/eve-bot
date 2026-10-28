@@ -122,6 +122,7 @@ paid option: $30 buys $80 of usage on the models it covers.
 | `BOT_SANDBOX_ALLOW_DOMAINS` / `BOT_BROWSER_ALLOWED_DOMAINS` | fence the computer and the browser |
 | `BOT_BROWSER_PAGE_CHARS` / `BOT_BROWSER_SETTLE_MS` | how much of a page a Bot reads per look (`8000`) and how long it lets the page settle first (`300`) |
 | `BOT_BROWSER_GUARD_MS` | how long after a click the network guard watches what the page sends (`1200`) |
+| `BOT_BROWSER_RECORDING` | `on` records each job's browser work (2 frames a second) and keeps the video with the job's files, up to 30 minutes and 50 MB a job. It shows the Bot's tab while it is on the screen, and holds still while another Bot's tab is in front. The first recording installs ffmpeg on the computer, about a minute; that job starts recording once it is there. Off by default; also in Settings → Browser |
 | `BOT_SHELL_TCP_PORTS` / `BOT_SHELL_ISOLATION` | extra ports the shell may reach (`5432,6379`); `off` runs it unfenced with every command gated (see [The Bots' shell](#the-bots-shell)) |
 
 ## Memory

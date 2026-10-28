@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { computerRuntime } from "../agent/lib/computer/script";
 
 import { batchResults, cliOutdated, textOf, type BrowserResult } from "../agent/subagents/teammate/lib/browser";
 import { classifyTool, pickTool, readTools, toolPrint, toolReturned, type PageTool } from "../agent/subagents/teammate/lib/page-tools";
+import { MAX_RECORDING_MS, nextStep, recordingOn } from "../agent/subagents/teammate/lib/recording";
 
 /** agent-browser 0.40 on the team computer (docs/plan/agent-browser.md). */
 
@@ -97,5 +102,54 @@ describe("page tools", () => {
     expect(toolReturned({ status: "failed", output: "boom" })).toEqual({ status: "failed", output: "boom" });
     expect(toolReturned(null)).toEqual({ status: "unknown", output: "" });
     expect(toolReturned({ status: "completed", output: { content: [{ type: "text", text: "x".repeat(5000) }] } }).output).toHaveLength(4000);
+  });
+});
+
+describe("recording a job's browser", () => {
+  it("is off unless switched on", () => {
+    expect(recordingOn({})).toBe(false);
+    expect(recordingOn({ BOT_BROWSER_RECORDING: "off" })).toBe(false);
+    expect(recordingOn({ BOT_BROWSER_RECORDING: "on" })).toBe(true);
+    expect(recordingOn({ BOT_BROWSER_RECORDING: "1" })).toBe(true);
+  });
+
+  it("starts once, waits a minute between asks while ffmpeg installs, and stops after half an hour", () => {
+    const now = 10 * 60 * 60_000;
+    expect(nextStep(undefined, now)).toBe("check");
+    expect(nextStep({ state: "waiting", checkedAt: now - 30_000 }, now)).toBe("nothing");
+    expect(nextStep({ state: "waiting", checkedAt: now - 60_000 }, now)).toBe("check");
+    expect(nextStep({ state: "on", startedAt: now - 29 * 60_000 }, now)).toBe("nothing");
+    expect(nextStep({ state: "on", startedAt: now - MAX_RECORDING_MS - 1 }, now)).toBe("stop");
+    expect(nextStep({ state: "stopped" }, now)).toBe("nothing");
+  });
+
+  it("installs ffmpeg on the computer only when asked, in a script bash accepts", () => {
+    const script = computerRuntime().files.find((file) => file.path.endsWith("/bot-computer"))!.content;
+    expect(script).toContain("recorder) cmd_recorder ;;");
+    expect(script).toContain("--enable-features=WebMCPTesting,DevToolsWebMCPSupport");
+    // Not in the packages every computer installs: it is large, and most teams never record.
+    expect(/^PACKAGES="([^"]+)"/m.exec(script)?.[1]).not.toContain("ffmpeg");
+    const checked = spawnSync("bash", ["-n"], { input: script, encoding: "utf8" });
+    expect(checked.stderr).toBe("");
+    expect(checked.status).toBe(0);
+  });
+});
+
+describe("a large artifact", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+  });
+
+  it("keeps its bytes apart from its record, and reads back the same", async () => {
+    const artifacts = await import("../agent/lib/artifacts");
+    const bytes = new Uint8Array(3 * 1024 * 1024).fill(7);
+    const meta = await artifacts.saveLargeArtifact({ workspaceId: "ws", name: "Browser recording.webm", mediaType: "video/webm", bytes });
+    const stored = await artifacts.readArtifact(meta.key);
+    expect(stored?.base64).toBeUndefined();
+    expect((await artifacts.artifactBytes(stored!))?.byteLength).toBe(bytes.byteLength);
+    // A small one reads the same way.
+    const small = await artifacts.saveArtifact({ workspaceId: "ws", name: "a.txt", mediaType: "text/plain", bytes: new TextEncoder().encode("hi") });
+    expect(new TextDecoder().decode((await artifacts.artifactBytes((await artifacts.readArtifact(small.key))!))!)).toBe("hi");
   });
 });

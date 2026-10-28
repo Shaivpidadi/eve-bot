@@ -5,9 +5,17 @@ import { record } from "../../../lib/activity";
 import { checkpointComputer } from "../../../lib/computer-backup";
 import { describeRunRefusal, patchJobAsRun } from "../../../lib/jobs";
 import { operator } from "../../../lib/session";
+import { readRunTabs } from "../../../lib/computer/screens";
+import { effectiveEnv } from "../../../lib/settings/store";
+import { browser, sessionDirectory } from "../lib/browser";
 import { journal } from "../lib/journal";
+import { keepJobRecording, recordingOn } from "../lib/recording";
 import { looseBoolean } from "../../../lib/tool-input";
 import type { JobResult } from "../../../lib/types";
+
+/** Whether this run opened a tab of its own, which is the only way it records. */
+const usedBrowser = async (workspaceId: string, sessionId: string): Promise<boolean> =>
+  Object.values(await readRunTabs(workspaceId)).some((tab) => tab.sessionId === sessionId);
 
 export default defineTool({
   description:
@@ -74,6 +82,13 @@ export default defineTool({
         ? `Result recorded (verified): ${input.summary}`
         : `Result recorded (unverified): ${input.summary}`,
     });
+
+    // The run's browser recording, when it made one (see `lib/recording.ts`).
+    if (recordingOn(await effectiveEnv()) && (await usedBrowser(who.workspaceId, ctx.session.id))) {
+      await keepJobRecording(ctx, input.jobId, await sessionDirectory(ctx), () => browser(ctx, ["record", "stop"])).catch((error: unknown) => {
+        console.warn("[recording] could not keep the browser recording:", error instanceof Error ? error.message : error);
+      });
+    }
 
     // The end of a job is the natural point to keep what it left on the computer.
     await checkpointComputer(ctx, { minIntervalMs: 60_000 });

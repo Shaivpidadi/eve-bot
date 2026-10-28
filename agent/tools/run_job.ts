@@ -3,7 +3,7 @@ import { sleep } from "workflow";
 import { z } from "zod";
 
 import { record, recentActivity } from "../lib/activity";
-import { readArtifact } from "../lib/artifacts";
+import { artifactBytes, readArtifact } from "../lib/artifacts";
 import { getBot } from "../lib/bots";
 import { admitClaimedRun, BUDGET_HALT_REASON, releaseRun, runHalted, settleRun } from "../lib/budget";
 import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
@@ -676,8 +676,9 @@ async function salvageResult(workspaceId: string, jobId: string, claim: Extract<
       continue;
     }
     const stored = await readArtifact(artifact.key);
-    if (stored === null) continue;
-    const content = Buffer.from(stored.base64, "base64").toString("utf8").trim().slice(0, Math.min(SALVAGE_ARTIFACT_CHARS, budget));
+    const bytes = stored === null ? null : await artifactBytes(stored);
+    if (bytes === null) continue;
+    const content = Buffer.from(bytes).toString("utf8").trim().slice(0, Math.min(SALVAGE_ARTIFACT_CHARS, budget));
     budget -= content.length;
     files.push(`### ${artifact.name}\n${content}`);
   }

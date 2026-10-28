@@ -156,6 +156,7 @@ export const SETTINGS: readonly SettingDef[] = [
   { env: "BOT_BROWSER_SETTLE_MS", area: "Browser", label: "Wait for the page to settle", help: "Before each look.", scope: "deployment", tier: "live", kind: ms(10_000), fallback: "300 ms" },
   { env: "BOT_BROWSER_GUARD_MS", area: "Browser", label: "Watch what a click sends for", help: "After a click, the network guard watches what the page sends this long.", scope: "deployment", tier: "live", kind: { type: "number", min: 200, max: 10_000, integer: true, unit: "ms" }, fallback: "1,200 ms" },
   { env: "BOT_BROWSER_MAX_OUTPUT", area: "Browser", label: "Longest browser answer", help: "In characters; longer answers are cut.", scope: "deployment", tier: "live", kind: { type: "number", min: 1000, max: 200_000, integer: true, unit: "characters" }, fallback: "20,000" },
+  { env: "BOT_BROWSER_RECORDING", area: "Browser", label: "Record each job's browser", help: "A video of the Bot's tab, kept with the job's files. It shows the tab while it is on the screen; while another Bot's tab is in front it holds still. The first recording installs ffmpeg on the computer, which takes a minute.", scope: "deployment", tier: "live", kind: SWITCH, fallback: "Off" },
   { env: "BOT_PILOT_SECONDS", area: "Browser", label: "Longest page pilot", help: "How long a Bot may drive a page in one go.", scope: "deployment", tier: "live", kind: { type: "number", min: 10, max: 600, integer: true, unit: "seconds" }, fallback: "60 seconds" },
 
   // ─── Email ───────────────────────────────────────────────────────────────

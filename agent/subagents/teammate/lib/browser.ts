@@ -29,6 +29,7 @@ import {
 import { posterKey, saveScreen } from "../../../lib/screens";
 import { operator } from "../../../lib/session";
 import { journal } from "./journal";
+import { keepRecording } from "./recording";
 import { sessionState } from "./session-state";
 import { within } from "../../../lib/cancel";
 import { closeFinishedTabs } from "../../../lib/computer/tab-sweep";
@@ -417,13 +418,29 @@ async function browserCommand(ctx: ToolContext, args: readonly string[], options
   }
 
   const session = runSessionName(ctx);
-  const run = async () =>
-    runAgentBrowser(pluginContext(ctx), ["--cdp", String(screenPorts(n).cdp), "--pin-tab", ...args], {
+  const inTab = async (command: readonly string[]) =>
+    runAgentBrowser(pluginContext(ctx), ["--cdp", String(screenPorts(n).cdp), "--pin-tab", ...command], {
       abortSignal: ctx.abortSignal,
       env: await environment(await sessionDirectory(ctx)),
       // One agent-browser session per run, pinned to that run's own tab in the shared browser.
       session,
     });
+  const run = () => inTab(args);
+
+  // A video of the job's browser work, when it is on; never the reason an action fails.
+  if (args[0] !== "record") {
+    const recorder = async (command: readonly string[]) => {
+      try {
+        return shape(await inTab(command));
+      } catch (error) {
+        return failure(error);
+      }
+    };
+    await within(
+      (async () => keepRecording(ctx, recorder, await sessionDirectory(ctx)))(),
+      25_000,
+    ).catch(() => undefined);
+  }
 
   if (options.guard === true) return guarded(ctx, screenPorts(n).cdp, tab, run);
 

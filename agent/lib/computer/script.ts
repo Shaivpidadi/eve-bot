@@ -754,8 +754,36 @@ cmd_identity() {
 # settle: stop an install that is still running and leave dpkg consistent, so a
 # snapshot taken now (a template) has no half-unpacked package in it. Whatever
 # it did not finish is installed when the computer is first used.
+# recorder: ffmpeg, which agent-browser records a tab through. It is large and
+# only wanted where recording is on, so it is installed the first time it is
+# asked for, in the background; ready is true once it is there.
+RECORDER_PATTERN='^bash [^ ]*bot-computer recorder-now( |$)'
+
+cmd_recorder() {
+  if command -v ffmpeg >/dev/null; then
+    printf '{"ok":true,"ready":true}\n'
+    return
+  fi
+  running recorder "$RECORDER_PATTERN" || daemon recorder bash "$0" recorder-now
+  printf '{"ok":true,"ready":false}\n'
+}
+
+install_recorder() {
+  command -v ffmpeg >/dev/null && return 0
+  exec 9>"$RUN/install.lock"
+  flock -w 900 9 || fail recorder "another install is still running"
+  command -v ffmpeg >/dev/null && return 0
+  local log="$RUN/recorder.log"
+  local apt="sudo -n env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -y -qq"
+  sudo -n true 2>/dev/null || fail recorder "installing ffmpeg needs sudo on the computer"
+  use_reachable_mirror
+  $apt update >>"$log" 2>&1 || fail recorder "apt-get update failed: $(tail -n 5 "$log")"
+  $apt install --no-install-recommends ffmpeg >>"$log" 2>&1 || fail recorder "could not install ffmpeg: $(tail -n 5 "$log")"
+}
+
 cmd_settle() {
   stop_process installer "$INSTALLER_PATTERN"
+  stop_process recorder "$RECORDER_PATTERN"
   sudo -n pkill -TERM -x apt-get 2>/dev/null
   sudo -n pkill -TERM -x dpkg 2>/dev/null
   sleep 1
@@ -825,6 +853,11 @@ case "$1" in
     install_software
     printf '{"ok":true,"installed":true}\n'
     ;;
+  recorder) cmd_recorder ;;
+  recorder-now)
+    install_recorder
+    printf '{"ok":true,"ready":true}\n'
+    ;;
   ensure) cmd_ensure "$2" ;;
   stop) cmd_stop "$2" ;;
   status) cmd_status ;;
@@ -842,7 +875,7 @@ case "$1" in
   recover) cmd_recover ;;
   settle) cmd_settle ;;
   drive) cmd_drive "$2" ;;
-  *) fail args "usage: bot-computer version | install | ensure N | stop N | status | launch browser|files|terminal | raise N | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | isolate PORTS | recover | settle | drive MOUNT" ;;
+  *) fail args "usage: bot-computer version | install | recorder | ensure N | stop N | status | launch browser|files|terminal | raise N | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | isolate PORTS | recover | settle | drive MOUNT" ;;
 esac
 `;
 

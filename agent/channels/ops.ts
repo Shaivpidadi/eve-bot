@@ -8,7 +8,7 @@ import type { SessionAuthContext } from "eve/context";
 import { authenticate, hasSignedInCookie, sessionCookie, setStoredName, signedInCookie, tokensConfigured, type Access, type Gate, workspaceForToken } from "../lib/access";
 import { record } from "../lib/activity";
 import { ENGINE_LABELS, ENGINES, engineOf, engineRefusal, isEngine } from "../lib/engines";
-import { readArtifact } from "../lib/artifacts";
+import { artifactBytes, readArtifact } from "../lib/artifacts";
 import { buildBoard } from "../lib/board";
 import { findBot, getBot, hireBot, isHq, isReservedName, listBots, patchBot, RESERVED_NAME_REFUSAL, retireBot } from "../lib/bots";
 import { computerMode, localComputer, vercelCredentialsError } from "../lib/computer-config";
@@ -1904,8 +1904,11 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (stored === null) return json({ error: "not found" }, 404);
 
       const { meta } = stored;
-      const inline = /^image\/(png|jpeg|gif|webp)$/.test(meta.mediaType);
-      return new Response(Buffer.from(stored.base64, "base64"), {
+      const body = await artifactBytes(stored);
+      if (body === null) return json({ error: "not found" }, 404);
+      // A browser recording plays in the page; it is a video the app made, not something from the web.
+      const inline = /^image\/(png|jpeg|gif|webp)$/.test(meta.mediaType) || meta.mediaType === "video/webm";
+      return new Response(Buffer.from(body), {
         headers: {
           "content-type": inline ? meta.mediaType : "application/octet-stream",
           "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(meta.name)}`,
