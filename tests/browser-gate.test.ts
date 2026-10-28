@@ -99,6 +99,13 @@ vi.mock("../agent/subagents/teammate/lib/browser", async (importOriginal) => {
     payload: actual.payload,
     textOf: actual.textOf,
     refreshScreen: async () => undefined,
+    // A batch is its commands run one after another, each answered as on its own.
+    browserBatch: async (ctx: unknown, commands: readonly (readonly string[])[]) => {
+      const { browser } = await import("../agent/subagents/teammate/lib/browser");
+      const results = [];
+      for (const command of commands) results.push(await browser(ctx as never, command));
+      return results;
+    },
     bindScreen: async (ctx: { session: { id: string; auth: never } }, botId: string, jobId: string) => {
       const { bindSession } = await import("../agent/lib/computer/screens");
       const { operator } = await import("../agent/lib/session");

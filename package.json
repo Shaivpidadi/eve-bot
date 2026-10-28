@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@agent-browser/eve": "^0.39.1",
+    "@agent-browser/sandbox": "0.40.0",
     "@ai-sdk/openai-compatible": "^3.0.68",
     "@anthropic-ai/claude-agent-sdk": "0.3.296",
     "@base-ui/react": "^1.9.0",
@@ -74,5 +75,10 @@
   },
   "engines": {
     "node": ">=24"
+  },
+  "overrides": {
+    "@agent-browser/eve": {
+      "@agent-browser/sandbox": "$@agent-browser/sandbox"
+    }
   }
 }

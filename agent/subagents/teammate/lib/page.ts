@@ -2,7 +2,7 @@ import type { ToolContext } from "eve/tools";
 
 import type { Stopped } from "../../../lib/computer/netguard";
 
-import { browser, refreshScreen, textOf } from "./browser";
+import { browser, browserBatch, type BrowserResult, refreshScreen, textOf } from "./browser";
 import { journalPage } from "./journal";
 import { treeIndex, type TreeFacts } from "./consequence";
 import { sessionState } from "./session-state";
@@ -309,15 +309,19 @@ export const refsSeen = (ctx: ToolContext): ReadonlyMap<string, TreeFacts> | und
  * trimmed one.
  */
 export async function look(ctx: ToolContext, options: { readonly full?: boolean } = {}): Promise<Look | { readonly error: string; readonly detail: string }> {
-  await browser(ctx, ["wait", "--load", "domcontentloaded"]);
   const env = await effectiveEnv();
   const settle = settleMs(env);
-  if (settle > 0) await browser(ctx, ["wait", String(settle)]);
-  const snapshot = await browser(ctx, ["snapshot", "-c"]);
+  // One call to the computer: a wait that times out is routine, and the read still runs after it.
+  const steps = await browserBatch(ctx, [
+    ["wait", "--load", "domcontentloaded"],
+    ...(settle > 0 ? [["wait", String(settle)]] : []),
+    ["snapshot", "-c"],
+    ["get", "url"],
+  ]);
+  const [snapshot, at] = steps.slice(-2) as [BrowserResult, BrowserResult];
   if (!snapshot.ok) return { error: snapshot.error ?? "The page could not be read.", detail: snapshot.output };
   // The tree itself, not agent-browser's JSON envelope around it (see `payload`).
   const tree = textOf(snapshot, "snapshot");
-  const at = await browser(ctx, ["get", "url"]);
   const url = at.ok ? textOf(at, "url").trim().slice(0, 500) : "";
   const trimmed = options.full === true ? null : trimTree(tree, pageBudget(env));
   const result: Look = {

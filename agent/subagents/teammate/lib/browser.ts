@@ -3,6 +3,7 @@ import {
   installAgentBrowser,
   runAgentBrowser,
 } from "@agent-browser/eve/sandbox";
+import { AGENT_BROWSER_SANDBOX_VERSION } from "@agent-browser/sandbox";
 import type { ToolContext } from "eve/tools";
 
 import { COMPUTER_PATHS } from "../../../lib/computer";
@@ -168,20 +169,129 @@ async function environment(directory: string): Promise<Record<string, string>> {
   return env;
 }
 
+/**
+ * Whether the CLI that printed `versionOutput` ("agent-browser 0.39.1") is older
+ * than the one this app speaks. Output that names no version is not "older":
+ * a missing CLI is installed by the missing-binary path instead.
+ */
+export function cliOutdated(versionOutput: string, wanted: string = AGENT_BROWSER_SANDBOX_VERSION): boolean {
+  const parse = (text: string) => /(\d+)\.(\d+)\.(\d+)/.exec(text)?.slice(1, 4).map(Number) ?? null;
+  const have = parse(versionOutput);
+  const want = parse(wanted);
+  if (have === null || want === null) return false;
+  for (let i = 0; i < 3; i += 1) {
+    if (have[i] !== want[i]) return have[i]! < want[i]!;
+  }
+  return false;
+}
+
+/**
+ * A computer keeps the CLI it was built with until it is replaced, and the
+ * tools here use commands newer ones added (`batch`, `webmcp`, `record`). So
+ * the first browser action in this process checks the version once and
+ * installs this app's when the computer's is older.
+ */
+let cliChecked: Promise<void> | null = null;
+async function currentCli(ctx: ToolContext): Promise<void> {
+  cliChecked ??= (async () => {
+    const sandbox = await ctx.getSandbox();
+    const found = await sandbox.run({ command: "agent-browser --version" });
+    if (found.exitCode !== 0 || !cliOutdated(found.stdout)) return;
+    console.log(`[browser] moving the computer from ${found.stdout.trim()} to agent-browser ${AGENT_BROWSER_SANDBOX_VERSION}`);
+    await installAgentBrowser(sandbox as never, AGENT_BROWSER_INSTALL);
+  })().catch((error: unknown) => {
+    // Tried again by the next action; the old CLI still serves what it knows.
+    cliChecked = null;
+    console.warn("[browser] could not check agent-browser's version:", error instanceof Error ? error.message : error);
+  });
+  await cliChecked;
+}
+
 function missingBinary(error: unknown): boolean {
   if (!(error instanceof AgentBrowserCommandError)) return false;
   return error.exitCode === 127 || /not found|no such file/i.test(error.stderr);
 }
 
+/**
+ * What a failed command said about why. A batch prints every command's result,
+ * page text included, so only its commands' errors count: a page that mentions
+ * "CDP" is not a browser that went away.
+ */
+function failureText(error: AgentBrowserCommandError): string {
+  const steps = batchSteps(parseJson(error.stdout));
+  return steps === null ? `${error.stderr}\n${error.stdout}` : [error.stderr, ...steps.map((step) => step.error ?? "")].join("\n");
+}
+
 function browserGone(error: unknown): boolean {
   if (!(error instanceof AgentBrowserCommandError)) return false;
-  return /CDP|connection refused|os error 111|target closed|browser has disconnected/i.test(`${error.stderr}\n${error.stdout}`);
+  return /CDP|connection refused|os error 111|target closed|browser has disconnected/i.test(failureText(error));
 }
 
 /** The run's pinned tab was closed under it; agent-browser refuses to act on another tab instead. */
 function tabGone(error: unknown): boolean {
   if (!(error instanceof AgentBrowserCommandError)) return false;
-  return /tab_gone/.test(`${error.stderr}\n${error.stdout}`);
+  return /tab_gone/.test(failureText(error));
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+interface BatchStep {
+  readonly success: boolean;
+  readonly result: unknown;
+  readonly error: string | null;
+}
+
+/** The array `batch --json` prints, one entry per command; null for anything else. */
+function batchSteps(json: unknown): BatchStep[] | null {
+  if (!Array.isArray(json)) return null;
+  if (!json.every((entry) => entry !== null && typeof entry === "object" && typeof (entry as { success?: unknown }).success === "boolean")) return null;
+  return json.map((entry: { success: boolean; result?: unknown; error?: unknown }) => ({
+    success: entry.success,
+    result: entry.result ?? null,
+    error: typeof entry.error === "string" ? entry.error : null,
+  }));
+}
+
+/** A batch command's words, which agent-browser splits the way a shell would; kept to words that need no quoting. */
+const PLAIN_WORD = /^[A-Za-z0-9@#._:=/,-]+$/;
+
+/**
+ * One result per command of a batch, each shaped like `browser`'s own (its
+ * `data` is the `{ success, data, error }` envelope a lone command prints), so
+ * `payload` and `textOf` read them the same way. Pure, for tests.
+ */
+export function batchResults(result: BrowserResult, count: number): BrowserResult[] {
+  const steps = batchSteps(result.data);
+  if (steps === null) {
+    // The batch did not run: the screen, the tab or the CLI failed first.
+    const error = result.ok ? "The browser's answer was not a batch." : (result.error ?? "The browser did not answer.");
+    return Array.from({ length: count }, (): BrowserResult => ({ ok: false, output: result.output, data: null, error }));
+  }
+  return Array.from({ length: count }, (_, i): BrowserResult => {
+    const step = steps[i];
+    if (step === undefined) return { ok: false, output: "", data: null, error: "The browser did not run this step." };
+    const envelope = { success: step.success, data: step.result, error: step.error };
+    return step.success ? { ok: true, output: "", data: envelope } : { ok: false, output: step.error ?? "", data: envelope, error: step.error ?? "The step failed." };
+  });
+}
+
+/**
+ * Several commands in one call to the computer (agent-browser's `batch`),
+ * each run whatever happened to the one before: one round trip instead of one
+ * per command. For commands this module writes itself, never the model's.
+ */
+export async function browserBatch(ctx: ToolContext, commands: readonly (readonly string[])[]): Promise<BrowserResult[]> {
+  for (const command of commands) {
+    if (!command.every((word) => PLAIN_WORD.test(word))) throw new Error(`Batch commands take plain words only: ${command.join(" ")}`);
+  }
+  const result = await browser(ctx, ["batch", ...commands.map((command) => command.join(" "))]);
+  return batchResults(result, commands.length);
 }
 
 export interface BrowserResult {
@@ -260,7 +370,7 @@ async function readyScreen(ctx: ToolContext, n: number, recorded: ServiceState):
  * action is not retried here: a retry might land on another tab.
  */
 /** Browser commands whose failure is routine (a wait that timed out, a read of nothing) and not worth a journal line. */
-const QUIET_FAILURES = new Set(["wait", "get", "eval", "snapshot", "screenshot", "focus"]);
+const QUIET_FAILURES = new Set(["wait", "get", "eval", "snapshot", "screenshot", "focus", "batch"]);
 
 export async function browser(ctx: ToolContext, args: readonly string[], options: { readonly guard?: boolean } = {}): Promise<BrowserResult> {
   const result = await browserCommand(ctx, args, options);
@@ -299,6 +409,7 @@ async function browserCommand(ctx: ToolContext, args: readonly string[], options
     n = screen.n;
     recorded = screen.browser.state;
     await readyScreen(ctx, n, recorded);
+    await currentCli(ctx);
     // Open this run's own tab before its first action, so two Bots never share one page.
     tab = await ensureRunTab(ctx, binding, n);
   } catch (error) {
@@ -437,7 +548,8 @@ function failure(error: unknown): BrowserResult {
     return {
       ok: false,
       output: (error.stderr || error.stdout).trim().slice(0, 4_000),
-      data: null,
+      // A batch exits 1 when one of its commands failed, and still prints them all (see `batchResults`).
+      data: batchSteps(parseJson(error.stdout)) === null ? null : parseJson(error.stdout),
       error: `agent-browser exited ${error.exitCode}`,
     };
   }

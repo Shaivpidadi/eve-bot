@@ -38,6 +38,6 @@ RUN arch="$(dpkg --print-architecture)" \
 
 # agent-browser, where eve's installer puts it (the sandbox user's npm prefix).
 USER vercel-sandbox
-RUN npm install -g agent-browser@0.39.1
+RUN npm install -g agent-browser@0.40.0
 
 WORKDIR /workspace
