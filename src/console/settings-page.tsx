@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { api, errorMessage, SignedOutError } from "./api";
 import { ModelsSection } from "./models-page";
 import { NotificationsSection } from "./notifications-section";
+import { TelegramSection } from "./telegram-section";
 import { Faint, PageBody, PageError, PageFrame, PageLoading, PageNote } from "./usage-page";
 
 /**
@@ -55,7 +56,7 @@ interface Report {
   readonly canRebuild?: boolean;
 }
 
-const AREAS = ["Spend", "Models", "Team computer", "Browser", "Web search", "Memory & decisions", "Email", "Background work", "Team", "Server", "Data controls", "Engines", "Updates", "Notifications"] as const;
+const AREAS = ["Spend", "Models", "Team computer", "Browser", "Web search", "Memory & decisions", "Email", "Background work", "Team", "Server", "Data controls", "Engines", "Updates", "Notifications", "Telegram"] as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
@@ -127,7 +128,7 @@ export function SettingsPage({ area, onArea, onClose }: { area: string | null; o
     setFade((current) => (current.left === next.left && current.right === next.right ? current : next));
   }, []);
 
-  const areas = useMemo(() => AREAS.filter((name) => name === "Models" || name === "Notifications" || (report?.settings ?? []).some((setting) => setting.area === name)), [report]);
+  const areas = useMemo(() => AREAS.filter((name) => name === "Models" || name === "Notifications" || (name === "Telegram" && report?.owner === true) || (report?.settings ?? []).some((setting) => setting.area === name)), [report]);
   const current = area !== null && (areas as readonly string[]).includes(area) ? area : (areas[0] ?? "Models");
 
   useEffect(() => {
@@ -178,7 +179,8 @@ export function SettingsPage({ area, onArea, onClose }: { area: string | null; o
             <TabsContent key={name} value={name}>
               {name === "Models" ? <ModelsSection /> : null}
               {name === "Notifications" ? <NotificationsSection /> : null}
-              {name === "Notifications" || (name === "Models" && !report.settings.some((setting) => setting.area === name)) ? null : (
+              {name === "Telegram" ? <TelegramSection /> : null}
+              {name === "Notifications" || name === "Telegram" || (name === "Models" && !report.settings.some((setting) => setting.area === name)) ? null : (
                 <PageBody className="max-w-[760px]">
                   {report.owner || name === "Models" ? null : (
                     <PageNote>These are your workspace&apos;s settings. The rest of the deployment&apos;s are set by its owner.</PageNote>
