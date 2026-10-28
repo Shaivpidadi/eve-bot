@@ -227,6 +227,7 @@ rename, edit profile, duplicate, hide, delete.
   and the thread says so. The new session knows what is in Memory.
 - **Update now** appears in the footer when a newer version is out.
 - **Install the app** puts the console on your dock or Home Screen, and **Settings → Notifications** lets a Bot reach your phone when it needs you or finishes a job.
+- **Telegram.** Text HQ from your phone: paste a token from @BotFather in **Settings → Telegram** and scan the code. Works on Vercel and on a laptop with nothing else to set up ([docs](docs/configuration.md#telegram)).
 
 Opening the console from another device over plain http puts the browser in an
 insecure context, and the live screen will not connect. Use `npm run dev:https`,

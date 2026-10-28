@@ -411,3 +411,34 @@ Notifications**, and chooses what reaches them:
 Nothing to configure on the server: the deployment makes its own Web Push keys the first time they are needed and
 keeps the private one sealed. Pressing a notification opens the Bot's thread; nothing is approved from one.
 
+
+## Telegram
+
+Text HQ from your phone. HQ answers there as it does in the console: it starts jobs, asks for approvals and
+answers with buttons, and sends the same alerts as Notifications. Setting it up takes a minute, on Vercel and on your
+own machine alike:
+
+1. In Telegram, open [@BotFather](https://t.me/BotFather), send `/newbot`, and pick a name. It answers with a token.
+2. In the console, **Settings → Telegram**, paste the token and press **Connect**. (On a standalone server
+   `npm run setup` can ask for it instead, as `TELEGRAM_BOT_TOKEN`; it connects at the first start.)
+3. Scan the code it shows with your phone's camera, or open the link, and press **Start** in Telegram.
+
+That chat is now paired. Every other chat that finds the bot gets one line saying it is private, and nothing reaches
+HQ from it. **Pair another chat** lets a new phone take over; **Disconnect** forgets the bot.
+
+How messages arrive is chosen for you:
+
+- **On Vercel, or any `https` address on the internet:** a webhook to `/eve/v1/telegram`, checked with a secret made
+  when you connect. On Vercel it uses the production domain, so it survives new deployments. A deployment behind
+  Vercel Authentication for everything gets the project's automation bypass in the webhook's address, when the
+  project has one (`VERCEL_AUTOMATION_BYPASS_SECRET`).
+- **On a laptop or a home server:** the server asks Telegram for new messages itself, so there is no tunnel or public
+  address to set up. It answers while the server runs.
+
+Connecting again after the server's address changes (a custom domain, `BOT_PUBLIC_URL`) moves the webhook. Use one
+bot per deployment: a laptop and a deployment sharing one bot take it from each other. The token is kept sealed in
+the store and never shown again.
+
+The Telegram chat is its own conversation with HQ, separate from HQ's thread in the console; jobs, the board, and the
+feed are the same in both. Alerts follow the choices and quiet hours of whoever connected the bot (Settings →
+Notifications), and carry a link to the console when it is reachable from the phone.
