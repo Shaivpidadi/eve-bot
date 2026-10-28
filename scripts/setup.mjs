@@ -188,6 +188,34 @@ const consoleToken = typed === "" ? token() : typed;
 note("The password you sign in to the console with.");
 set("BOT_CONSOLE_TOKEN", consoleToken);
 
+// ── Telegram ───────────────────────────────────────────────────────────────
+if (platform === "standalone") say();
+let telegramBot = null;
+// On Vercel the token is pasted in the deployed console instead: .env.local is for development, and a laptop polling the same bot would take it from the deployment.
+if (platform === "standalone" && await yes("Text HQ from Telegram? (you need a bot token from @BotFather: send it /newbot)", false)) {
+  for (;;) {
+    const botToken = await ask("Bot token (blank to skip):", "");
+    if (botToken === "") break;
+    try {
+      const answer = await (await fetch(`https://api.telegram.org/bot${botToken}/getMe`, { signal: AbortSignal.timeout(10_000) })).json();
+      if (answer?.ok === true && typeof answer.result?.username === "string") {
+        telegramBot = answer.result.username;
+        say(`  That is @${telegramBot}.`);
+        note("Telegram: connects on its own at the first start; pair your phone in the console (Settings, Telegram).");
+        set("TELEGRAM_BOT_TOKEN", botToken);
+        break;
+      }
+      say(`  Telegram did not take it${typeof answer?.description === "string" ? `: ${answer.description}` : ""}. Copy the whole token, like 123456789:AA…`);
+    } catch {
+      say("  Telegram could not be reached to check it; it is saved, and checked again when the server starts.");
+      note("Telegram: connects on its own at the first start; pair your phone in the console (Settings, Telegram).");
+      set("TELEGRAM_BOT_TOKEN", botToken);
+      telegramBot = "your bot";
+      break;
+    }
+  }
+}
+
 // ── Write ──────────────────────────────────────────────────────────────────
 const file = platform === "standalone" ? ".env" : ".env.local";
 const path = join(process.cwd(), file);
@@ -218,6 +246,7 @@ if (platform === "standalone") {
   say(`  sign in with: ${consoleToken}`);
   say("  keep .data/, .eve/ and the bot-computer Docker volume on storage that survives restarts");
   say("  npm run dev                     # for hacking on Bot itself, with the same .env");
+  if (telegramBot !== null) say(`  Telegram: open the console, Settings → Telegram, and scan the code with your phone to pair ${telegramBot.startsWith("@") || telegramBot === "your bot" ? telegramBot : `@${telegramBot}`}.`);
 } else {
   say("Next:");
   say("  npx vercel link && npx vercel env pull   # Vercel Sandbox and AI Gateway credentials for development");
@@ -226,4 +255,5 @@ if (platform === "standalone") {
   say("  npx vercel blob create-store bot-store --access private --yes");
   say(`  npx vercel env add BOT_CONSOLE_TOKEN production   # ${consoleToken}`);
   say("  npx vercel deploy --prod");
+  say("To text HQ from Telegram: on the deployment, Settings → Telegram, paste a token from @BotFather, and scan the code.");
 }
