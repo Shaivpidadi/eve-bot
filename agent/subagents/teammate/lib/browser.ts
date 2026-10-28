@@ -193,7 +193,11 @@ export function cliOutdated(versionOutput: string, wanted: string = AGENT_BROWSE
  * installs this app's when the computer's is older.
  */
 let cliChecked: Promise<void> | null = null;
+/** After a failed check or install, when to try again: not on every action, since an install takes a while. */
+let cliRetryAt = 0;
+const CLI_RETRY_MS = 10 * 60_000;
 async function currentCli(ctx: ToolContext): Promise<void> {
+  if (cliChecked === null && Date.now() < cliRetryAt) return;
   cliChecked ??= (async () => {
     const sandbox = await ctx.getSandbox();
     const found = await sandbox.run({ command: "agent-browser --version" });
@@ -201,8 +205,9 @@ async function currentCli(ctx: ToolContext): Promise<void> {
     console.log(`[browser] moving the computer from ${found.stdout.trim()} to agent-browser ${AGENT_BROWSER_SANDBOX_VERSION}`);
     await installAgentBrowser(sandbox as never, AGENT_BROWSER_INSTALL);
   })().catch((error: unknown) => {
-    // Tried again by the next action; the old CLI still serves what it knows.
+    // Tried again in a while; the old CLI still serves what it knows meanwhile.
     cliChecked = null;
+    cliRetryAt = Date.now() + CLI_RETRY_MS;
     console.warn("[browser] could not check agent-browser's version:", error instanceof Error ? error.message : error);
   });
   await cliChecked;
