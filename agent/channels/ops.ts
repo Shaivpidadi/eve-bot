@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
 
-import { DELETE, GET, PATCH, POST, PUT, SessionStrandedError, defineChannel } from "eve/channels";
+import { DELETE, GET, PATCH, POST, PUT, SessionStrandedError, defineChannel, type RouteHandlerArgs } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
 
@@ -26,14 +26,15 @@ import { FIELDS as MEMORY_FIELDS, forget as forgetMemory, isMemoryKind, isMemory
 import { CATALOG } from "../lib/catalog";
 import { addConnector, completeOAuth, confirmGuessedReads, disconnectOAuth, getConnector, listConnectors, needsConnect, OAUTH_CALLBACK_PATH, publicConnector, recheckConnector, removeConnector, replaceKey, startOAuth, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
-import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
+import { botIdForRoom, HQ_ROOM, isRoomName, roomAddress, roomAttributes, roomForBot, TELEGRAM_ROOM } from "../lib/rooms";
 import { getRoomState, isWedged, noteAnswered, noteBranch, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
 import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
 import { isProjectWorker, workerEverySeconds, workerTick } from "../lib/worker";
-import { connectFromEnv, connectOptions, connectTelegram, disconnectTelegram, readTelegramLink, repairTelegram, sendToPairedChat, statusOf, TelegramError } from "../lib/telegram";
+import { connectFromEnv, connectOptions, connectTelegram, disconnectTelegram, readTelegramLink, repairTelegram, sendToPairedChat, statusOf, telegramChatFor, TelegramError } from "../lib/telegram";
+import telegram from "./telegram";
 import { ensureTelegramPolling } from "../lib/telegram-poll";
 import { gatewayCatalog } from "../lib/gateway-models";
 import { customEndpoint } from "../lib/models";
@@ -289,10 +290,23 @@ const SWEEP_EVERY_MS = 60_000;
 let lastSweepAt = 0;
 
 /** The app itself, acting in a room: what a schedule sends as. */
-/** Hands a teammate's note to its thread, as the runtime (see `teammail.ts`). */
+/**
+ * Hands the runtime's message to a room (a teammate's note, a due job's
+ * wake-up), as the runtime (see `teammail.ts`). The Telegram room is the
+ * paired chat, reached through the Telegram channel; with none paired, HQ's
+ * desk takes it.
+ */
 const sendInto =
-  (from: Sender, attachSession: Attacher) =>
+  (from: Sender, attachSession: Attacher, to: RouteHandlerArgs["to"]) =>
   async (workspaceId: string, room: string, message: string): Promise<void> => {
+    if (room === TELEGRAM_ROOM) {
+      const chat = await telegramChatFor(workspaceId);
+      if (chat !== null) {
+        await to(telegram, chat).send(message, { auth: runtimePrincipal(workspaceId, room) });
+        return;
+      }
+      room = HQ_ROOM;
+    }
     await sendToRoom(from, attachSession, workspaceId, room, message, runtimePrincipal(workspaceId, room));
     await noteSent(workspaceId, room).catch(() => undefined);
   };
@@ -337,6 +351,8 @@ function text(value: unknown, min: number, max: number): string | null {
 /** A valid room name, and for a bot's thread, a bot on this workspace's roster. */
 async function resolveRoom(access: Access, raw: string | undefined): Promise<string | Response> {
   if (raw === undefined || !isRoomName(raw)) return json({ error: "invalid room" }, 400);
+  // HQ's Telegram conversation lives in the chat, not in a console thread.
+  if (raw === TELEGRAM_ROOM) return json({ error: "That conversation is in Telegram." }, 404);
   const botId = botIdForRoom(raw);
   if (botId !== null && (await getBot(access.workspaceId, botId)) === null) {
     return json({ error: "no such bot" }, 404);
@@ -432,13 +448,13 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     }),
 
     /** Everything the console needs: the roster with presence, and the feed. */
-    GET("/bot/v1/state", async (request, { attachSession, from, waitUntil }) => {
+    GET("/bot/v1/state", async (request, { attachSession, from, waitUntil, to }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       void noteOrigin(request);
       const after = new URL(request.url).searchParams.get("after");
       // The console polls this every few seconds, so teammates' notes to each other go out here.
-      waitUntil(deliverNotes(sendInto(from, attachSession), { workspaceId: gate.access.workspaceId }).catch(() => 0));
+      waitUntil(deliverNotes(sendInto(from, attachSession, to), { workspaceId: gate.access.workspaceId }).catch(() => 0));
       // Pushes waiting for a retry go out with the console's poll too, so they need no background worker.
       waitUntil(flushPushQueue().catch(() => 0));
       ensureTelegramPolling();
@@ -455,9 +471,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * The server asking itself to deliver its outbox (see lib/self.ts): a job's
      * wake-up or a teammate's note, from a workflow that cannot reach a room.
      */
-    POST("/bot/v1/internal/flush", async (request, { attachSession, from, waitUntil }) => {
+    POST("/bot/v1/internal/flush", async (request, { attachSession, from, waitUntil, to }) => {
       if (!(await isInternal(request))) return json({ error: "not found" }, 404);
-      waitUntil(deliverNotes(sendInto(from, attachSession)).catch(() => 0));
+      waitUntil(deliverNotes(sendInto(from, attachSession, to)).catch(() => 0));
       return json({ flushing: true }, 202);
     }),
 
@@ -507,7 +523,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return json({ jsonrpc: "2.0", id, error: { code: -32601, message: `${method} is not offered here.` } });
     }),
 
-    POST("/bot/v1/internal/tick", async (request, { attachSession, from }) => {
+    POST("/bot/v1/internal/tick", async (request, { attachSession, from, to }) => {
       if (!(await isProjectWorker(request)) && !(await isInternal(request))) return json({ error: "not found" }, 404);
       // The daemon takes its pace from the answer, so Settings change it without a redeploy.
       const everySeconds = workerEverySeconds(await effectiveEnv());
@@ -515,7 +531,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       // A token from the environment connects on the first pass; a laptop's bot is polled from here on.
       await connectFromEnv().catch(() => null);
       ensureTelegramPolling();
-      const outcome = await workerTick(sendInto(from, attachSession));
+      const outcome = await workerTick(sendInto(from, attachSession, to));
       if (outcome.dispatch.due > 0 || outcome.notes > 0) {
         console.log(`[bot] worker: ${outcome.dispatch.due} due, ${outcome.dispatch.dispatched} dispatched, ${outcome.notes} notes, ${outcome.dispatch.ms}ms`);
       }
@@ -614,7 +630,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return json({ events: await recentTriggers() });
     }),
 
-    POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params, waitUntil }) => {
+    POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params, waitUntil, to }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       void noteOrigin(request);
@@ -636,7 +652,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
       const { session, moved } = await sendToRoom(from, attachSession, workspaceId, room, message, principal(gate.access, room));
       await noteSent(workspaceId, room).catch(() => undefined);
-      waitUntil(deliverNotes(sendInto(from, attachSession), { workspaceId }).catch(() => 0));
+      waitUntil(deliverNotes(sendInto(from, attachSession, to), { workspaceId }).catch(() => 0));
       return json({ room, sessionId: session.id, ...(recovered || moved ? { recovered: true } : {}) });
     }),
 
@@ -1510,7 +1526,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * nearest saved point, and a fresh run is dispatched, briefed with the
      * journal up to there and with what cannot be undone.
      */
-    POST("/bot/v1/jobs/:jobId/rewind", async (request, { attachSession, from, params }) => {
+    POST("/bot/v1/jobs/:jobId/rewind", async (request, { attachSession, from, params, to }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const body = await readJson(request);
@@ -1525,7 +1541,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const interrupt = interruptVia(attachSession, `Rewound to step ${index} by ${gate.access.user}`);
       for (const sessionId of outcome.sessions) await interrupt(sessionId).catch(() => undefined);
       if (outcome.sessions.length > 0) await stopRunCommands(outcome.sessions).catch(() => null);
-      const dispatched = await dispatchDue((job, message) => sendInto(from, attachSession)(job.workspaceId, job.room, message));
+      const dispatched = await dispatchDue((job, message) => sendInto(from, attachSession, to)(job.workspaceId, job.room, message));
       return json({
         rewound: true,
         job: { id: outcome.job.id, title: outcome.job.title, status: outcome.job.status, steps: (outcome.job.journal ?? []).length },
@@ -1599,12 +1615,12 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * when it opens, so a job stranded by a restart is picked up in a minute
      * rather than at the next cron. At most one pass a minute per process.
      */
-    POST("/bot/v1/jobs/sweep", async (request, { attachSession, from }) => {
+    POST("/bot/v1/jobs/sweep", async (request, { attachSession, from, to }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       if (Date.now() - lastSweepAt < SWEEP_EVERY_MS) return json({ swept: false, reason: "swept recently" });
       lastSweepAt = Date.now();
-      const outcome = await dispatchDue((job, message) => sendInto(from, attachSession)(job.workspaceId, job.room, message));
+      const outcome = await dispatchDue((job, message) => sendInto(from, attachSession, to)(job.workspaceId, job.room, message));
       if (outcome.due > 0) console.log(`[bot] sweep: ${outcome.due} due, ${outcome.dispatched} dispatched, ${outcome.stranded} stranded, ${outcome.ms}ms`);
       return json({ swept: true, build: buildId(), ...outcome });
     }),

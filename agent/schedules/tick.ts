@@ -1,11 +1,10 @@
 import { defineSchedule } from "eve/schedules";
 
-import ops from "../channels/ops";
 import { repairAllReservations } from "../lib/budget";
 import { reapIdleScreens } from "../lib/computer/reaper";
 import { chargeComputerRuntime } from "../lib/computer-spend";
 import { dispatchDue } from "../lib/dispatch";
-import { roomAttributes } from "../lib/rooms";
+import { sendToRoomAs } from "../lib/room-delivery";
 import { deliverNotes } from "../lib/teammail";
 
 /**
@@ -25,11 +24,7 @@ export default defineSchedule({
   cron: process.env.BOT_TICK_CRON ?? "17 6 * * *",
   run({ to, waitUntil, appAuth }) {
     waitUntil(
-      dispatchDue((job, message) =>
-        to(ops, { workspaceId: job.workspaceId, room: job.room })
-          .send(message, { auth: { ...appAuth, attributes: roomAttributes(job.workspaceId, job.room) } })
-          .then(() => undefined),
-      ).then((outcome) => {
+      dispatchDue((job, message) => sendToRoomAs(to, appAuth, job.workspaceId, job.room, message)).then((outcome) => {
         // One line per pass, so a server log shows the watchdog is alive.
         console.log(
           `[bot] watchdog: ${outcome.due} due, ${outcome.dispatched} dispatched${outcome.stranded > 0 ? `, ${outcome.stranded} stranded by a restart` : ""}, ${outcome.ms}ms`,
@@ -38,11 +33,7 @@ export default defineSchedule({
     );
     // Teammates' notes to each other that no console pass delivered yet.
     waitUntil(
-      deliverNotes((workspaceId, room, message) =>
-        to(ops, { workspaceId, room })
-          .send(message, { auth: { ...appAuth, attributes: roomAttributes(workspaceId, room) } })
-          .then(() => undefined),
-      ).catch(() => 0),
+      deliverNotes((workspaceId, room, message) => sendToRoomAs(to, appAuth, workspaceId, room, message)).catch(() => 0),
     );
     // Browsers nobody is using are stopped; they start again on the next use.
     waitUntil(reapIdleScreens().catch(() => 0));

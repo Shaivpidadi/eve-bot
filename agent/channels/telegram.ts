@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 
 import { telegramChannel, type TelegramContext } from "eve/channels/telegram";
 
-import { HQ_ROOM } from "../lib/rooms";
+import { roomAttributes, TELEGRAM_ROOM } from "../lib/rooms";
+import { noteAsked } from "../lib/roomstate";
 import { pairTelegramChat, readTelegramLink, telegramToken } from "../lib/telegram";
 
 /**
@@ -51,12 +52,14 @@ export default telegramChannel({
     }
 
     await ctx.telegram.startTyping();
+    // What the person said, so "ask Atlas to…" hands the work to Atlas (see `lib/routing.ts`), as in the console.
+    if (text !== "") await noteAsked(link.workspaceId, TELEGRAM_ROOM, text, new Date().toISOString()).catch(() => undefined);
     return {
       auth: {
         principalType: "user",
         principalId: `telegram:${message.from.id}`,
         authenticator: "telegram",
-        attributes: { workspaceId: link.workspaceId, room: HQ_ROOM, name: nameOf(message.from), channel: "telegram" },
+        attributes: { ...roomAttributes(link.workspaceId, TELEGRAM_ROOM), name: nameOf(message.from) },
       },
       title: "Telegram",
     };

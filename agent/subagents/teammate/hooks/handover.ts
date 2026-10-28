@@ -47,7 +47,7 @@ export default defineHook({
           botId: binding.botId,
           jobId: binding.jobId,
           text: `Needs you to take over its browser: ${reason}`,
-          data: { requestIds: [takeover.requestId] },
+          data: { requestIds: [takeover.requestId], takeover: true },
         });
       } catch {
         // The card in the thread still asks.

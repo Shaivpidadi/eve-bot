@@ -245,6 +245,15 @@ export async function saveTelegramOffset(offset: number): Promise<void> {
 }
 
 /**
+ * Where work for the Telegram room goes: the paired chat, when this
+ * workspace's bot has one. Null sends it to HQ's desk instead.
+ */
+export async function telegramChatFor(workspaceId: string): Promise<{ readonly chatId: string } | null> {
+  const link = await readTelegramLink();
+  return link === null || link.chat === null || link.workspaceId !== workspaceId ? null : { chatId: link.chat.id };
+}
+
+/**
  * Sends the paired chat a message outside a conversation (an alert, the
  * console's test). Plain text; false when nothing is paired or Telegram refused.
  */

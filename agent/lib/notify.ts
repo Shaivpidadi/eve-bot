@@ -119,9 +119,9 @@ function repeated(workspaceId: string, tag: string, now: number): boolean {
  * quiet hours unless it needs them. Returns how many people it reached or
  * holds for. The store and the push sender are loaded only here.
  */
-export async function deliver(workspaceId: string, alert: Alert): Promise<number> {
+export async function deliver(workspaceId: string, alert: Alert, options: { readonly telegram?: boolean } = {}): Promise<number> {
   const [{ holdPush, sendPush, subscriptions }, { readPrefs }] = await Promise.all([import("./push"), import("./push-prefs")]);
-  const telegram = await toTelegram(workspaceId, alert).catch(() => 0);
+  const telegram = options.telegram === false ? 0 : await toTelegram(workspaceId, alert).catch(() => 0);
   const people = [...new Set((await subscriptions(workspaceId)).map((subscription) => subscription.person))];
   if (people.length === 0) return telegram;
   const [{ effectiveEnv }, { defaultTimezone }] = await Promise.all([import("./settings/store"), import("./schedule")]);
@@ -138,6 +138,22 @@ export async function deliver(workspaceId: string, alert: Alert): Promise<number
     reached += 1;
   }
   return reached + telegram;
+}
+
+/**
+ * Whether the Telegram chat already shows what the event is about: its
+ * question or approval as buttons, or HQ's report of the job, because the
+ * work belongs to the Telegram room. A browser takeover is the exception: it
+ * is done from the console, so the chat is told.
+ */
+export async function shownInTelegram(event: Pick<ActivityEvent, "workspaceId" | "jobId" | "data">): Promise<boolean> {
+  const data = event.data ?? {};
+  if (data.takeover === true) return false;
+  const { TELEGRAM_ROOM } = await import("./rooms");
+  if (typeof data.room === "string") return data.room === TELEGRAM_ROOM;
+  if (event.jobId === null) return false;
+  const { getJob } = await import("./jobs");
+  return (await getJob(event.workspaceId, event.jobId).catch(() => null))?.room === TELEGRAM_ROOM;
 }
 
 /**
@@ -172,7 +188,7 @@ export async function notifyFor(event: ActivityEvent): Promise<void> {
     const bot = event.botId === null ? null : await getBot(event.workspaceId, event.botId).catch(() => null);
     const alert = alertFor(event, event.botId === null ? null : (bot?.name ?? "A Bot"));
     if (alert === null || repeated(event.workspaceId, alert.tag, Date.now())) return;
-    await deliver(event.workspaceId, alert);
+    await deliver(event.workspaceId, alert, { telegram: !(await shownInTelegram(event)) });
   } catch (error) {
     console.warn("[push] could not notify:", error instanceof Error ? error.message : String(error));
   }

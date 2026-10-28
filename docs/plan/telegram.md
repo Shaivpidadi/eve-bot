@@ -22,7 +22,7 @@ async functions, so a token saved in the console works without a rebuild.
 
 ## What the person gets
 
-- **Talk to HQ.** A Telegram chat is a conversation with HQ (room `desk`), with HQ's tools: hire, assign,
+- **Talk to HQ.** A Telegram chat is a conversation with HQ (its own room, `telegram`), with HQ's tools: hire, assign,
   run jobs, ask about the team. It is its own conversation; the console does not show its transcript.
   Jobs, the feed and the board are shared.
 - **Approvals on the phone.** A sign-off or tool approval raised in that chat's work shows as buttons.
@@ -78,8 +78,24 @@ async functions, so a token saved in the console works without a rebuild.
 - `[done]` `docs/configuration.md#telegram`: three steps, how updates arrive, one bot per deployment. README line,
   `.env.example`.
 
-### T8. Live check `[to-do]`
-- `[to-do]` Locally with a real bot: connect, pair by QR, ask HQ for a job, approve from a button, get the done alert.
+### T8. The chat as a room `[done]`
+Without it, work started from Telegram (a routine, a scheduled job, a teammate's answer) came back to the console's
+HQ thread.
+- `[done]` `TELEGRAM_ROOM` (`telegram`) in `rooms.ts`: Telegram turns carry it, so `assign_job` records it on the job.
+- `[done]` Delivery: the ops channel's runtime sends (`sendInto`) and the schedules (`lib/room-delivery.ts`, used by
+  the watchdog and the standup) send the Telegram room to the paired chat through the Telegram channel, and to HQ's
+  desk while none is paired. The console's room routes refuse it.
+- `[done]` A Bot answering "HQ" answers where HQ last wrote to it from, for a day (`teammail.ts` `hqRoomFor`); HQ in
+  the chat writing to "HQ" is told that is itself.
+- `[done]` The person's message is recorded as the room's `asked`, so "ask Atlas to…" routes to Atlas as in the
+  console.
+- `[done]` Alerts for what the chat already shows (its approvals, its jobs) are not sent to it again; a browser
+  takeover still is. `BOT_STANDUP_ROOM=telegram` posts the standup to the chat.
+- **Tests:** `tests/telegram-room.test.ts`.
+
+### T9. Live check `[to-do]`
+- `[to-do]` Locally with a real bot: connect, pair by QR, ask HQ for a job, approve from a button, a routine's next
+  cycle reports in the chat, a pending button still works after a wake-up arrives.
 - `[to-do]` On a Vercel preview or production: the webhook is set to the production domain and answers.
 
 ## Out of scope for now

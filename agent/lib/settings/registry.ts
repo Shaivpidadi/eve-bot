@@ -171,7 +171,7 @@ export const SETTINGS: readonly SettingDef[] = [
   // ─── Team ────────────────────────────────────────────────────────────────
   { env: "BOT_TIMEZONE", area: "Team", label: "Timezone", help: "For routines and standups, an IANA name such as Europe/Berlin.", scope: "workspace", tier: "live", kind: { type: "text", placeholder: "America/New_York" }, fallback: "The server's" },
   { env: "BOT_DEFAULT_BOT_NAME", area: "Team", label: "First Bot's name", help: "The Bot a new workspace starts with.", scope: "workspace", tier: "live", kind: { type: "text", max: 40 }, fallback: "Atlas" },
-  { env: "BOT_STANDUP_ROOM", area: "Team", label: "Standup thread", help: "Where the daily standup is posted.", scope: "deployment", tier: "live", kind: { type: "text", placeholder: "desk" }, fallback: "HQ's thread" },
+  { env: "BOT_STANDUP_ROOM", area: "Team", label: "Standup thread", help: "Where the daily standup is posted: desk, a Bot's thread, or telegram for the paired Telegram chat.", scope: "deployment", tier: "live", kind: { type: "text", placeholder: "desk" }, fallback: "HQ's thread" },
   { env: "BOT_ACTIVITY_RETAIN", area: "Team", label: "Activity kept", help: "How many feed entries each workspace keeps.", scope: "deployment", tier: "live", kind: { type: "number", min: 50, max: 10_000, integer: true, unit: "entries" }, fallback: "500" },
 
   // ─── Data controls ───────────────────────────────────────────────────────
