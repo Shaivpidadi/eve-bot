@@ -1,4 +1,5 @@
 import { getBot } from "../bots";
+import { checkpointComputerFor, ensureComputerRestoredFor } from "../computer-backup";
 import { computerControl } from "../computer/control";
 import { killRunCommand, runCommand } from "../computer/shell";
 import { bindRun, describeRunRefusal, getJob } from "../jobs";
@@ -57,6 +58,8 @@ export async function startLocalRun(
   const runId = newRunId();
   const bound = await bindRun(input.workspaceId, input.jobId, input.token, runId);
   if (!bound.ok) return { ok: false, error: describeRunRefusal(bound.reason, input.jobId) };
+  // A replaced computer gets its files back before the run touches them, as an eve Bot's job brief does.
+  await ensureComputerRestoredFor(input.workspaceId, io);
 
   // The run's secret: its MCP calls act for this job's run, and nothing else, until it stops.
   const secret = newRunSecret();
@@ -140,6 +143,9 @@ export async function lookAtLocalRun(engine: LocalEngine, runId: string, cursor:
   const paid = signIn(engine, env)?.paid ?? false;
   const spend = look.outcome === null ? [] : [{ usd: paid ? (look.outcome.usd ?? 0) : 0, model: look.outcome.model ?? ENGINE_NAMES[engine] }];
   const heard = String(look.cursor);
+  // The run's work is backed up as it goes, and once more when it ends, as an eve Bot's progress notes and finish do.
+  const workspaceId = (await recordOf(runId))?.workspaceId;
+  if (workspaceId !== undefined) await checkpointComputerFor(workspaceId, io, result.kind === "working" ? {} : { minIntervalMs: 60_000 });
   return result.kind === "working"
     ? { kind: "working", cursor: heard, spend, said: look.said, partial: "", heard }
     : result.ok
@@ -160,6 +166,11 @@ export async function stopLocalRun(engine: LocalEngine, runId: string): Promise<
     await io.run(`rm -rf ${quote(`${runDir(runId)}/codex-home`)}`, { timeoutMs: 15_000 }).catch(() => undefined);
   }
   await forget(runId);
+}
+
+async function recordOf(runId: string): Promise<LocalRunRecord | null> {
+  const by = (await readDoc<{ hash: string }>(byRunKey(runId)).catch(() => null))?.value;
+  return by === undefined ? null : ((await readDoc<LocalRunRecord>(runSecretKey(by.hash)).catch(() => null))?.value ?? null);
 }
 
 async function forget(runId: string): Promise<void> {
