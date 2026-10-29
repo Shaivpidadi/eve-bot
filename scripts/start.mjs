@@ -62,8 +62,9 @@ if (needed || templateMissing) {
     ? spawnSync(process.execPath, [join(process.cwd(), "scripts", "build.mjs")], { stdio: "inherit" })
     : spawnSync(process.execPath, [join(process.cwd(), "node_modules", "eve", "bin", "eve.js"), "build"], { stdio: "inherit" });
   // scripts/build.mjs records what it used itself.
-  if (built.status === 0 && !needed) savedSettings("record");
-  else if (needed) {
+  if (built.status === 0) {
+    if (!needed) savedSettings("record");
+  } else if (needed) {
     console.error("[bot] The agent did not build; see above.");
     process.exit(built.status ?? 1);
   } else {
