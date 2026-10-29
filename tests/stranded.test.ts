@@ -59,7 +59,9 @@ async function running() {
 }
 
 describe("a job stranded by a rebuild", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    // The override is the process's (every bundled copy of the module reads it), so a module reset alone keeps it.
+    (await import("../agent/lib/build")).resetBuildId();
     vi.resetModules();
     vi.stubEnv("BOT_STORE", "memory");
     vi.stubEnv("VERCEL", "");
