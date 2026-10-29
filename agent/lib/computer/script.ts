@@ -295,7 +295,7 @@ WIDTH=__WIDTH__
 HEIGHT=__HEIGHT__
 PACKAGES="tigervnc-standalone-server websockify xdotool x11-utils x11-xserver-utils xauth iptables nftables fonts-noto-core fonts-noto-color-emoji fonts-liberation ca-certificates curl openbox tint2 pcmanfm xfce4-terminal dbus-x11"
 DESK="__DESKTOP__"
-CHROME_FLAGS="--remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --password-store=basic --disable-dev-shm-usage --window-position=0,0 --start-maximized --restore-last-session --hide-crash-restore-bubble --noerrdialogs --test-type --disable-features=Translate,MediaRouter __EXTRA_CHROME_FLAGS__"
+CHROME_FLAGS="--remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --password-store=basic --disable-dev-shm-usage --window-position=0,0 --start-maximized --restore-last-session --hide-crash-restore-bubble --noerrdialogs --test-type --disable-features=Translate,MediaRouter --enable-features=WebMCPTesting,DevToolsWebMCPSupport __EXTRA_CHROME_FLAGS__"
 
 # Chrome keeps its renderers in their own user namespaces. An ordinary Docker
 # container forbids creating those, so Chrome must run without its sandbox
@@ -649,6 +649,26 @@ cmd_close_tab() {
   node "$BIN/bot-computer-cdp.mjs" close-target "$((9300 + n))" "$target"
 }
 
+# end-run SESSION: a run is over, so its agent-browser session goes: its
+# recording is stopped first (so the video is whole), then the session is
+# closed, which ends its background process and the recorder it started. A
+# session attached to the shared browser over DevTools leaves the browser
+# running. A session that is not running is left alone: any command would
+# start one.
+cmd_end_run() {
+  local session=$1 ab pid
+  printf '%s' "$session" | grep -Eq '^run-[A-Za-z0-9_-]{1,60}$' || fail args "expected a run's session name"
+  pid=$(cat "$HOME/.agent-browser/$session.pid" 2>/dev/null)
+  if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+    printf '{"ok":true,"ended":false}\n'
+    return 0
+  fi
+  ab=$(command -v agent-browser || printf '%s' "$HOME/.local/bin/agent-browser")
+  AGENT_BROWSER_SESSION="$session" timeout 30 "$ab" record stop >/dev/null 2>&1 || true
+  AGENT_BROWSER_SESSION="$session" timeout 20 "$ab" close >/dev/null 2>&1 || true
+  printf '{"ok":true,"ended":true}\n'
+}
+
 # launch KIND: what the dock's icons do. The screen comes from DISPLAY.
 cmd_launch() {
   local kind=$1 n bus
@@ -754,8 +774,36 @@ cmd_identity() {
 # settle: stop an install that is still running and leave dpkg consistent, so a
 # snapshot taken now (a template) has no half-unpacked package in it. Whatever
 # it did not finish is installed when the computer is first used.
+# recorder: ffmpeg, which agent-browser records a tab through. It is large and
+# only wanted where recording is on, so it is installed the first time it is
+# asked for, in the background; ready is true once it is there.
+RECORDER_PATTERN='^bash [^ ]*bot-computer recorder-now( |$)'
+
+cmd_recorder() {
+  if command -v ffmpeg >/dev/null; then
+    printf '{"ok":true,"ready":true}\n'
+    return
+  fi
+  running recorder "$RECORDER_PATTERN" || daemon recorder bash "$0" recorder-now
+  printf '{"ok":true,"ready":false}\n'
+}
+
+install_recorder() {
+  command -v ffmpeg >/dev/null && return 0
+  exec 9>"$RUN/install.lock"
+  flock -w 900 9 || fail recorder "another install is still running"
+  command -v ffmpeg >/dev/null && return 0
+  local log="$RUN/recorder.log"
+  local apt="sudo -n env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::Retries=3 -y -qq"
+  sudo -n true 2>/dev/null || fail recorder "installing ffmpeg needs sudo on the computer"
+  use_reachable_mirror
+  $apt update >>"$log" 2>&1 || fail recorder "apt-get update failed: $(tail -n 5 "$log")"
+  $apt install --no-install-recommends ffmpeg >>"$log" 2>&1 || fail recorder "could not install ffmpeg: $(tail -n 5 "$log")"
+}
+
 cmd_settle() {
   stop_process installer "$INSTALLER_PATTERN"
+  stop_process recorder "$RECORDER_PATTERN"
   sudo -n pkill -TERM -x apt-get 2>/dev/null
   sudo -n pkill -TERM -x dpkg 2>/dev/null
   sleep 1
@@ -825,12 +873,18 @@ case "$1" in
     install_software
     printf '{"ok":true,"installed":true}\n'
     ;;
+  recorder) cmd_recorder ;;
+  recorder-now)
+    install_recorder
+    printf '{"ok":true,"ready":true}\n'
+    ;;
   ensure) cmd_ensure "$2" ;;
   stop) cmd_stop "$2" ;;
   status) cmd_status ;;
   shot) cmd_shot "$2" "$3" "$4" "$5" ;;
   activate) cmd_activate "$2" "$3" ;;
   close-tab) cmd_close_tab "$2" "$3" ;;
+  end-run) cmd_end_run "$2" ;;
   open) cmd_open "$2" "$3" "$4" ;;
   tabs) cmd_tabs "$2" "$3" ;;
   launch) cmd_launch "$2" ;;
@@ -842,7 +896,7 @@ case "$1" in
   recover) cmd_recover ;;
   settle) cmd_settle ;;
   drive) cmd_drive "$2" ;;
-  *) fail args "usage: bot-computer version | install | ensure N | stop N | status | launch browser|files|terminal | raise N | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | isolate PORTS | recover | settle | drive MOUNT" ;;
+  *) fail args "usage: bot-computer version | install | recorder | ensure N | stop N | status | launch browser|files|terminal | raise N | close-tab N TARGET | end-run SESSION | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | isolate PORTS | recover | settle | drive MOUNT" ;;
 esac
 `;
 

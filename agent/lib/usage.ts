@@ -1,3 +1,5 @@
+import { runs, type SessionView } from "eve/events";
+
 import { readDoc, updateDoc } from "./store";
 
 /**
@@ -28,7 +30,28 @@ export const NO_USAGE: Usage = { inputTokens: 0, outputTokens: 0, cacheReadToken
 
 const num = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
 
-/** The usage one `step.completed` event reports, as this ledger counts it. */
+/**
+ * One name per model: eve names a step's model by how it was handed over, so
+ * the same model reads `gateway/minimax/…` or `custom/gpt-oss:20b` from one
+ * session and `minimax/…` or `gpt-oss:20b` from another.
+ */
+export const modelName = (modelId: string): string => modelId.replace(/^(gateway|custom)\//, "");
+
+/**
+ * Spend a session made itself, from a `usage.recorded` fact: a model run (with
+ * the model the view says it ran on) or a compaction. Null for what a delegated
+ * call reports on behalf of the agent it called, which that agent's session
+ * records itself, and for anything not a model's.
+ */
+export function ownSpend(data: { readonly kind: string; readonly owner?: { readonly runId: string } | { readonly callId: string } | { readonly changeId: string } }, view: SessionView): { readonly modelId: string | null } | null {
+  if (data.kind !== "model") return null;
+  const owner = data.owner;
+  if (owner !== undefined && "callId" in owner) return null;
+  const runId = owner !== undefined && "runId" in owner ? owner.runId : null;
+  return { modelId: runId === null ? null : (runs(view).find((run) => run.runId === runId)?.modelId ?? null) };
+}
+
+/** The usage one `usage.recorded` fact reports, as this ledger counts it: one model run. */
 export function usageOfStep(data: unknown, modelId: string | null): Usage {
   const raw = (data as { usage?: Record<string, unknown> } | null)?.usage ?? {};
   return {
@@ -38,12 +61,12 @@ export function usageOfStep(data: unknown, modelId: string | null): Usage {
     cacheWriteTokens: num(raw.cacheWriteTokens),
     costUsd: num(raw.costUsd),
     steps: 1,
-    models: modelId === null ? {} : { [modelId]: 1 },
+    models: modelId === null ? {} : { [modelName(modelId)]: 1 },
   };
 }
 
 /**
- * Whether a `step.completed` event's usage carries a cost. eve copies it from
+ * Whether a `usage.recorded` fact's usage carries a cost. eve copies it from
  * the provider (AI Gateway, or `pricing.ts` on a custom endpoint); a step with
  * none is unpriced, which the budget counts as unknown rather than as free.
  */

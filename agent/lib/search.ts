@@ -47,7 +47,11 @@ const isProvider = (value: string): value is SearchProvider => (SEARCH_PROVIDERS
  * How search is configured, or null when it is not. `BOT_SEARCH_URL` alone
  * means a SearXNG instance; a hosted provider needs its key.
  */
-export function searchConfig(env: Readonly<Record<string, string | undefined>> = process.env): SearchConfig | null {
+export function searchConfig(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  /** False where the key is read at each search instead (a key saved, sealed, in Settings is not in the environment). */
+  keyNow = true,
+): SearchConfig | null {
   const named = env.BOT_SEARCH_PROVIDER?.trim().toLowerCase() ?? "";
   const url = env.BOT_SEARCH_URL?.trim().replace(/\/+$/, "") ?? "";
   const apiKey = env.BOT_SEARCH_API_KEY?.trim() || undefined;
@@ -64,7 +68,7 @@ export function searchConfig(env: Readonly<Record<string, string | undefined>> =
     }
     return { provider, url, apiKey };
   }
-  if (apiKey === undefined) {
+  if (apiKey === undefined && keyNow) {
     console.warn(`[bot] BOT_SEARCH_PROVIDER=${provider} needs BOT_SEARCH_API_KEY; web search is off.`);
     return null;
   }

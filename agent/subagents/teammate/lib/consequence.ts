@@ -33,8 +33,10 @@ export type Verdict = "safe" | "consequential" | "unknown";
  * - submit: pressing Enter in a field, which submits whatever it belongs to.
  * - select / check / uncheck: setting a dropdown or a checkbox.
  * - upload: attaching files to a file input.
+ * - tool: calling a tool the page offers (WebMCP, see `page-tools.ts`), which
+ *   `classifyTool` there decides on, not `classifyAction`.
  */
-export type ActionKind = "click" | "fill" | "submit" | "select" | "check" | "uncheck" | "upload";
+export type ActionKind = "click" | "fill" | "submit" | "select" | "check" | "uncheck" | "upload" | "tool";
 
 /** The element as the accessibility tree describes it. */
 export interface TreeFacts {
@@ -161,7 +163,7 @@ const UI_LOCAL_LABEL = new RegExp(
 const ADDRESS_WORDS = wordList(COMMITTING);
 
 /** Paths where a plain-looking button is likely to spend. */
-const MONEY_PATH = /(^|[/._-])(checkout|payment|payments|pay|cart|basket|purchase|transfer|wire|donate|subscribe|upgrade)([/._-]|$)/i;
+export const MONEY_PATH = /(^|[/._-])(checkout|payment|payments|pay|cart|basket|purchase|transfer|wire|donate|subscribe|upgrade)([/._-]|$)/i;
 
 /** Roles a click on moves around or reveals, rather than commits. */
 const NAVIGATING_ROLES = new Set([
@@ -431,3 +433,21 @@ export function refsMatching(tree: string, by: "text" | "role", target: string, 
  */
 const SCRIPT_URL = /^(javascript|vbscript|data|blob):/i;
 export const scriptUrl = (url: string): boolean => SCRIPT_URL.test(url.replace(/[\u0000- \u007f]/g, ""));
+
+/**
+ * Whether an address is a web page a Bot may open: `http(s)`, a bare domain
+ * (`app.example.com`, `localhost:3000`), or `about:blank`. Anything else is
+ * refused: a script (above), and a file on the computer or one of the
+ * browser's own pages (`file:`, a bare path, `chrome:`, `view-source:`), which
+ * would read what the computer keeps from Bots (the browser profiles, the
+ * sign-in jar) around the shell's fence.
+ */
+export function webAddress(url: string): boolean {
+  const address = url.replace(/[\u0000- \u007f]/g, "").toLowerCase();
+  if (address === "about:blank") return true;
+  if (/^[a-z][a-z0-9+.-]*:\/\//.test(address)) return /^https?:\/\//.test(address);
+  if (/^[./~\\]/.test(address)) return false;
+  // A scheme without slashes is a host and port (`localhost:3000`) only when a port follows.
+  const scheme = /^([a-z][a-z0-9+.-]*):/.exec(address)?.[1];
+  return scheme === undefined || /^\d/.test(address.slice(scheme.length + 1));
+}

@@ -5,7 +5,7 @@ import { COMPUTER_NAME, COMPUTER_PATHS } from "./computer";
 import { computerMode, localComputer } from "./computer-config";
 import { bindDrive, claimDrive, driveWanted, type DriveBinding } from "./computer-drive";
 import { currentKind, sandboxHands, type ComputerIo, type HandsKindName } from "./hands";
-import { sandboxIo } from "./computer/runtime";
+import { toolIo } from "./computer/runtime";
 import { sessionBinding } from "./computer/screens";
 import { operator } from "./session";
 import { deleteDoc, readBytes, readDoc, writeBytes, writeDoc } from "./store";
@@ -30,7 +30,31 @@ import { effectiveEnv } from "./settings/store";
  * become an hourly copy kept elsewhere.
  */
 
-type Computer = Awaited<ReturnType<ToolContext["getSandbox"]>>;
+/**
+ * A computer as a restore or backup sees it: its io, the workspace whose feed
+ * hears how it went, and, for a run bound to a screen, the browsers' sign-ins
+ * to save into the identity jar before an archive.
+ */
+interface Target {
+  readonly workspaceId: () => string;
+  readonly io: () => Promise<ComputerIo>;
+  readonly exportSignIns?: () => Promise<void>;
+}
+
+/** An eve run's computer, through its tool context. */
+function toolTarget(ctx: ToolContext): Target {
+  return {
+    workspaceId: () => operator(ctx).workspaceId,
+    io: () => toolIo(ctx),
+    exportSignIns: async () => {
+      const binding = await sessionBinding(operator(ctx).workspaceId, ctx.session.id);
+      if (binding !== null) await sandboxHands(await ctx.getSandbox(), ctx.abortSignal).identity.export(binding.n).catch(() => undefined);
+    },
+  };
+}
+
+/** A run that holds only the computer's io: a plan engine's (see `engines/local-run.ts`). */
+const ioTarget = (workspaceId: string, io: ComputerIo): Target => ({ workspaceId: () => workspaceId, io: async () => io });
 
 interface Manifest {
   readonly generation: string;
@@ -89,6 +113,8 @@ function archiveCommand(generation: string): string {
   const excludes = [
     "workspace/sessions",
     "workspace/attachments",
+    // Claude Code and Codex on the owner's plan: their CLIs (reinstalled on use) and each run's files.
+    "workspace/.engines",
     // Browser profiles are large and mostly cache; sign-ins travel in the
     // identity jar, which is kept.
     "workspace/.computer/chrome",
@@ -126,8 +152,8 @@ const RESTORE_COMMAND = [
 ].join("\n");
 
 /** The computer's CPU architecture, or null when it cannot be read. */
-async function architecture(computer: Computer): Promise<string | null> {
-  const result = await computer.run({ command: "uname -m" });
+async function architecture(io: Pick<ComputerIo, "run">): Promise<string | null> {
+  const result = await io.run("uname -m");
   const arch = result.stdout.trim();
   return result.exitCode === 0 && arch !== "" ? arch : null;
 }
@@ -161,8 +187,17 @@ export function restoresOnto(manifest: { readonly kind?: string }, kind: HandsKi
  * the latest backup.
  */
 export async function ensureComputerRestored(ctx: ToolContext): Promise<boolean> {
+  return ensureRestored(toolTarget(ctx));
+}
+
+/** `ensureComputerRestored` for a plan engine's run, which reaches the computer through its io. */
+export async function ensureComputerRestoredFor(workspaceId: string, io: ComputerIo): Promise<boolean> {
+  return ensureRestored(ioTarget(workspaceId, io));
+}
+
+async function ensureRestored(target: Target): Promise<boolean> {
   if (Date.now() - verifiedAt < VERIFIED_FOR_MS) return true;
-  restoring ??= restoreIfReplaced(ctx).finally(() => {
+  restoring ??= restoreIfReplaced(target).finally(() => {
     restoring = null;
   });
   return restoring;
@@ -176,50 +211,59 @@ export async function checkpointComputer(
   ctx: ToolContext,
   options: { minIntervalMs?: number } = {},
 ): Promise<void> {
+  await checkpointTarget(toolTarget(ctx), options);
+}
+
+/** `checkpointComputer` for a plan engine's run, which reaches the computer through its io. */
+export async function checkpointComputerFor(workspaceId: string, io: ComputerIo, options: { minIntervalMs?: number } = {}): Promise<void> {
+  await checkpointTarget(ioTarget(workspaceId, io), options);
+}
+
+async function checkpointTarget(target: Target, options: { minIntervalMs?: number }): Promise<void> {
   const minIntervalMs = options.minIntervalMs ?? backupEveryMs(await effectiveEnv());
   // A backup already running covers this moment.
   if (checkpointing !== null || Date.now() - lastCheckpointAt < minIntervalMs) return;
-  checkpointing = checkpoint(ctx, minIntervalMs).finally(() => {
+  checkpointing = checkpoint(target, minIntervalMs).finally(() => {
     checkpointing = null;
   });
   await checkpointing;
 }
 
-async function currentGeneration(computer: Computer): Promise<string | null> {
-  const result = await computer.run({ command: `cat ${MARKER_PATH} 2>/dev/null || true` });
+async function currentGeneration(io: Pick<ComputerIo, "run">): Promise<string | null> {
+  const result = await io.run(`cat ${MARKER_PATH} 2>/dev/null || true`);
   const value = result.stdout.trim();
   return value === "" ? null : value;
 }
 
-async function restoreIfReplaced(ctx: ToolContext): Promise<boolean> {
+async function restoreIfReplaced(target: Target): Promise<boolean> {
   let drive: DriveBinding | null = null;
   if (driveWanted()) {
     try {
-      drive = await bindDrive(sandboxIo(await ctx.getSandbox(), ctx.abortSignal));
+      drive = await bindDrive(await target.io());
     } catch (error) {
-      await noteFailure(ctx, `The computer's drive is not in use (${message(error)}), so new work is kept only by the backups.`);
+      await noteFailure(target, `The computer's drive is not in use (${message(error)}), so new work is kept only by the backups.`);
     }
     if (drive !== null && !drive.fresh) {
       verifiedAt = Date.now();
       return true;
     }
   }
-  if (!(await restoreFromBackup(ctx))) return false;
+  if (!(await restoreFromBackup(target))) return false;
   if (drive?.fresh === true) {
-    await claimDrive(sandboxIo(await ctx.getSandbox(), ctx.abortSignal)).catch((error: unknown) => noteFailure(ctx, `Could not mark the computer's drive: ${message(error)}`));
+    await claimDrive(await target.io()).catch((error: unknown) => noteFailure(target, `Could not mark the computer's drive: ${message(error)}`));
   }
   return true;
 }
 
 /** Restores the latest backup onto a replacement machine. False when that failed (reported in the feed). */
-async function restoreFromBackup(ctx: ToolContext): Promise<boolean> {
+async function restoreFromBackup(target: Target): Promise<boolean> {
   try {
     const manifest = (await readDoc<Manifest>(MANIFEST_KEY))?.value ?? null;
     if (manifest === null) {
       verifiedAt = Date.now();
       return true;
     }
-    const computer = await ctx.getSandbox();
+    const computer = await target.io();
     if ((await currentGeneration(computer)) !== null) {
       verifiedAt = Date.now();
       return true;
@@ -228,14 +272,14 @@ async function restoreFromBackup(ctx: ToolContext): Promise<boolean> {
     const kind = currentKind();
     if (!restoresOnto(manifest, kind.name)) {
       verifiedAt = Date.now();
-      await noteFailure(ctx, `Skipped restoring the computer: its backup from ${manifest.at} was taken on ${manifest.kind}, and this computer is ${kind.label}.`);
+      await noteFailure(target, `Skipped restoring the computer: its backup from ${manifest.at} was taken on ${manifest.kind}, and this computer is ${kind.label}.`);
       return true;
     }
     if (manifest.arch !== undefined && arch !== null && arch !== manifest.arch) {
       // Programs in the archive would not run here; start clean instead of half-broken.
       verifiedAt = Date.now();
       await noteFailure(
-        ctx,
+        target,
         `Skipped restoring the computer: its backup from ${manifest.at} was taken on ${manifest.arch}, and this computer is ${arch}.`,
       );
       return true;
@@ -243,27 +287,27 @@ async function restoreFromBackup(ctx: ToolContext): Promise<boolean> {
 
     const archive = await readBytes(manifest.archiveKey);
     if (archive === null) throw new Error(`the backup from ${manifest.at} is missing from storage`);
-    const prepared = await computer.run({ command: PRIVATE_DIR_COMMAND });
+    const prepared = await computer.run(PRIVATE_DIR_COMMAND);
     if (prepared.exitCode !== 0) throw new Error(prepared.stderr.trim() || "could not prepare the computer's private folder");
-    await computer.writeBinaryFile({ path: RESTORE_PATH, content: archive });
-    const result = await computer.run({ command: RESTORE_COMMAND });
+    await computer.writeBinaryFile(RESTORE_PATH, archive);
+    const result = await computer.run(RESTORE_COMMAND);
     if (result.exitCode !== 0) {
       throw new Error(result.stderr.trim() || `tar exited ${result.exitCode}`);
     }
     verifiedAt = Date.now();
     await record({
-      workspaceId: operator(ctx).workspaceId,
+      workspaceId: target.workspaceId(),
       kind: "computer.restored",
       text: `The computer was replaced, so its files were restored from the backup taken ${manifest.at}.`,
     });
     return true;
   } catch (error) {
-    await noteFailure(ctx, `Could not restore the computer from its backup: ${message(error)}`);
+    await noteFailure(target, `Could not restore the computer from its backup: ${message(error)}`);
     return false;
   }
 }
 
-async function checkpoint(ctx: ToolContext, minIntervalMs: number): Promise<void> {
+async function checkpoint(target: Target, minIntervalMs: number): Promise<void> {
   lastCheckpointAt = Date.now();
   try {
     const previous = (await readDoc<Manifest>(MANIFEST_KEY))?.value ?? null;
@@ -274,19 +318,16 @@ async function checkpoint(ctx: ToolContext, minIntervalMs: number): Promise<void
     }
     // Never archive a replacement machine before its files are back: the new
     // archive would replace the latest backup, and the old one is deleted below.
-    if (!(await ensureComputerRestored(ctx))) {
+    if (!(await ensureRestored(target))) {
       throw new Error("its files have not been restored from the latest backup yet, so that backup was kept");
     }
 
-    const computer = await ctx.getSandbox();
+    const computer = await target.io();
     // Browser profiles are not archived, so save the team's sign-ins into the
     // identity jar first; a replacement computer's browsers start from it.
-    const binding = await sessionBinding(operator(ctx).workspaceId, ctx.session.id);
-    if (binding !== null) {
-      await sandboxHands(computer, ctx.abortSignal).identity.export(binding.n).catch(() => undefined);
-    }
+    await target.exportSignIns?.();
     const generation = `gen_${Date.now().toString(36)}`;
-    const archived = await computer.run({ command: archiveCommand(generation) });
+    const archived = await computer.run(archiveCommand(generation));
     if (archived.exitCode !== 0) {
       throw new Error(archived.stderr.trim() || `tar exited ${archived.exitCode}`);
     }
@@ -298,7 +339,7 @@ async function checkpoint(ctx: ToolContext, minIntervalMs: number): Promise<void
       );
     }
 
-    const bytes = await computer.readBinaryFile({ path: ARCHIVE_PATH });
+    const bytes = await computer.readBinaryFile(ARCHIVE_PATH);
     if (bytes === null) throw new Error("the archive was not written");
     const archiveKey = `${PREFIX}/archives/${generation}.tgz`;
     // Archive first, manifest second: the manifest never points at a missing file.
@@ -314,18 +355,18 @@ async function checkpoint(ctx: ToolContext, minIntervalMs: number): Promise<void
     };
     await writeDoc(MANIFEST_KEY, manifest);
     if (previous !== null && previous.archiveKey !== archiveKey) await deleteDoc(previous.archiveKey);
-    await computer.run({ command: `rm -f ${ARCHIVE_PATH}` });
+    await computer.run(`rm -f ${ARCHIVE_PATH}`);
     lastCheckpointAt = Date.now();
   } catch (error) {
-    await noteFailure(ctx, `Could not back up the computer: ${message(error)}`);
+    await noteFailure(target, `Could not back up the computer: ${message(error)}`);
   }
 }
 
-async function noteFailure(ctx: ToolContext, text: string): Promise<void> {
+async function noteFailure(target: Target, text: string): Promise<void> {
   if (Date.now() - lastFailureNoticeAt < FAILURE_NOTICE_EVERY_MS) return;
   lastFailureNoticeAt = Date.now();
   try {
-    await record({ workspaceId: operator(ctx).workspaceId, kind: "computer.failed", text: text.slice(0, 400) });
+    await record({ workspaceId: target.workspaceId(), kind: "computer.failed", text: text.slice(0, 400) });
   } catch {
     // The feed is best-effort too.
   }

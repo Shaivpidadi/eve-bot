@@ -289,12 +289,36 @@ async function readBuilt(base: Readonly<Record<string, string | undefined>>): Pr
  * from what the running agent was built with (no record yet counts as built
  * from the environment alone).
  */
-export async function rebuildPlan(env: Readonly<Record<string, string | undefined>> = process.env): Promise<{ readonly overlay: Record<string, string>; readonly changed: boolean }> {
-  const [overlay, built] = await Promise.all([rebuildOverlay(), readBuilt(env)]);
+export async function rebuildPlan(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): Promise<{ readonly overlay: Record<string, string>; readonly secrets: Record<string, string>; readonly changed: boolean }> {
+  const [overlay, built, secrets] = await Promise.all([rebuildOverlay(), readBuilt(env), startSecrets()]);
   const wanted = (name: string) => overlay[name] ?? (env[name]?.trim() || undefined);
-  const names = SETTINGS.filter((def) => def.tier === "rebuild").map((def) => def.env);
+  const names = SETTINGS.filter((def) => def.tier === "rebuild" && def.kind.type !== "secret").map((def) => def.env);
   const changed = built === null ? Object.keys(overlay).length > 0 : names.some((name) => wanted(name) !== built.values[name]);
-  return { overlay, changed };
+  return { overlay, secrets, changed };
+}
+
+/**
+ * Saved secrets a standalone server reads from its environment when it starts
+ * (the Postgres world's address, say): unsealed for `scripts/start.mjs`, which
+ * hands them to the server it starts and to nothing else. Never part of the
+ * build's overlay, which goes into the build itself.
+ */
+async function startSecrets(): Promise<Record<string, string>> {
+  const deployment = await readSettingsDoc(DEPLOYMENT_KEY);
+  const secrets: Record<string, string> = {};
+  const entries = Object.entries(deployment.sealed).filter(([name]) => {
+    const def = SETTINGS_BY_ENV.get(name);
+    return def?.tier === "rebuild" && def.kind.type === "secret" && def.scope === "deployment";
+  });
+  if (entries.length === 0) return secrets;
+  const { unsealWith } = await import("../seal");
+  for (const [name, sealed] of entries) {
+    const value = await unsealWith(SEAL_LABEL, sealed).catch(() => null);
+    if (value !== null) secrets[name] = value;
+  }
+  return secrets;
 }
 
 /** The saved rebuild-tier values a build should use, over the environment's. */

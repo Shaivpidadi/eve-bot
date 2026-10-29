@@ -511,14 +511,10 @@ export function extractionModelId(): string {
  * charged under.
  */
 export async function helperModel(workspaceId: string): Promise<{ readonly model: string | ReturnType<typeof endpointModel>; readonly id: string }> {
-  const endpoint = customEndpoint();
-  if (endpoint !== null) {
-    const id = extractionModelId();
-    return { model: endpointModel(endpoint, id), id };
-  }
   const resolved = await resolveModel(workspaceId, "helper").catch(() => null);
   const id = resolved?.id ?? extractionModelId();
-  return { model: id, id };
+  const endpoint = customEndpoint();
+  return endpoint === null ? { model: id, id } : { model: endpointModel(endpoint, id), id };
 }
 
 const renderExisting = (existing: Existing, fields: Fields): string =>

@@ -1,14 +1,17 @@
-import { DELETE, GET, PATCH, POST, PUT, SessionStrandedError, defineChannel } from "eve/channels";
-import { parseInputResponses } from "eve/client";
+import { createRequire } from "node:module";
+import { join } from "node:path";
+
+import { DELETE, GET, PATCH, POST, PUT, SessionStrandedError, defineChannel, type RouteHandlerArgs } from "eve/channels";
+import { parseAnswers } from "eve/client";
 import type { SessionAuthContext } from "eve/context";
 
 import { authenticate, hasSignedInCookie, sessionCookie, setStoredName, signedInCookie, tokensConfigured, type Access, type Gate, workspaceForToken } from "../lib/access";
 import { record } from "../lib/activity";
 import { ENGINE_LABELS, ENGINES, engineOf, engineRefusal, isEngine } from "../lib/engines";
-import { readArtifact } from "../lib/artifacts";
+import { artifactBytes, readArtifact } from "../lib/artifacts";
 import { buildBoard } from "../lib/board";
-import { findBot, getBot, hireBot, isHq, listBots, patchBot, retireBot } from "../lib/bots";
-import { computerMode, vercelCredentialsError } from "../lib/computer-config";
+import { findBot, getBot, hireBot, isHq, isReservedName, listBots, patchBot, RESERVED_NAME_REFUSAL, retireBot } from "../lib/bots";
+import { computerMode, localComputer, vercelCredentialsError } from "../lib/computer-config";
 import * as computer from "../lib/computer/http";
 import { clearHandovers, finishHandover, forgetBot, handoverBelongsTo, teamScreen } from "../lib/computer/screens";
 import { cancelJobRun, describeInterruption, interruptVia, within } from "../lib/cancel";
@@ -23,21 +26,27 @@ import { FIELDS as MEMORY_FIELDS, forget as forgetMemory, isMemoryKind, isMemory
 import { CATALOG } from "../lib/catalog";
 import { addConnector, completeOAuth, confirmGuessedReads, disconnectOAuth, getConnector, listConnectors, needsConnect, OAUTH_CALLBACK_PATH, publicConnector, recheckConnector, removeConnector, replaceKey, startOAuth, updateConnector } from "../lib/connectors";
 import { hostIsProtected, PROBE_MARKER, PROBE_PATH, requestHost } from "../lib/protection";
-import { botIdForRoom, isRoomName, roomAddress, roomAttributes, roomForBot } from "../lib/rooms";
+import { botIdForRoom, HQ_ROOM, isRoomName, roomAddress, roomAttributes, roomForBot, TELEGRAM_ROOM } from "../lib/rooms";
 import { getRoomState, isWedged, noteAnswered, noteBranch, noteSent, resetRoom, restartRoom, roomGeneration } from "../lib/roomstate";
 import { buildId, overrideBuildId } from "../lib/build";
 import { dispatchDue } from "../lib/dispatch";
 import { deliverNotes } from "../lib/teammail";
 import { isInternal, noteOrigin } from "../lib/self";
 import { isProjectWorker, workerEverySeconds, workerTick } from "../lib/worker";
+import { connectFromEnv, connectOptions, connectTelegram, disconnectTelegram, readTelegramLink, repairTelegram, sendToPairedChat, statusOf, telegramChatFor, TelegramError } from "../lib/telegram";
+import telegram from "./telegram";
+import { ensureTelegramPolling } from "../lib/telegram-poll";
 import { gatewayCatalog } from "../lib/gateway-models";
-import { modelsEditable, modelsReport, saveModelSettings, settingsInput } from "../lib/model-settings";
-import { effectiveEnv, saveSettings, settingsReport, workerPaused } from "../lib/settings/store";
+import { customEndpoint } from "../lib/models";
+import { dockerReady, modelsReady } from "../lib/setup-probe";
+import { endpointCatalog, modelsEditable, modelsReport, saveModelSettings, settingsInput } from "../lib/model-settings";
+import { effectiveEnv, liveEnv, saveSettings, settingsReport, workerPaused } from "../lib/settings/store";
 import type { SettingDef } from "../lib/settings/registry";
 import { acceptTrigger, recentTriggers, TRIGGER_PATH, verifiedTrigger } from "../lib/triggers";
 import { sessionIsGone } from "../lib/gone";
 import { worldIsLocal } from "../lib/world";
-import { eventsOf, foldUntil } from "../lib/branch";
+import { foldUntil } from "../lib/branch";
+import { inThread } from "../lib/events";
 import { writeIntro } from "../lib/intro";
 import { templateById } from "../lib/templates";
 import { MAX_PROPOSED, proposeRoster } from "../lib/roster";
@@ -150,7 +159,7 @@ async function restartWedgedRoom(
   return generation;
 }
 
-type Sender = (address: string) => { send: (message: string, options: { auth: SessionAuthContext }) => Promise<{ id: string }> };
+type Sender = (address: string) => { send: (message: string, options: { auth: SessionAuthContext }) => Promise<{ readonly sessionId: string }> };
 type Attacher = (sessionId: string) => { cancel(options?: { turnId?: string }): Promise<unknown> };
 
 /**
@@ -165,13 +174,13 @@ async function sendToRoom(
   room: string,
   message: string,
   auth: SessionAuthContext,
-): Promise<{ readonly session: { id: string }; readonly moved: boolean }> {
+): Promise<{ readonly sessionId: string; readonly moved: boolean }> {
   try {
-    return { session: await from(await addressOf(workspaceId, room)).send(message, { auth }), moved: false };
+    return { sessionId: (await from(await addressOf(workspaceId, room)).send(message, { auth })).sessionId, moved: false };
   } catch (error) {
     if (!sessionIsGone(error)) throw error;
     await restartWedgedRoom(workspaceId, room, attachSession, "gone");
-    return { session: await from(await addressOf(workspaceId, room)).send(message, { auth }), moved: true };
+    return { sessionId: (await from(await addressOf(workspaceId, room)).send(message, { auth })).sessionId, moved: true };
   }
 }
 
@@ -192,12 +201,13 @@ async function hireFromForm(
   if (name === null || role === null || persona === null) {
     return { error: "A name (1–40), a job (1–120), and how it should work (20–4000 characters) are required.", status: 400 };
   }
+  if (isReservedName(name)) return { error: RESERVED_NAME_REFUSAL, status: 409 };
   const clash = await findBot(access.workspaceId, name);
   if (clash !== null) return { error: `${clash.name} is already on the team.`, status: 409 };
   // What runs its jobs: eve unless the person picked an engine the owner turned on (see lib/engines).
   const engine = body?.engine === undefined || body.engine === "eve" ? "eve" : isEngine(body.engine) ? body.engine : null;
   if (engine === null) return { error: `engine must be one of ${ENGINES.join(", ")}.`, status: 400 };
-  const engineRefused = engineRefusal(engine, { workspaceId: access.workspaceId });
+  const engineRefused = engineRefusal(engine, { workspaceId: access.workspaceId, env: await effectiveEnv(access.workspaceId) });
   if (engineRefused !== null) return { error: engineRefused, status: 400 };
   const template = templateById(body?.template);
   const skills = Array.isArray(body?.skills)
@@ -231,6 +241,16 @@ async function updateReady(owner: boolean): Promise<{ ok: true; token: string; r
   return { ok: true, token, repo };
 }
 
+/** Whether a package can be loaded from this server's own node_modules. */
+function installed(name: string): boolean {
+  try {
+    createRequire(join(process.cwd(), "package.json")).resolve(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The saved Vercel deploy hook, when it is one: an https address on Vercel's own deploy-hook endpoint, and nothing else. */
 function deployHook(env: Readonly<Record<string, string | undefined>>): string | null {
   const value = env.BOT_DEPLOY_HOOK?.trim();
@@ -248,13 +268,18 @@ function settingApplies(def: SettingDef): boolean {
   if (def.where === "vercel-computer") return computerMode() === "vercel";
   if (def.where === "local-computer") return computerMode() === "local";
   if (def.where === "vercel") return process.env.VERCEL === "1";
+  if (def.where === "standalone") return process.env.VERCEL !== "1";
   if (def.where === "worker") return /^(1|true|on|yes)$/i.test(process.env.BOT_WORKER?.trim() ?? "");
+  if (def.where === "gateway") return customEndpoint() === null;
+  if (def.where === "endpoint") return customEndpoint() !== null;
+  if (def.where === "fenced-computer") return computerMode() === "vercel" || localComputer() === "microsandbox";
   return true;
 }
 
 /** This deployment's public address, for redirect URIs: the configured one, else what the request came in on. */
 function publicOrigin(request: Request): string {
-  const configured = process.env.BOT_PUBLIC_URL?.trim();
+  // Settings (Server) over the environment.
+  const configured = liveEnv().BOT_PUBLIC_URL?.trim();
   if (configured) return configured.replace(/\/$/, "");
   const url = new URL(request.url);
   const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.replace(":", "");
@@ -266,10 +291,23 @@ const SWEEP_EVERY_MS = 60_000;
 let lastSweepAt = 0;
 
 /** The app itself, acting in a room: what a schedule sends as. */
-/** Hands a teammate's note to its thread, as the runtime (see `teammail.ts`). */
+/**
+ * Hands the runtime's message to a room (a teammate's note, a due job's
+ * wake-up), as the runtime (see `teammail.ts`). The Telegram room is the
+ * paired chat, reached through the Telegram channel; with none paired, HQ's
+ * desk takes it.
+ */
 const sendInto =
-  (from: Sender, attachSession: Attacher) =>
+  (from: Sender, attachSession: Attacher, to: RouteHandlerArgs["to"]) =>
   async (workspaceId: string, room: string, message: string): Promise<void> => {
+    if (room === TELEGRAM_ROOM) {
+      const chat = await telegramChatFor(workspaceId);
+      if (chat !== null) {
+        await to(telegram, chat).send(message, { auth: runtimePrincipal(workspaceId, room) });
+        return;
+      }
+      room = HQ_ROOM;
+    }
     await sendToRoom(from, attachSession, workspaceId, room, message, runtimePrincipal(workspaceId, room));
     await noteSent(workspaceId, room).catch(() => undefined);
   };
@@ -314,6 +352,8 @@ function text(value: unknown, min: number, max: number): string | null {
 /** A valid room name, and for a bot's thread, a bot on this workspace's roster. */
 async function resolveRoom(access: Access, raw: string | undefined): Promise<string | Response> {
   if (raw === undefined || !isRoomName(raw)) return json({ error: "invalid room" }, 400);
+  // HQ's Telegram conversation lives in the chat, not in a console thread.
+  if (raw === TELEGRAM_ROOM) return json({ error: "That conversation is in Telegram." }, 404);
   const botId = botIdForRoom(raw);
   if (botId !== null && (await getBot(access.workspaceId, botId)) === null) {
     return json({ error: "no such bot" }, 404);
@@ -322,26 +362,36 @@ async function resolveRoom(access: Access, raw: string | undefined): Promise<str
 }
 
 /**
- * How many events a session that is no longer the room's recorded, read once:
- * an earlier session's history does not change.
+ * The console's answers as eve's: it names a request by `requestId` (the
+ * interaction's id) and still says "cancel" for eve's old Deny.
  */
-const recordedLengths = new Map<string, number>();
-/** A session's recorded events, read once to the end. */
-async function* streamOf(session: { getEventStream(options: { startIndex?: number; follow?: boolean }): Promise<ReadableStream<unknown>> }): AsyncIterable<unknown> {
-  yield* eventsOf(await session.getEventStream({ startIndex: 0, follow: false }));
+function asAnswers(raw: unknown): unknown {
+  if (!Array.isArray(raw)) return raw;
+  return raw.map((entry: unknown) => {
+    if (!isRecord(entry)) return entry;
+    const { requestId, interactionId, optionId, ...rest } = entry;
+    return { ...rest, interactionId: interactionId ?? requestId, ...(optionId === undefined ? {} : { optionId: optionId === "cancel" ? "deny" : optionId }) };
+  });
 }
 
-async function recordedLength(session: { readonly id?: string; getEventStream(options: { startIndex?: number; follow?: boolean }): Promise<ReadableStream<unknown>> }): Promise<number> {
+/** How to read a session's events: eve 0.84's fixed session handle. */
+type SessionReadable = { readonly id?: string; stream(options?: { startIndex?: number; follow?: boolean; signal?: AbortSignal }): AsyncIterable<unknown> };
+
+/**
+ * How many lines a session that is no longer the room's recorded, read once:
+ * an earlier session's history does not change. The last event's line, plus
+ * one, the same way `foldUntil` counts it, so the thread's keys agree.
+ */
+const recordedLengths = new Map<string, number>();
+async function recordedLength(session: SessionReadable): Promise<number> {
   const id = session.id ?? "";
   const known = recordedLengths.get(id);
   if (known !== undefined) return known;
   let length = 0;
   try {
-    const reader = (await session.getEventStream({ startIndex: 0, follow: false })).getReader();
-    for (;;) {
-      const { done } = await reader.read();
-      if (done) break;
-      length += 1;
+    for await (const event of session.stream({ startIndex: -1, follow: false })) {
+      const line = (event as { meta?: { position?: { line?: number } } }).meta?.position?.line;
+      if (typeof line === "number") length = Math.max(length, line + 1);
     }
   } catch {
     // Unreadable: count it as empty rather than block the thread.
@@ -349,6 +399,9 @@ async function recordedLength(session: { readonly id?: string; getEventStream(op
   if (id !== "") recordedLengths.set(id, length);
   return length;
 }
+
+/** A session's recorded events, read once to the end. */
+const streamOf = (session: SessionReadable): AsyncIterable<unknown> => session.stream({ startIndex: 0, follow: false });
 
 /** The room's current session address: its generation changes each time it is started over. */
 const addressOf = async (workspaceId: string, room: string): Promise<string> =>
@@ -399,20 +452,26 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           driver,
           ready: driver !== "vercel-blob" || Boolean(process.env.BLOB_STORE_ID || process.env.BLOB_READ_WRITE_TOKEN),
         },
-        computer: { backend, ready: backend !== "vercel" || vercelCredentialsError() === null },
+        // A local computer is ready when Docker answers (a microsandbox VM needs no daemon); see lib/setup-probe.ts.
+        computer: {
+          backend,
+          ready: backend === "vercel" ? vercelCredentialsError() === null : localComputer() !== "docker" || (await dockerReady()),
+        },
+        models: await modelsReady(),
       });
     }),
 
     /** Everything the console needs: the roster with presence, and the feed. */
-    GET("/bot/v1/state", async (request, { attachSession, from, waitUntil }) => {
+    GET("/bot/v1/state", async (request, { attachSession, from, waitUntil, to }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       void noteOrigin(request);
       const after = new URL(request.url).searchParams.get("after");
       // The console polls this every few seconds, so teammates' notes to each other go out here.
-      waitUntil(deliverNotes(sendInto(from, attachSession), { workspaceId: gate.access.workspaceId }).catch(() => 0));
+      waitUntil(deliverNotes(sendInto(from, attachSession, to), { workspaceId: gate.access.workspaceId }).catch(() => 0));
       // Pushes waiting for a retry go out with the console's poll too, so they need no background worker.
       waitUntil(flushPushQueue().catch(() => 0));
+      ensureTelegramPolling();
       const board = await buildBoard(gate.access.workspaceId, {
         ...(after !== null && !Number.isNaN(Date.parse(after)) ? { after } : {}),
       });
@@ -426,9 +485,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * The server asking itself to deliver its outbox (see lib/self.ts): a job's
      * wake-up or a teammate's note, from a workflow that cannot reach a room.
      */
-    POST("/bot/v1/internal/flush", async (request, { attachSession, from, waitUntil }) => {
+    POST("/bot/v1/internal/flush", async (request, { attachSession, from, waitUntil, to }) => {
       if (!(await isInternal(request))) return json({ error: "not found" }, 404);
-      waitUntil(deliverNotes(sendInto(from, attachSession)).catch(() => 0));
+      waitUntil(deliverNotes(sendInto(from, attachSession, to)).catch(() => 0));
       return json({ flushing: true }, 202);
     }),
 
@@ -436,12 +495,57 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * The background worker's pass (see lib/worker.ts): the watchdog's work, asked
      * for every 30 seconds by this project's own Vercel Daemon, or by the server.
      */
-    POST("/bot/v1/internal/tick", async (request, { attachSession, from }) => {
+    /**
+     * The tools of a Claude Code or Codex run on the owner's plan (see
+     * lib/engines/local.ts), as an MCP server the CLI reaches from the team's
+     * computer: JSON-RPC over HTTP, one answer per request. Only a running
+     * run's secret gets in, and each tool still checks the job's run itself.
+     */
+    POST("/bot/v1/engine/mcp", async (request) => {
+      const secret = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "";
+      const { runForSecret } = await import("../lib/engines/local-run");
+      const run = await runForSecret(secret);
+      if (run === null) return json({ jsonrpc: "2.0", id: null, error: { code: -32001, message: "This run has stopped, or never was." } }, 401);
+      const message = (await readJson(request)) as { id?: unknown; method?: unknown; params?: Record<string, unknown> } | null;
+      const id = message?.id ?? null;
+      const reply = (result: unknown) => json({ jsonrpc: "2.0", id, result });
+      const method = typeof message?.method === "string" ? message.method : "";
+      // Notifications get no answer.
+      if (message?.id === undefined || method.startsWith("notifications/")) return new Response(null, { status: 202 });
+      const { HOST_TOOLS } = await import("../lib/engines/host-tools");
+      if (method === "initialize") {
+        const asked = typeof message.params?.protocolVersion === "string" ? message.params.protocolVersion : "2025-06-18";
+        return reply({ protocolVersion: asked, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "eve-bot", version: appVersion } });
+      }
+      if (method === "ping") return reply({});
+      if (method === "tools/list") return reply({ tools: HOST_TOOLS.map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema })) });
+      if (method === "tools/call") {
+        const name = typeof message.params?.name === "string" ? message.params.name : "";
+        const tool = HOST_TOOLS.find((candidate) => candidate.name === name);
+        if (tool === undefined) return json({ jsonrpc: "2.0", id, error: { code: -32602, message: `No tool ${name}.` } });
+        const text = await tool
+          .execute(message.params?.arguments ?? {}, { ctx: { runId: run.runId, config: { workspaceId: run.workspaceId, jobId: run.jobId } } })
+          .catch((error: unknown) => JSON.stringify({ ok: false, message: error instanceof Error ? error.message : String(error) }));
+        let failed = false;
+        try {
+          failed = (JSON.parse(text) as { ok?: unknown }).ok === false;
+        } catch {
+          // Not JSON: a plain answer.
+        }
+        return reply({ content: [{ type: "text", text }], isError: failed });
+      }
+      return json({ jsonrpc: "2.0", id, error: { code: -32601, message: `${method} is not offered here.` } });
+    }),
+
+    POST("/bot/v1/internal/tick", async (request, { attachSession, from, to }) => {
       if (!(await isProjectWorker(request)) && !(await isInternal(request))) return json({ error: "not found" }, 404);
       // The daemon takes its pace from the answer, so Settings change it without a redeploy.
       const everySeconds = workerEverySeconds(await effectiveEnv());
       if (await workerPaused()) return json({ ok: true, paused: true, due: 0, dispatched: 0, notes: 0, everySeconds });
-      const outcome = await workerTick(sendInto(from, attachSession));
+      // A token from the environment connects on the first pass; a laptop's bot is polled from here on.
+      await connectFromEnv().catch(() => null);
+      ensureTelegramPolling();
+      const outcome = await workerTick(sendInto(from, attachSession, to));
       if (outcome.dispatch.due > 0 || outcome.notes > 0) {
         console.log(`[bot] worker: ${outcome.dispatch.due} due, ${outcome.dispatch.dispatched} dispatched, ${outcome.notes} notes, ${outcome.dispatch.ms}ms`);
       }
@@ -500,6 +604,11 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const body = await readJson(request);
       const changes = body?.changes;
       if (typeof changes !== "object" || changes === null || Array.isArray(changes)) return json({ error: 'Send { "changes": { "BOT_…": value or null } }.' }, 400);
+      // A world the server cannot load would stop it starting: only one that is installed here is saved.
+      const world = (changes as Record<string, unknown>).BOT_WORKFLOW_WORLD;
+      if (typeof world === "string" && world.trim() !== "" && !installed(world.trim())) {
+        return json({ error: `${world.trim()} is not installed on this server. Install it first (npm i ${world.trim()}), then choose it here.` }, 400);
+      }
       const saved = await saveSettings({ workspaceId: gate.access.workspaceId, owner: gate.access.owner, by: gate.access.user }, changes as Record<string, unknown>);
       if (!saved.ok) return json({ error: saved.error }, saved.status);
       return json({ ...(await settingsReport(gate.access, process.env, settingApplies)), canRebuild: gate.access.owner && deployHook(await effectiveEnv()) !== null });
@@ -519,7 +628,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (!modelsEditable()) return json({ error: "Models are set by this deployment and cannot be changed here." }, 403);
       const input = settingsInput(await readJson(request));
       if (input === null) return json({ error: "Send { freeOnly?: boolean, roles?: { hq|standard|quick|deep|helper: model id or null } }." }, 400);
-      const saved = await saveModelSettings(gate.access.workspaceId, input, gate.access.user, await gatewayCatalog());
+      const saved = await saveModelSettings(gate.access.workspaceId, input, gate.access.user, customEndpoint() === null ? await gatewayCatalog() : await endpointCatalog());
       if (!saved.ok) return json({ error: saved.error }, 422);
       return json(await modelsReport(gate.access.workspaceId));
     }),
@@ -535,7 +644,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       return json({ events: await recentTriggers() });
     }),
 
-    POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params, waitUntil }) => {
+    POST("/bot/v1/rooms/:room/messages", async (request, { attachSession, from, params, waitUntil, to }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       void noteOrigin(request);
@@ -555,10 +664,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const { workspaceId } = gate.access;
       const recovered = isWedged(await getRoomState(workspaceId, room)) ? await restartWedgedRoom(workspaceId, room, attachSession) : false;
 
-      const { session, moved } = await sendToRoom(from, attachSession, workspaceId, room, message, principal(gate.access, room));
+      const { sessionId, moved } = await sendToRoom(from, attachSession, workspaceId, room, message, principal(gate.access, room));
       await noteSent(workspaceId, room).catch(() => undefined);
-      waitUntil(deliverNotes(sendInto(from, attachSession), { workspaceId }).catch(() => 0));
-      return json({ room, sessionId: session.id, ...(recovered || moved ? { recovered: true } : {}) });
+      waitUntil(deliverNotes(sendInto(from, attachSession, to), { workspaceId }).catch(() => 0));
+      return json({ room, sessionId, ...(recovered || moved ? { recovered: true } : {}) });
     }),
 
     /**
@@ -605,9 +714,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const generation = await restartWedgedRoom(workspaceId, room, attachSession);
       let sessionId: string | null = null;
       if (message !== null) {
-        const session = await from(await addressOf(workspaceId, room)).send(message, { auth: principal(gate.access, room) });
+        const delivery = await from(await addressOf(workspaceId, room)).send(message, { auth: principal(gate.access, room) });
         await noteSent(workspaceId, room).catch(() => undefined);
-        sessionId = session.id;
+        sessionId = delivery.sessionId;
       }
       return json({ room, recovered: true, generation, sessionId, redelivered: message !== null });
     }),
@@ -627,7 +736,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (room instanceof Response) return room;
       const { workspaceId } = gate.access;
       const body = await readJson(request);
-      const eventId = typeof body?.eventId === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(body.eventId) ? body.eventId : null;
+      const eventId = typeof body?.eventId === "string" && /^e\d{1,9}_\d{1,6}$/.test(body.eventId) ? body.eventId : null;
       if (eventId === null) return json({ error: "eventId is required" }, 400);
 
       const state = await getRoomState(workspaceId, room);
@@ -650,9 +759,10 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * Answers a pending approval or question.
      *
      * A plain message does not resolve one: it starts a new turn while the
-     * request stays pending. Structured responses are keyed by the `requestId`
-     * carried on the `input.requested` stream event, which is what lets a bot
-     * that asked hours ago pick up exactly where it parked.
+     * request stays pending. Structured responses are keyed by the
+     * `interactionId` of the `interaction.opened` fact (the console calls it
+     * `requestId`), which is what lets a bot that asked hours ago pick up
+     * exactly where it parked.
      */
     POST("/bot/v1/rooms/:room/respond", async (request, { from, params }) => {
       const gate = await authenticate(request);
@@ -661,9 +771,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (room instanceof Response) return room;
 
       const body = await readJson(request);
-      let responses;
+      let answers;
       try {
-        responses = parseInputResponses(body?.responses);
+        answers = parseAnswers(asAnswers(body?.responses));
       } catch (error) {
         return json(
           {
@@ -673,14 +783,15 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           400,
         );
       }
-      if (responses.length === 0) return json({ error: "no responses" }, 400);
+      if (answers.length === 0) return json({ error: "no responses" }, 400);
 
-      const session = await from(await addressOf(gate.access.workspaceId, room)).respond(responses, {
+      const delivery = await from(await addressOf(gate.access.workspaceId, room)).respond(answers, {
         auth: principal(gate.access, room),
       });
-      await noteAnswered(gate.access.workspaceId, room, responses);
-      await clearHandovers(gate.access.workspaceId, responses.map((response) => response.requestId));
-      return json({ room, sessionId: session.id, answered: responses.length });
+      const answered = answers.map((answer) => ({ requestId: answer.interactionId, ...(answer.optionId === undefined ? {} : { optionId: answer.optionId }) }));
+      await noteAnswered(gate.access.workspaceId, room, answered);
+      await clearHandovers(gate.access.workspaceId, answered.map((answer) => answer.requestId));
+      return json({ room, sessionId: delivery.sessionId, answered: answers.length });
     }),
 
     POST("/bot/v1/rooms/:room/cancel", async (request, { from, params }) => {
@@ -800,7 +911,6 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       // skips blank lines. eve hands the event stream over only once it has
       // something to say, so it is opened inside the response, not before it.
       const encoder = new TextEncoder();
-      let reader: ReadableStreamDefaultReader<unknown> | null = null;
       let heartbeat: ReturnType<typeof setInterval> | undefined;
       let open = true;
       const ndjson = new ReadableStream<Uint8Array>({
@@ -808,7 +918,6 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
           const stop = () => {
             open = false;
             clearInterval(heartbeat);
-            void reader?.cancel().catch(() => undefined);
           };
           heartbeat = setInterval(() => {
             if (!open) return;
@@ -824,36 +933,42 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
 
           void (async () => {
             try {
-              const pipe = async (events: ReadableStream<unknown>) => {
-                if (!open) return void events.cancel().catch(() => undefined);
-                reader = events.getReader();
-                for (;;) {
-                  const { value, done } = await reader.read();
-                  if (done || !open) break;
-                  controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+              const reading = new AbortController();
+              request.signal.addEventListener("abort", () => reading.abort(), { once: true });
+              // Each event goes out with its place in the thread (see `inThread`), so the reader's cursor runs across sessions.
+              const pipe = async (events: AsyncIterable<unknown>, offset: number): Promise<number> => {
+                let next = 0;
+                for await (const event of events) {
+                  if (!open) break;
+                  const placed = inThread(event as never, offset);
+                  if (placed.cursor !== undefined) next = placed.cursor - offset;
+                  controller.enqueue(encoder.encode(`${JSON.stringify(placed)}\n`));
                 }
+                return next;
               };
               let skip = startIndex;
+              let offset = 0;
               for (const id of earlier) {
                 if (!open) return;
                 const length = await recordedLength(attachSession(id));
                 if (skip >= length) {
                   skip -= length;
+                  offset += length;
                   continue;
                 }
-                await pipe(await attachSession(id).getEventStream({ startIndex: skip, follow: false }));
+                await pipe(attachSession(id).stream({ startIndex: skip, follow: false, signal: reading.signal }), offset);
                 skip = 0;
+                offset += length;
               }
               if (session === null) return;
-              let events: ReadableStream<unknown>;
               try {
-                events = await session.getEventStream({ startIndex: skip });
+                const read = await pipe(session.stream({ startIndex: skip, signal: reading.signal }), offset);
+                skip = Math.max(skip, read);
               } catch (error) {
                 // A session an older eve made is stranded: its history still reads, without following.
                 if (!SessionStrandedError.is(error)) throw error;
-                events = await session.getEventStream({ startIndex: skip, follow: false });
+                await pipe(session.stream({ startIndex: skip, follow: false, signal: reading.signal }), offset);
               }
-              await pipe(events);
             } catch {
               // The session is gone or the reader left; either way the stream ends.
             } finally {
@@ -872,7 +987,6 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         cancel() {
           open = false;
           clearInterval(heartbeat);
-          void reader?.cancel().catch(() => undefined);
         },
       });
 
@@ -968,7 +1082,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const engine = body?.engine === undefined ? undefined : isEngine(body.engine) ? body.engine : null;
       if (engine === null) return json({ error: `engine must be one of ${ENGINES.join(", ")}.` }, 400);
       if (engine !== undefined) {
-        const refused = engineRefusal(engine, { workspaceId });
+        const refused = engineRefusal(engine, { workspaceId, env: await effectiveEnv(workspaceId) });
         if (refused !== null) return json({ error: refused }, 400);
       }
       if (status === undefined && name === undefined && role === undefined && persona === undefined && engine === undefined && !placement) {
@@ -976,7 +1090,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       }
       const before = botId === undefined || isHq(botId) ? null : await getBot(workspaceId, botId);
       if (before === null) return json({ error: "no such bot" }, 404);
-      if (name !== undefined && name.trim().toLowerCase() === "hq") return json({ error: "HQ is taken: it is the team's chief of staff." }, 409);
+      if (name !== undefined && isReservedName(name)) return json({ error: RESERVED_NAME_REFUSAL }, 409);
       if (name !== undefined) {
         // Bots are addressed by name, so two with the same name would be ambiguous.
         const clash = await findBot(workspaceId, name);
@@ -1110,6 +1224,63 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
         tell: tellHarnessSession,
       });
       return decision.ok ? json(decision) : json({ error: decision.error }, decision.status);
+    }),
+
+    /**
+     * Telegram (see lib/telegram.ts): whether a bot is connected, its pairing
+     * link, and the chat it talks to. Owner only: the bot speaks for HQ.
+     */
+    GET("/bot/v1/telegram", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!gate.access.owner) return json({ error: "Only this deployment's owner can set up Telegram." }, 403);
+      const link = await readTelegramLink();
+      return json(link === null ? { connected: false } : statusOf(link));
+    }),
+
+    /** Connects a bot from its @BotFather token: a webhook on a public address, polling anywhere else. */
+    POST("/bot/v1/telegram", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!gate.access.owner) return json({ error: "Only this deployment's owner can set up Telegram." }, 403);
+      await noteOrigin(request);
+      const body = await readJson(request);
+      if (typeof body?.token !== "string") return json({ error: "Paste the token @BotFather gave you." }, 400);
+      try {
+        const status = await connectTelegram({ workspaceId: gate.access.workspaceId, token: body.token, by: gate.access.user, ...(await connectOptions()) });
+        if (status.mode === "polling") ensureTelegramPolling();
+        await record({ workspaceId: gate.access.workspaceId, kind: "bot.updated", botId: null, text: `${gate.access.user} connected Telegram (@${status.username}).` }).catch(() => undefined);
+        return json(status);
+      } catch (error) {
+        return json({ error: error instanceof TelegramError ? error.message : "Telegram could not be set up." }, 400);
+      }
+    }),
+
+    /** Lets another chat pair: the paired one is let go. */
+    POST("/bot/v1/telegram/pair", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!gate.access.owner) return json({ error: "Only this deployment's owner can set up Telegram." }, 403);
+      const status = await repairTelegram();
+      return status === null ? json({ error: "No Telegram bot is connected." }, 404) : json(status);
+    }),
+
+    /** Sends the paired chat a hello, to show it works. */
+    POST("/bot/v1/telegram/test", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!gate.access.owner) return json({ error: "Only this deployment's owner can set up Telegram." }, 403);
+      const sent = await sendToPairedChat("Hello from HQ. Messages here reach your chief of staff.");
+      return sent ? json({ ok: true }) : json({ error: "Nothing was sent: pair a chat first, or check the server's log." }, 400);
+    }),
+
+    DELETE("/bot/v1/telegram", async (request) => {
+      const gate = await authenticate(request);
+      if (!gate.ok) return denied(gate);
+      if (!gate.access.owner) return json({ error: "Only this deployment's owner can set up Telegram." }, 403);
+      await disconnectTelegram();
+      await record({ workspaceId: gate.access.workspaceId, kind: "bot.updated", botId: null, text: `${gate.access.user} disconnected Telegram.` }).catch(() => undefined);
+      return json({ connected: false });
     }),
 
     /** Push notifications on this person's devices (see lib/push.ts): the key a browser subscribes with, and the devices on. */
@@ -1374,7 +1545,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * nearest saved point, and a fresh run is dispatched, briefed with the
      * journal up to there and with what cannot be undone.
      */
-    POST("/bot/v1/jobs/:jobId/rewind", async (request, { attachSession, from, params }) => {
+    POST("/bot/v1/jobs/:jobId/rewind", async (request, { attachSession, from, params, to }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
       const body = await readJson(request);
@@ -1389,7 +1560,7 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       const interrupt = interruptVia(attachSession, `Rewound to step ${index} by ${gate.access.user}`);
       for (const sessionId of outcome.sessions) await interrupt(sessionId).catch(() => undefined);
       if (outcome.sessions.length > 0) await stopRunCommands(outcome.sessions).catch(() => null);
-      const dispatched = await dispatchDue((job, message) => sendInto(from, attachSession)(job.workspaceId, job.room, message));
+      const dispatched = await dispatchDue((job, message) => sendInto(from, attachSession, to)(job.workspaceId, job.room, message));
       return json({
         rewound: true,
         job: { id: outcome.job.id, title: outcome.job.title, status: outcome.job.status, steps: (outcome.job.journal ?? []).length },
@@ -1463,12 +1634,15 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
      * when it opens, so a job stranded by a restart is picked up in a minute
      * rather than at the next cron. At most one pass a minute per process.
      */
-    POST("/bot/v1/jobs/sweep", async (request, { attachSession, from }) => {
+    POST("/bot/v1/jobs/sweep", async (request, { attachSession, from, to }) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
+      // npm start sweeps a minute after boot, so a laptop's Telegram bot is polled again even with the worker off.
+      await connectFromEnv().catch(() => null);
+      ensureTelegramPolling();
       if (Date.now() - lastSweepAt < SWEEP_EVERY_MS) return json({ swept: false, reason: "swept recently" });
       lastSweepAt = Date.now();
-      const outcome = await dispatchDue((job, message) => sendInto(from, attachSession)(job.workspaceId, job.room, message));
+      const outcome = await dispatchDue((job, message) => sendInto(from, attachSession, to)(job.workspaceId, job.room, message));
       if (outcome.due > 0) console.log(`[bot] sweep: ${outcome.due} due, ${outcome.dispatched} dispatched, ${outcome.stranded} stranded, ${outcome.ms}ms`);
       return json({ swept: true, build: buildId(), ...outcome });
     }),
@@ -1540,7 +1714,9 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
     GET("/bot/v1/connectors", async (request) => {
       const gate = await authenticate(request);
       if (!gate.ok) return denied(gate);
-      return json({ connectors: (await listConnectors(gate.access.workspaceId)).map(publicConnector), catalog: CATALOG });
+      // Vercel Connect is for a Vercel deployment; anywhere else connectors sign in through the app's own OAuth.
+      const connectAvailable = process.env.VERCEL === "1";
+      return json({ connectors: (await listConnectors(gate.access.workspaceId)).map(publicConnector), catalog: CATALOG, connectAvailable });
     }),
 
     /** Connects a connector, from the catalog by id or a custom MCP server: it must answer with its tools before it is saved. */
@@ -1747,8 +1923,11 @@ export default defineChannel<undefined, void, { workspaceId: string; room: strin
       if (stored === null) return json({ error: "not found" }, 404);
 
       const { meta } = stored;
-      const inline = /^image\/(png|jpeg|gif|webp)$/.test(meta.mediaType);
-      return new Response(Buffer.from(stored.base64, "base64"), {
+      const body = await artifactBytes(stored);
+      if (body === null) return json({ error: "not found" }, 404);
+      // A browser recording plays in the page; it is a video the app made, not something from the web.
+      const inline = /^image\/(png|jpeg|gif|webp)$/.test(meta.mediaType) || meta.mediaType === "video/webm";
+      return new Response(Buffer.from(body), {
         headers: {
           "content-type": inline ? meta.mediaType : "application/octet-stream",
           "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(meta.name)}`,

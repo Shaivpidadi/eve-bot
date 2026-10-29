@@ -2,15 +2,17 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 import { record } from "../lib/activity";
-import { findBot, patchBot, teachBot } from "../lib/bots";
-import { ENGINE_LABELS, ENGINES, engineRefusal, enginesOn, type Engine } from "../lib/engines";
+import { findBot, isReservedName, patchBot, RESERVED_NAME_REFUSAL, teachBot } from "../lib/bots";
+import { ENGINE_LABELS, ENGINES, engineRefusal, engineChoiceOffered, type Engine } from "../lib/engines";
 import { operator } from "../lib/session";
+import { effectiveEnv } from "../lib/settings/store";
 
 /**
- * Offered only where the owner turned an engine on (`BOT_ENGINES`), so HQ's
+ * Offered only where another engine can run (`BOT_ENGINES`, or a standalone
+ * server's own computer for the owner's plan), so HQ's
  * tools read exactly as before everywhere else.
  */
-const engineField = enginesOn()
+const engineField = engineChoiceOffered()
   ? {
       engine: z
         .enum(ENGINES)
@@ -47,6 +49,7 @@ export default defineTool({
     const found = await findBot(who.workspaceId, input.bot);
     if (found === null) return { updated: false as const, reason: `No bot called ${input.bot}.` };
     if (input.name !== undefined) {
+      if (isReservedName(input.name)) return { updated: false as const, reason: RESERVED_NAME_REFUSAL };
       // Bots are addressed by name, so two with the same name would be ambiguous.
       const clash = await findBot(who.workspaceId, input.name);
       if (clash !== null && clash.id !== found.id) {
@@ -56,7 +59,7 @@ export default defineTool({
 
     const engine = (input as { engine?: Engine }).engine;
     if (engine !== undefined) {
-      const refused = engineRefusal(engine, { workspaceId: who.workspaceId });
+      const refused = engineRefusal(engine, { workspaceId: who.workspaceId, env: await effectiveEnv(who.workspaceId) });
       if (refused !== null) return { updated: false as const, reason: refused };
     }
 

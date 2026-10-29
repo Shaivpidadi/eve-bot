@@ -40,7 +40,7 @@ export interface Bot {
    * What runs its jobs. Absent means eve, so every existing Bot is unchanged.
    * Another engine runs only where the owner turned it on (`lib/engines`).
    */
-  engine?: "eve" | "claude-code" | "codex";
+  engine?: "eve" | "claude-code" | "codex" | "claude-code-local" | "codex-local";
   updatedAt: string;
   stats: {
     jobsCompleted: number;

@@ -138,3 +138,15 @@ deployment can skip versions. Some releases also need a decision from you.
   `BOT_STANDUP_ROOM` that is not `desk` or a Bot's room (`bot-<id>`), such as
   the old example `standup`, is ignored with a warning; remove it or point it
   at a room the console shows.
+- **eve 0.86.** Bot moved to eve 0.86, whose sessions record a new kind of
+  event stream. A conversation started before the upgrade moves over the
+  next time it gets a message: eve summarises its earlier messages for the
+  model (the thread still shows them all) and starts it over on tool
+  approvals it had remembered and on its usage limit. A Bot's job session left
+  over from before is ended, and its job is picked up again by the watchdog.
+  Going back to an earlier message only works for messages sent after the
+  upgrade. Keep a deployment on the old version running until its
+  conversations have moved, as eve's upgrade guide asks.
+- **No microsandbox computer.** eve 0.86 no longer ships the microsandbox
+  provider, so `BOT_COMPUTER_LOCAL=microsandbox` is refused with a message.
+  Unset it to run the local computer in Docker.

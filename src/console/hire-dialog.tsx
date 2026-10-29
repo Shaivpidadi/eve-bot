@@ -34,6 +34,8 @@ const ENGINE_CHOICE: Readonly<Record<Engine, { label: string; note: string }>> =
   eve: { label: "eve (default)", note: "Works on the team's computer: its browser, shell and shared files." },
   "claude-code": { label: "Claude Code", note: "Each job gets a sandbox of its own, deleted when it ends: no browser, none of the team's files. Billed through AI Gateway, per job." },
   codex: { label: "Codex", note: "Each job gets a sandbox of its own, deleted when it ends: no browser, none of the team's files. Billed through AI Gateway, per job." },
+  "claude-code-local": { label: "Claude Code (your plan)", note: "Runs on the team's computer, in the Bot's folder, signed in with your Claude plan: no AI Gateway bill, your plan's limits." },
+  "codex-local": { label: "Codex (your plan)", note: "Runs on the team's computer, in the Bot's folder, signed in with your ChatGPT plan: no AI Gateway bill, your plan's limits." },
 };
 
 export function HireDialog({

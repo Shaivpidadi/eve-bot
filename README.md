@@ -78,11 +78,11 @@ Same code, two homes.
 | --- | --- | --- |
 | Setup | one click | `npm run setup` |
 | The team's computer | Vercel Sandbox | Docker on your machine |
-| Models | AI Gateway | Ollama, LM Studio, OpenRouter, any OpenAI-compatible API |
+| Models | AI Gateway | AI Gateway with a key (everything works), or Ollama, LM Studio, OpenRouter, any OpenAI-compatible API |
 | Storage and memory | Vercel Blob | disk |
-| Schedules | Vercel Cron | the server's own cron |
-| Web search | eve's, through AI Gateway | your SearXNG, or Brave, Tavily, Exa |
-| Costs | model usage at provider prices through AI Gateway, plus Sandbox and Blob on your Vercel plan | free with Ollama or LM Studio on your own hardware; per token on OpenRouter or any hosted API. Spend caps hold either way |
+| Schedules and background work | Vercel Cron, and a Vercel Daemon on Pro if you add one | the server's own cron, and `npm start` does the watchdog's work every 30 seconds |
+| Web search | eve's, through AI Gateway | eve's with AI Gateway, or your SearXNG, Brave, Tavily, Exa |
+| Costs | model usage at provider prices through AI Gateway, plus Sandbox and Blob on your Vercel plan | free with Ollama or LM Studio on your own hardware; per token on AI Gateway, OpenRouter or any hosted API. Spend caps in dollars hold on AI Gateway and OpenRouter, or with prices set (`BOT_MODEL_PRICES`); token caps always |
 
 ### Vercel
 
@@ -142,10 +142,10 @@ Ollama is `http://ollama:11434/v1`.
 | **HQ** | The teammate you message. It writes a brief with success criteria, hands the job to the right Bot, and reports back. It does no work itself. |
 | **Bots** | Each has a name, a job, a persona, a playbook it learns, and its own thread. Every workspace starts with Atlas, a generalist. Work goes to whoever you tag (`@Ava`), else the Bot whose role fits it, else HQ, which does work itself too. Bots can message each other, and the answer comes back to the thread that asked. |
 | **One computer, kept** | A persistent Linux machine with one Chrome, a terminal, and files, shared by the whole team. Sign-ins carry across Bots. Backed up while Bots work, restored if it is ever replaced. |
-| **Watch and take over** | The screen sits in every thread. When a Bot hits a sign-in, a code, or a CAPTCHA, it asks you; you do the step in its live browser and hand back. Passwords go into the page, never through chat. |
+| **Watch and take over** | The screen sits in every thread. When a Bot hits a sign-in, a code, or a CAPTCHA, it asks you; you do the step in its live browser and hand back. Passwords go into the page, never through chat. Turn on recording and each job keeps a video of its browser work. |
 | **Durable jobs** | A run survives restarts and redeploys, waits for its start time with no compute, renews a lease so a dead run is noticed, and can park a day for your sign-off. A watchdog re-dispatches anything stranded, and the next run continues from the job's journal instead of starting over. |
 | **Rewind** | Every job keeps a journal of what it did. Take a job back to any step from its thread: its files come back as they were, and a fresh run carries on from there. Emails already sent stay sent, and the run is told so. |
-| **Approvals** | Sending email, retiring a Bot, any connector tool that changes something, and any browser click that could send, spend, delete, or save stop for a person first. |
+| **Approvals** | Sending email, retiring a Bot, any connector tool that changes something, and any browser click (or tool a page offers agents) that could send, spend, delete, or save stop for a person first. |
 | **Memory** | The team remembers on its own, workspace-wide, with confidence, history, and fading. Preferences about how you want things written hold in every reply. [More below.](#memory) |
 | **Connectors** | Linear, Notion, Atlassian, and Sentry with one click through their own OAuth. GitHub and any MCP server by address. Every tool has a switch and a read-or-change tag. [More below.](#connectors) |
 | **Budgets** | A monthly and daily cap on model spend for the whole workspace, with the computer's runtime counted once you set its rate. A run that would not fit is blocked with the reason. |
@@ -227,6 +227,7 @@ rename, edit profile, duplicate, hide, delete.
   and the thread says so. The new session knows what is in Memory.
 - **Update now** appears in the footer when a newer version is out.
 - **Install the app** puts the console on your dock or Home Screen, and **Settings → Notifications** lets a Bot reach your phone when it needs you or finishes a job.
+- **Telegram.** Text HQ from your phone: paste a token from @BotFather in **Settings → Telegram** and scan the code. Works on Vercel and on a laptop with nothing else to set up ([docs](docs/configuration.md#telegram)).
 
 Opening the console from another device over plain http puts the browser in an
 insecure context, and the live screen will not connect. Use `npm run dev:https`,

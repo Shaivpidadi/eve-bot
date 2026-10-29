@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 
+import { requestHost } from "./protection";
 import { readDoc, writeDoc } from "./store";
 
 /**
@@ -17,25 +18,51 @@ const SECRET_KEY = "secrets/internal.json";
 export const INTERNAL_HEADER = "x-bot-internal";
 
 let knownOrigin: string | null = null;
+let knownPublic: string | null = null;
 let secret: string | null = null;
 
-/** Remembers the address a request reached this server by, when it changes. */
+/**
+ * Remembers the address a request reached this server by, when it changes:
+ * the one this process was reached at (for its calls to itself), and the one
+ * the person's browser used, which differs behind `next dev`'s proxy (eve's
+ * agent listens on a port of its own there).
+ */
 export async function noteOrigin(request: Request): Promise<void> {
   const origin = new URL(request.url).origin;
-  if (origin === knownOrigin) return;
+  const host = requestHost(request);
+  const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const visible = host === null ? origin : `${proto === "https" || proto === "http" ? proto : new URL(request.url).protocol.replace(/:$/, "")}://${host}`;
+  if (origin === knownOrigin && visible === knownPublic) return;
   knownOrigin = origin;
-  await writeDoc(ORIGIN_KEY, { origin, at: new Date().toISOString() }).catch(() => undefined);
+  knownPublic = visible;
+  await writeDoc(ORIGIN_KEY, { origin, public: visible, at: new Date().toISOString() }).catch(() => undefined);
 }
 
-async function origin(): Promise<string | null> {
-  const pinned = process.env.BOT_PUBLIC_URL?.trim();
+/** The address this server is reached by (Settings, the environment, or the console's last request), or null before any. */
+export async function selfOrigin(): Promise<string | null> {
+  // Settings (Server) over the environment, where npm start puts its own address when none is set.
+  const { liveEnv } = await import("./settings/store");
+  const pinned = liveEnv().BOT_PUBLIC_URL?.trim();
   if (pinned) return pinned.replace(/\/+$/, "");
   if (knownOrigin !== null) return knownOrigin;
   return (await readDoc<{ origin: string }>(ORIGIN_KEY).catch(() => null))?.value.origin ?? null;
 }
 
+/** The address people reach this server by (Settings, the environment, or the console's last request), or null before any. */
+export async function publicOrigin(): Promise<string | null> {
+  const { liveEnv } = await import("./settings/store");
+  const pinned = liveEnv().BOT_PUBLIC_URL?.trim();
+  if (pinned) return pinned.replace(/\/+$/, "");
+  if (knownPublic !== null) return knownPublic;
+  const saved = (await readDoc<{ origin: string; public?: string }>(ORIGIN_KEY).catch(() => null))?.value;
+  return saved?.public ?? saved?.origin ?? null;
+}
+
 export async function internalSecret(): Promise<string> {
   if (secret !== null) return secret;
+  // A standalone server's start script makes one for each start and calls the server with it (scripts/start.mjs).
+  const given = process.env.BOT_INTERNAL_SECRET?.trim();
+  if (given !== undefined && given.length >= 32) return (secret = given);
   const stored = await readDoc<{ secret: string }>(SECRET_KEY);
   if (stored !== null) return (secret = stored.value.secret);
   const fresh = randomBytes(32).toString("base64url");
@@ -61,7 +88,7 @@ export async function isInternal(request: Request): Promise<boolean> {
  * durable, and the console's poll and the watchdog deliver it otherwise.
  */
 export async function flushOutboxSoon(): Promise<boolean> {
-  const base = await origin();
+  const base = await selfOrigin();
   if (base === null) return false;
   const headers: Record<string, string> = { [INTERNAL_HEADER]: await internalSecret() };
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();

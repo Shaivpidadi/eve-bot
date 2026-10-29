@@ -1,3 +1,4 @@
+import { call } from "eve/events";
 import { defineHook } from "eve/hooks";
 
 import { record } from "../../../lib/activity";
@@ -19,17 +20,18 @@ const TAKEOVER_TOOL = /(^|__)request_takeover$/;
 
 export default defineHook({
   events: {
-    async "input.requested"(event, ctx) {
-      const takeover = event.data.requests.find(
-        (request) => request.kind === "tool-approval" && TAKEOVER_TOOL.test(request.action?.toolName ?? ""),
-      );
-      if (takeover === undefined) return;
+    async "interaction.opened"(event, ctx) {
+      // One approval per call: the call says which tool asks, and with what.
+      const { interactionId, request, subject } = event.data;
+      if (request.kind !== "approval" || !("callId" in subject)) return;
+      const asking = call(ctx.view, subject.callId);
+      if (asking === undefined || !TAKEOVER_TOOL.test(asking.name)) return;
       try {
         const { workspaceId } = operator(ctx);
         const binding = await sessionBinding(workspaceId, ctx.session.id);
         if (binding === null) return;
         const job = await getJob(workspaceId, binding.jobId);
-        const input = takeover.action?.input ?? {};
+        const input = (asking.input !== null && typeof asking.input === "object" && !Array.isArray(asking.input) ? asking.input : {}) as Record<string, unknown>;
         const reason =
           typeof input.reason === "string" ? input.reason.slice(0, 300) : "Needs you to take over its browser";
         await setHandover(binding.n, {
@@ -37,7 +39,7 @@ export default defineHook({
           url: typeof input.url === "string" ? input.url.slice(0, 500) : null,
           at: new Date().toISOString(),
           room: job?.room ?? roomForBot(binding.botId),
-          requestId: takeover.requestId,
+          requestId: interactionId,
           jobId: binding.jobId,
           botId: binding.botId,
         });
@@ -47,20 +49,17 @@ export default defineHook({
           botId: binding.botId,
           jobId: binding.jobId,
           text: `Needs you to take over its browser: ${reason}`,
-          data: { requestIds: [takeover.requestId] },
+          data: { requestIds: [interactionId], takeover: true },
         });
       } catch {
         // The card in the thread still asks.
       }
     },
 
-    async "input.resolved"(event, ctx) {
+    async "interaction.settled"(event, ctx) {
       try {
         const { workspaceId } = operator(ctx);
-        await clearHandovers(
-          workspaceId,
-          event.data.resolutions.map((resolution) => resolution.requestId),
-        );
+        await clearHandovers(workspaceId, [event.data.interactionId]);
       } catch {
         // request_takeover clears it when the Bot resumes.
       }

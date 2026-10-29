@@ -424,10 +424,14 @@ describe("model spend on the budget", () => {
       channel: {},
     }) as never;
 
-  const step = (id: string, costUsd?: number) =>
-    ({ type: "step.completed", meta: { id }, data: { usage: { inputTokens: 1000, outputTokens: 100, ...(costUsd === undefined ? {} : { costUsd }) } } }) as never;
-
   type Hook = { events: Record<string, (event: never, ctx: never) => Promise<void> | void> };
+
+  /** One model run's spend, as eve records it (`usage.recorded`), at a line of the stream; the same line twice is one charge. */
+  const spend = async (hook: Hook, line: number, costUsd?: number) => {
+    const { emptySessionView } = await import("eve/events");
+    const event = { type: "usage.recorded", data: { kind: "model", owner: { runId: "run_1" }, usage: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, ...(costUsd === undefined ? {} : { costUsd }) } } };
+    await hook.events["usage.recorded"]!(event as never, { ...(ctxFor("sess_A") as object), view: emptySessionView(), position: { line, index: 0 } } as never);
+  };
 
   /** A quick job claimed and admitted under `lease_A`, with teammate session `sess_A` bound to it. */
   async function admittedRun() {
@@ -444,8 +448,8 @@ describe("model spend on the budget", () => {
 
   it("charges a Bot's steps to its run's reservation, once per event", async () => {
     const { budget, hook } = await admittedRun();
-    await hook.events["step.completed"]!(step("evt_1", 0.1), ctxFor("sess_A"));
-    await hook.events["step.completed"]!(step("evt_1", 0.1), ctxFor("sess_A"));
+    await spend(hook, 7, 0.1);
+    await spend(hook, 7, 0.1);
     const doc = await budget.readBudget(WS);
     expect(doc.reservations.lease_A).toMatchObject({ spentUsd: 0.1, state: "held" });
     expect(doc.byCategory.job?.spentUsd).toBe(0.1);
@@ -453,7 +457,7 @@ describe("model spend on the budget", () => {
 
   it("flags a Bot's unpriced step as unknown cost", async () => {
     const { budget, hook } = await admittedRun();
-    await hook.events["step.completed"]!(step("evt_1"), ctxFor("sess_A"));
+    await spend(hook, 7);
     const doc = await budget.readBudget(WS);
     expect(doc.reservations.lease_A?.unknownCostCount).toBe(1);
     expect(doc.unknownCostCount).toBe(1);
@@ -461,10 +465,9 @@ describe("model spend on the budget", () => {
 
   it("refuses the next model step of a run that overspent with no headroom", async () => {
     const { budget, hook } = await admittedRun();
-    await hook.events["step.started"]!({ type: "step.started", data: { modelId: "m" } } as never, ctxFor("sess_A"));
-    await hook.events["step.completed"]!(step("evt_1", 1.2), ctxFor("sess_A"));
+    await spend(hook, 7, 1.2);
     expect(await budget.runHalted(WS, "lease_A")).toBe(true);
-    // The teammate's model resolver refuses the next step on this (a hook can no longer stop a turn since eve 0.68).
+    // The teammate's model resolver refuses the next model call on this.
     const { stopReason } = await import("../agent/subagents/teammate/lib/stops");
     expect(await stopReason("sess_A", () => WS)).toMatch(/workspace budget/);
   });

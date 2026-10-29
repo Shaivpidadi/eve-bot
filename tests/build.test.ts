@@ -2,9 +2,9 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { buildId, UNKNOWN_BUILD } from "../agent/lib/build";
+import { buildId, overrideBuildId, resetBuildId, UNKNOWN_BUILD } from "../agent/lib/build";
 
 /**
  * A build id must be the same across restarts of the same code and different
@@ -47,6 +47,29 @@ describe("buildId", () => {
     expect(buildId({ env: { BOT_BUILD_ID: "pinned", VERCEL_DEPLOYMENT_ID: "dpl" }, cwd: dir })).toBe("pinned");
     expect(buildId({ env: { VERCEL_DEPLOYMENT_ID: "dpl" }, cwd: dir })).toBe("vercel:dpl");
     expect(buildId({ env: {}, cwd: dir })).toBe("dev:gen");
+  });
+
+  it("is the build date of a served build even with a dev pointer left from an earlier npm run dev", () => {
+    const dir = root({
+      ".eve/dev-runtime/current.json": JSON.stringify({ snapshotRoot: "/x/old-gen" }),
+      ".output/nitro.json": JSON.stringify({ date: "2026-10-29T13:49:49.177Z" }),
+    });
+    expect(buildId({ env: { NODE_ENV: "production" }, cwd: dir })).toBe("build:2026-10-29T13:49:49.177Z");
+  });
+
+  it("reports the QA override from every copy of the module in the process", async () => {
+    resetBuildId();
+    vi.resetModules();
+    // A second copy, as eve's workflow-step bundle has: its own cache, already filled.
+    const other = await import("../agent/lib/build");
+    expect(other.buildId).not.toBe(buildId);
+    other.buildId();
+    buildId();
+    overrideBuildId("qa-bumped");
+    expect(buildId()).toBe("qa-bumped");
+    expect(other.buildId()).toBe("qa-bumped");
+    resetBuildId();
+    expect(buildId()).not.toBe("qa-bumped");
   });
 
   it("is unknown when nothing can be read, including a broken pointer", () => {

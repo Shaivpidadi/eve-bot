@@ -49,7 +49,7 @@ export function sandboxIo(sandbox: Sandbox, abortSignal?: AbortSignal): Computer
         .filter((signal): signal is AbortSignal => signal !== undefined);
       const result = await sandbox.run({
         command,
-        ...(signals.length === 0 ? {} : { abortSignal: AbortSignal.any(signals) }),
+        ...(signals.length === 0 ? {} : { signal: AbortSignal.any(signals) }),
       });
       return { exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
     },
@@ -347,6 +347,11 @@ export function activateTab(io: ComputerIo, n: number, targetId: string): Promis
 /** Closes one Bot's tab, for when its job is done. Never fails the caller. */
 export function closeTab(io: ComputerIo, n: number, targetId: string): Promise<{ ok: boolean; closed?: boolean }> {
   return runScript(io, ["close-tab", String(n), targetId], 15_000);
+}
+
+/** Ends a finished run's agent-browser session and the recording it made (see `end-run` in the script). Never fails the caller. */
+export function endRunSession(io: ComputerIo, session: string): Promise<{ ok: boolean; ended?: boolean }> {
+  return runScript(io, ["end-run", session], 60_000);
 }
 
 /** Points the screen's browser at a web address. */

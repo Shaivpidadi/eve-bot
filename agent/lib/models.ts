@@ -217,6 +217,17 @@ export function customEndpoint(): ModelEndpoint | null {
   };
 }
 
+/**
+ * The provider's API key as Settings (sealed) or the environment has it now.
+ * Read per call, so a key saved or rotated in the console applies at once on
+ * every platform, and it never ends up in a build.
+ */
+export async function endpointKey(): Promise<string | undefined> {
+  const { effectiveEnv } = await import("./settings/store");
+  const env = await effectiveEnv().catch(() => process.env);
+  return env.BOT_MODEL_API_KEY?.trim() || undefined;
+}
+
 function endpointDefaultModel(): string {
   const model = process.env.BOT_MODEL?.trim();
   if (model) return model;
@@ -234,6 +245,17 @@ let endpointProvider: { readonly baseURL: string; readonly provider: ReturnType<
  * cleanly rather than failing the turn (see `steady.ts`).
  */
 export function endpointModel(endpoint: ModelEndpoint, id: string): LanguageModel {
+  // Nearest the wire: a stream the endpoint drops early still ends in a finish the pricing layer can read.
+  return pricedModel(steadyModel(providerFor(endpoint).chatModel(id)), endpoint.baseURL, id);
+}
+
+/** An embedding model on the custom endpoint (Ollama's nomic-embed-text, say), for memory by meaning. */
+export function endpointEmbeddingModel(endpoint: ModelEndpoint, id: string) {
+  return providerFor(endpoint).embeddingModel(id);
+}
+
+/** The endpoint's client, made once per address, with its key read on every call. */
+function providerFor(endpoint: ModelEndpoint): ReturnType<typeof createOpenAICompatible> {
   if (endpointProvider?.baseURL !== endpoint.baseURL) {
     endpointProvider = {
       baseURL: endpoint.baseURL,
@@ -242,12 +264,20 @@ export function endpointModel(endpoint: ModelEndpoint, id: string): LanguageMode
         baseURL: endpoint.baseURL,
         // Streams carry no token counts unless asked; pricing and the caps need them.
         includeUsage: true,
-        ...(endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey }),
+        // Send the JSON schema itself when an answer must have a shape (memory, Jev's questions): Ollama, LM Studio,
+        // vLLM and OpenRouter all take one, and without it a model is only asked for "some JSON".
+        supportsStructuredOutputs: true,
+        // The key is read on every call (see endpointKey), never fixed here.
+        fetch: async (input, init) => {
+          const key = await endpointKey();
+          const headers = new Headers(init?.headers);
+          if (key !== undefined) headers.set("authorization", `Bearer ${key}`);
+          return fetch(input, { ...init, headers });
+        },
       }),
     };
   }
-  // Nearest the wire: a stream the endpoint drops early still ends in a finish the pricing layer can read.
-  return pricedModel(steadyModel(endpointProvider.provider.chatModel(id)), endpoint.baseURL, id);
+  return endpointProvider.provider;
 }
 
 // ---------------------------------------------------------------------------
@@ -348,15 +378,6 @@ export function withGatewayOptions<T extends Record<string, unknown>>(providerOp
   const options = gatewayOptions(liveEnv());
   if (options === null) return providerOptions;
   return { ...(providerOptions ?? ({} as T)), ...options };
-}
-
-export function hqModel():
-  | { readonly model: string; readonly modelOptions?: { readonly providerOptions: GatewayOptions } }
-  | { readonly model: LanguageModel; readonly modelContextWindowTokens: number } {
-  const endpoint = customEndpoint();
-  const named = process.env.BOT_HQ_MODEL?.trim();
-  if (endpoint === null) return { model: named || DEFAULT_HQ_MODEL, ...gatewayModelOptions() };
-  return { model: endpointModel(endpoint, named || endpointDefaultModel()), modelContextWindowTokens: endpoint.contextWindowTokens };
 }
 
 /**

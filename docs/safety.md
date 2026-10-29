@@ -74,6 +74,16 @@ back. The new page a link opens loads freely, and beacons and well-known
 analytics are dropped quietly rather than asked about. A click whose sending
 cannot be watched asks first.
 
+Some pages offer agents tools of their own (WebMCP: a shop's search, a mail
+app's draft). A Bot can list and call them (`page_tools`, `page_tool`), and a
+call goes through the same gate as a click. It asks when the tool's name reads
+like send, pay, delete or save (`add_to_cart` reads "add"), when the page marks
+the tool destructive, and on payment pages; any other call runs with the network
+guard on and asks if it sends anything but a read. A page that says its tool
+only reads gets no say: that is the page's claim. An approval holds for that
+page and for the tool as it described itself (name, description, schema); a
+page that changed its tool since gets asked about again.
+
 Not seen: requests a page's service worker makes on its own, WebSocket
 messages, a GET with side effects, and what a page sends more than a moment
 after the click (`BOT_BROWSER_GUARD_MS`, default 1200). Use an egress

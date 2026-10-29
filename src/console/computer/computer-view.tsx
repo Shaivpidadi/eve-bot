@@ -1,6 +1,6 @@
 "use client";
 
-import type { InputRequest } from "eve/client";
+import type { InputRequest } from "../asks";
 import { EyeIcon, FolderIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type * as React from "react";
@@ -47,7 +47,7 @@ function pendingTakeover(room: RoomSnapshot, member: Member, preferred: string |
       (request) =>
         isTakeover(request) &&
         !answered(request) &&
-        (request.requestId === handover.requestId || request.requestId.endsWith(`:${handover.requestId}`)),
+        (request.requestId === handover.requestId || request.originId === handover.requestId || request.requestId.endsWith(`:${handover.requestId}`)),
     ) ?? null
   );
 }
@@ -142,7 +142,7 @@ export function ComputerView({
 
   const skip = async () => {
     if (request === null) return;
-    const option = request.options?.find((entry) => entry.id !== "approve")?.id ?? "cancel";
+    const option = request.options?.find((entry: { id: string }) => entry.id !== "approve")?.id ?? "deny";
     setBusy(true);
     try {
       await store.answer(request.requestId, option, "");

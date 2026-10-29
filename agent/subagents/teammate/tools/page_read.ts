@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { browser, refreshScreen } from "../lib/browser";
 import { journalPage } from "../lib/journal";
-import { scriptUrl } from "../lib/consequence";
+import { scriptUrl, webAddress } from "../lib/consequence";
 import { forgetLook } from "../lib/page";
 
 /**
@@ -27,6 +27,9 @@ export default defineTool({
   async execute({ url, filter }, ctx) {
     if (url !== undefined && scriptUrl(url)) {
       return { text: null, source: url, error: "Script and data addresses are not opened: they act on the page instead of opening one." };
+    }
+    if (url !== undefined && !webAddress(url)) {
+      return { text: null, source: url, error: "Only web addresses are opened: files on the computer and the browser's own pages are not. Read the team's files with read_file." };
     }
     if (url !== undefined) {
       const opened = await browser(ctx, ["open", url]);

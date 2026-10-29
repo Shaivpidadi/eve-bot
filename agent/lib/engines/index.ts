@@ -19,33 +19,54 @@
 // First: the build's Settings values over the environment, before anything below reads it (see settings/built.ts).
 import "../settings/built";
 
-/** What can run a Bot's jobs. `eve` is the default and needs no switch. */
-export const ENGINES = ["eve", "claude-code", "codex"] as const;
+/**
+ * What can run a Bot's jobs. `eve` is the default and needs no switch.
+ * `claude-code` and `codex` run through durable-harness in a Vercel Sandbox of
+ * their own (`BOT_ENGINES`); `claude-code-local` and `codex-local` run the CLI
+ * on the team's computer of a standalone server, signed in with the owner's
+ * own Claude or ChatGPT plan (see `./local`).
+ */
+export const ENGINES = ["eve", "claude-code", "codex", "claude-code-local", "codex-local"] as const;
 export type Engine = (typeof ENGINES)[number];
-/** The engines a switch can turn on: every one but eve. */
+/** Every engine but eve. */
 export type HarnessEngine = Exclude<Engine, "eve">;
+/** The engines durable-harness runs, on Vercel Sandbox. */
+export type DurableEngine = "claude-code" | "codex";
+/** The engines that run the CLI on the team's computer, on the owner's plan. */
+export type LocalEngine = "claude-code-local" | "codex-local";
 
-const HARNESS_ENGINES: readonly HarnessEngine[] = ["claude-code", "codex"];
+const HARNESS_ENGINES: readonly DurableEngine[] = ["claude-code", "codex"];
+export const LOCAL_ENGINES: readonly LocalEngine[] = ["claude-code-local", "codex-local"];
+
+export const isLocalEngine = (engine: Engine): engine is LocalEngine => (LOCAL_ENGINES as readonly string[]).includes(engine);
 
 export const ENGINE_LABELS: Readonly<Record<Engine, string>> = {
   eve: "eve (the team's computer)",
   "claude-code": "Claude Code (its own sandbox, no browser)",
   codex: "Codex (its own sandbox, no browser)",
+  "claude-code-local": "Claude Code on your plan (the team's computer)",
+  "codex-local": "Codex on your plan (the team's computer)",
 };
 
 /** The engine's name alone, for sentences. */
-export const ENGINE_NAMES: Readonly<Record<Engine, string>> = { eve: "eve", "claude-code": "Claude Code", codex: "Codex" };
+export const ENGINE_NAMES: Readonly<Record<Engine, string>> = {
+  eve: "eve",
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  "claude-code-local": "Claude Code",
+  "codex-local": "Codex",
+};
 
 /**
  * Where each engine's session log keeps its model spend (H0 and H4): a journal
  * stream of `{ usd, model }` records, one per model call.
  */
-export const SPEND_STREAMS: Readonly<Record<HarnessEngine, string>> = { "claude-code": "hw.spend", codex: "codex.spend" };
+export const SPEND_STREAMS: Readonly<Record<DurableEngine, string>> = { "claude-code": "hw.spend", codex: "codex.spend" };
 
 type Env = Readonly<Record<string, string | undefined>>;
 
 /** The engines `BOT_ENGINES` turns on: a comma-separated list, or `off`. Unknown names are ignored. */
-export function enabledEngines(env: Env = process.env): readonly HarnessEngine[] {
+export function enabledEngines(env: Env = process.env): readonly DurableEngine[] {
   const raw = (env.BOT_ENGINES ?? "").trim().toLowerCase();
   if (raw === "" || raw === "off" || raw === "0" || raw === "false") return [];
   const named = raw.split(",").map((part) => part.trim());
@@ -53,6 +74,12 @@ export function enabledEngines(env: Env = process.env): readonly HarnessEngine[]
 }
 
 export const enginesOn = (env: Env = process.env): boolean => enabledEngines(env).length > 0;
+
+/** Whether a Bot could run on the owner's own plan here: a standalone server with the team's computer on this machine. */
+export const localEnginesPossible = (env: Env = process.env): boolean => env.VERCEL !== "1" && (env.BOT_COMPUTER ?? "").trim() === "local";
+
+/** Whether HQ is offered an engine to give a Bot: one turned on for the deployment, or the owner's plan possible here. */
+export const engineChoiceOffered = (env: Env = process.env): boolean => enginesOn(env) || localEnginesPossible(env);
 
 export function isEngine(value: unknown): value is Engine {
   return typeof value === "string" && (ENGINES as readonly string[]).includes(value);
@@ -90,6 +117,7 @@ export function engineRefusal(
 ): string | null {
   if (engine === "eve") return null;
   const env = context.env ?? process.env;
+  if (isLocalEngine(engine)) return localEngineRefusal(engine, context.workspaceId, env);
   if (!enabledEngines(env).includes(engine)) {
     return `The ${ENGINE_LABELS[engine]} engine is off on this deployment. The owner turns it on with BOT_ENGINES=${engine}.`;
   }
@@ -107,5 +135,34 @@ export function engineRefusal(
   if ((env.BOT_MODEL_BASE_URL ?? "").trim() !== "") {
     return `This deployment uses its own model endpoint (BOT_MODEL_BASE_URL), and ${name} jobs run only through AI Gateway.`;
   }
+  if (!hasSandboxCredentials(env)) {
+    return `Each ${name} job runs in a Vercel Sandbox, and this server has no Vercel credentials for one: run "vercel link && vercel env pull" (a VERCEL_OIDC_TOKEN, good for 12 hours), or set VERCEL_TOKEN with VERCEL_TEAM_ID and VERCEL_PROJECT_ID.`;
+  }
   return null;
+}
+
+/**
+ * Why a plan engine cannot run here, or null when it can (see `./local`):
+ * only on a standalone server's own computer, only for the owner (it is the
+ * owner's plan), and only once the owner saved a sign-in for it in Settings.
+ */
+function localEngineRefusal(engine: LocalEngine, workspaceId: string, env: Env): string | null {
+  const name = ENGINE_NAMES[engine];
+  if (env.VERCEL === "1") return `${name} on your own plan runs on a standalone server's computer. On Vercel, a Bot runs ${name} in a Sandbox of its own instead.`;
+  if ((env.BOT_COMPUTER ?? "").trim() !== "local") return `${name} on your own plan runs on the team's computer on this machine (BOT_COMPUTER=local).`;
+  const owners = env.BOT_DEFAULT_WORKSPACE ?? "default";
+  if (workspaceId !== owners) return `Only the owner's workspace can run Bots on the owner's own ${name} plan.`;
+  const signedIn = engine === "claude-code-local" ? (env.BOT_LOCAL_CLAUDE_TOKEN ?? "").trim() !== "" : (env.BOT_LOCAL_CODEX_AUTH ?? "").trim() !== "" || (env.BOT_LOCAL_CODEX_API_KEY ?? "").trim() !== "";
+  if (!signedIn) {
+    return engine === "claude-code-local"
+      ? `${name} needs your sign-in: run "claude setup-token" and save the token in Settings → Engines.`
+      : `${name} needs your sign-in: run "codex login --device-auth", then save the contents of ~/.codex/auth.json in Settings → Engines.`;
+  }
+  return null;
+}
+
+/** Whether a job's Sandbox can be made from here: on Vercel, or with credentials a standalone server was given. */
+function hasSandboxCredentials(env: Env): boolean {
+  const set = (name: string) => (env[name] ?? "").trim() !== "";
+  return env.VERCEL === "1" || set("VERCEL_OIDC_TOKEN") || (set("VERCEL_TOKEN") && (set("VERCEL_TEAM_ID") || set("VERCEL_ORG_ID")) && set("VERCEL_PROJECT_ID"));
 }

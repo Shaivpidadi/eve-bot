@@ -1,9 +1,9 @@
 import { findBot, getBot, HQ_BOT_ID } from "./bots";
 import { newId } from "./ids";
-import { HQ_ROOM, roomForBot } from "./rooms";
+import { botIdForRoom, HQ_ROOM, roomForBot } from "./rooms";
 import { deliverOutbox, enqueue } from "./outbox";
 import { flushOutboxSoon } from "./self";
-import { updateDoc } from "./store";
+import { readDoc, updateDoc, writeDoc } from "./store";
 
 /**
  * Teammates talking to each other.
@@ -61,6 +61,19 @@ export async function speakerFor(workspaceId: string, botId: string | null): Pro
   return (await getBot(workspaceId, botId))?.name ?? "A teammate";
 }
 
+/**
+ * HQ talks from its desk and from the Telegram chat. A Bot answering "HQ"
+ * answers where HQ last wrote to it from, for a day, so a question asked from
+ * the phone is answered on the phone; otherwise on the desk.
+ */
+const HQ_ASKED_MS = 24 * 60 * 60_000;
+const hqAskedKey = (workspaceId: string, botRoom: string) => `mail-hq/${workspaceId}/${botRoom}.json`;
+
+export async function hqRoomFor(workspaceId: string, botRoom: string, now = Date.now()): Promise<string> {
+  const asked = (await readDoc<{ room: string; at: string }>(hqAskedKey(workspaceId, botRoom)).catch(() => null))?.value;
+  return asked !== undefined && now - Date.parse(asked.at) < HQ_ASKED_MS ? asked.room : HQ_ROOM;
+}
+
 export async function postNote(input: {
   readonly workspaceId: string;
   readonly from: TeamNote["from"];
@@ -86,6 +99,10 @@ export async function postNote(input: {
     text: input.text.slice(0, MAX_NOTE_CHARS),
     at: new Date(now).toISOString(),
   };
+  // HQ (from either of its rooms) writing to a Bot: the Bot's answer comes back to that room.
+  if (botIdForRoom(note.from.room) === null && botIdForRoom(note.to.room) !== null) {
+    await writeDoc(hqAskedKey(note.workspaceId, note.to.room), { room: note.from.room, at: note.at }).catch(() => undefined);
+  }
   await enqueue({ workspaceId: note.workspaceId, room: note.to.room, message: noteMessage(note), id: note.id });
   await flushOutboxSoon();
   return { ok: true, note };

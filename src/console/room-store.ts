@@ -1,6 +1,8 @@
-import type { InputRequest, InputResolution, MessageStreamEvent } from "eve/client";
+import { textOfParts, textOfValue, type ThreadEvent } from "../../agent/lib/events";
+
 
 import { api, errorMessage, isRecord, redirectToLogin, SignedOutError } from "./api";
+import { askOf, type InputRequest, type InputResolution, resolutionOf, type SeenCall } from "./asks";
 import { withoutEmoji } from "./format";
 import { spoke } from "./voice";
 import type { ActivityEvent, Member } from "./types";
@@ -120,6 +122,8 @@ const TOOL_WORDS: Readonly<Record<string, string>> = {
   browse: "Opening a page",
   page_click: "Clicking",
   page_fill: "Typing",
+  page_tools: "Looking for page tools",
+  page_tool: "Using a page tool",
   task_update: "Checking in",
 };
 
@@ -203,6 +207,14 @@ export class RoomStore {
   private drafts = new Map<string, string>();
   private asks = new Map<string, InputRequest>();
   private resolutions = new Map<string, InputResolution>();
+  /** Tool calls seen requested, so a result or an approval can name its tool. */
+  private calls = new Map<string, SeenCall>();
+  /** What each streaming part is (text or reasoning), named on its first delta only. */
+  private parts = new Map<string, string>();
+  /** Sign-ins asked for, by interaction, so their settling reads as one. */
+  private signIns = new Map<string, string>();
+  /** Events already applied: a reconnect resends the part of a line that had arrived. */
+  private seen = new Set<string>();
   private answering = new Set<string>();
   private optimistic: string[] = [];
   /** Sent messages the thread has not picked up yet, each with a deadline. */
@@ -531,18 +543,28 @@ export class RoomStore {
     this.drafts.clear();
     this.asks.clear();
     this.resolutions.clear();
+    this.calls.clear();
+    this.parts.clear();
+    this.signIns.clear();
+    this.seen.clear();
     this.answering.clear();
     this.index = 0;
     this.terminal = false;
     this.settle();
   }
 
-  private apply(event: MessageStreamEvent): void {
-    const at = event.meta.at;
-    const key = event.meta.id || `${this.room}:${this.index}`;
+  /**
+   * One event of the thread (eve's session facts, stream version 27, with the
+   * thread's own key and cursor; see `ThreadEvent` in agent/lib/events.ts).
+   */
+  private apply(event: ThreadEvent): void {
+    const at = event.meta?.at ?? new Date().toISOString();
+    const key = event.key;
+    const data = (isRecord(event.data) ? event.data : {}) as Record<string, unknown>;
     switch (event.type) {
-      case "message.received": {
-        const message = event.data.message;
+      case "delivery.consumed": {
+        const message = textOfParts(data.parts as never);
+        if (message === "") break;
         const note = teammateNote(message);
         if (note !== null) {
           this.items.push({ kind: "peer", key, at, from: note.from, text: note.text });
@@ -559,112 +581,120 @@ export class RoomStore {
         this.items.push({ kind: "you", key, at, text: message });
         break;
       }
-      case "message.appended": {
+      case "content.delta": {
+        const part = text(data.partId) ?? "";
+        if (typeof data.kind === "string") this.parts.set(part, data.kind);
+        if ((this.parts.get(part) ?? "text") !== "text") break;
         spoke(this.room);
-        const draft = `${event.data.turnId}:${event.data.stepIndex}`;
-        this.drafts.set(draft, (this.drafts.get(draft) ?? "") + event.data.messageDelta);
+        this.drafts.set(part, (this.drafts.get(part) ?? "") + (text(data.delta) ?? ""));
         break;
       }
-      case "message.completed":
-        this.drafts.delete(`${event.data.turnId}:${event.data.stepIndex}`);
-        if (event.data.message) this.items.push({ kind: "bot", key, at, text: event.data.message });
+      case "content.completed": {
+        const part = text(data.partId) ?? "";
+        this.drafts.delete(part);
+        this.parts.delete(part);
+        const said = data.kind === "text" ? textOfValue(data.value) : "";
+        if (said.trim() !== "") this.items.push({ kind: "bot", key, at, text: said });
         break;
-      case "actions.requested":
-        for (const action of event.data.actions) {
-          const label = event.data.presentation?.[action.callId]?.label;
-          if ("toolName" in action) this.liveLabel = label ?? humanTool(action.toolName);
-          else if ("subagentName" in action) this.liveLabel = label ?? `Asking ${action.subagentName}`;
+      }
+      case "call.requested": {
+        const capability = isRecord(data.capability) ? data.capability : {};
+        const name = text(capability.name) ?? "a tool";
+        const callId = text(data.callId);
+        if (callId !== undefined) this.calls.set(callId, { name, input: data.input });
+        // The model managing its own background work is not something to show.
+        if (capability.kind === "control") break;
+        this.liveLabel = text(capability.label) ?? (capability.kind === "agent" ? `Asking ${name}` : humanTool(name));
+        break;
+      }
+      case "call.settled": {
+        const call = this.calls.get(text(data.callId) ?? "");
+        if (call === undefined) break;
+        const output = data.output;
+        if (call.name.split("__").pop() === "run_job") {
+          // A job's run comes back as its call's result, after its task finishes the work.
+          const result = isRecord(output) ? output : {};
+          const job = text(result.jobId);
+          if (data.outcome === "failed") {
+            this.items.push({ kind: "notice", key, at, icon: "alert", tone: "error", label: "Work failed", ...(job === undefined ? {} : { jobId: job }) });
+          } else if (data.outcome === "completed" && result.ran === true) {
+            const stopped = result.status === "cancelled";
+            this.items.push({ kind: "notice", key, at, icon: stopped ? "x" : "check", label: stopped ? "Work cancelled" : "Work came back", ...(job === undefined ? {} : { jobId: job }) });
+          }
+          break;
         }
-        break;
-      case "action.result": {
-        const result = event.data.result;
-        if (event.data.error !== undefined || !("toolName" in result) || !("output" in result)) break;
-        if ("isError" in result && result.isError === true) break;
-        const notice = actionNotice(result.toolName, result.output);
+        if (data.outcome !== "completed") break;
+        const notice = actionNotice(call.name, output);
         if (notice !== null) this.items.push({ kind: "notice", key, at, ...notice });
         break;
       }
-      case "authorization.required": {
-        const name = (event.data as { name?: string; authorization?: { displayName?: string } }).authorization?.displayName ?? (event.data as { name?: string }).name ?? "a connector";
-        this.items.push({
-          kind: "notice",
-          key: `authorization:${(event.data as { sequence?: number }).sequence ?? this.items.length}`,
-          at: new Date().toISOString(),
-          icon: "plug",
-          label: `Sign in to ${name} to continue`,
-          detail: "The Bot needs an account it can use. Connect it and the work carries on.",
-          action: "open-connectors",
-        });
-        this.emit();
-        break;
-      }
-      case "authorization.completed": {
-        const outcome = (event.data as { outcome?: string }).outcome;
-        const name = (event.data as { name?: string }).name ?? "the connector";
-        this.items.push({
-          kind: "notice",
-          key: `authorized:${(event.data as { sequence?: number }).sequence ?? this.items.length}`,
-          at: new Date().toISOString(),
-          icon: outcome === "authorized" || outcome === "approved" ? "check" : "alert",
-          label: outcome === "authorized" || outcome === "approved" ? `Signed in to ${name}` : `Could not sign in to ${name}`,
-          ...(outcome === "authorized" || outcome === "approved" ? {} : { tone: "error" as const }),
-        });
-        this.emit();
-        break;
-      }
-      case "input.requested":
-        for (const request of event.data.requests) {
-          if (this.asks.has(request.requestId)) continue;
-          this.asks.set(request.requestId, request);
-          this.items.push({ kind: "ask", key: request.requestId, at, requestId: request.requestId });
-        }
-        break;
-      case "input.resolved":
-        for (const resolution of event.data.resolutions) {
-          this.resolutions.set(resolution.requestId, resolution);
-          this.answering.delete(resolution.requestId);
-        }
-        break;
-      case "task.settled": {
-        // eve 0.79 hands a finished task's result to the model inside the turn, with
-        // no message of its own; a job's run coming back is marked here instead.
-        const data = event.data as { name?: string; status?: string; output?: unknown; error?: { message?: string } };
-        if (data.name !== "run_job") break;
-        const output = isRecord(data.output) ? data.output : {};
-        const job = text(output.jobId);
-        if (data.status === "failed") {
-          this.items.push({ kind: "notice", key, at, icon: "alert", tone: "error", label: "Work failed", ...(job === undefined ? {} : { jobId: job }) });
-        } else if (data.status === "completed" && output.ran === true) {
-          const stopped = output.status === "cancelled";
+      case "interaction.opened": {
+        const request = isRecord(data.request) ? data.request : {};
+        const interactionId = text(data.interactionId) ?? key;
+        if (request.kind === "sign-in") {
+          const signIn = isRecord(request.signIn) ? request.signIn : {};
+          const name = text(signIn.displayName) ?? text(signIn.name) ?? "a connector";
+          this.signIns.set(interactionId, name);
           this.items.push({
             kind: "notice",
             key,
             at,
-            icon: stopped ? "x" : "check",
-            label: stopped ? "Work cancelled" : "Work came back",
-            ...(job === undefined ? {} : { jobId: job }),
+            icon: "plug",
+            label: `Sign in to ${name} to continue`,
+            detail: "The Bot needs an account it can use. Connect it and the work carries on.",
+            action: "open-connectors",
           });
+          break;
         }
+        if (this.asks.has(interactionId)) break;
+        this.asks.set(interactionId, askOf(data as never, this.calls));
+        this.items.push({ kind: "ask", key: interactionId, at, requestId: interactionId });
+        break;
+      }
+      case "interaction.settled": {
+        const interactionId = text(data.interactionId) ?? "";
+        const signIn = this.signIns.get(interactionId);
+        if (signIn !== undefined) {
+          this.signIns.delete(interactionId);
+          const ok = data.outcome === "accepted";
+          this.items.push({
+            kind: "notice",
+            key,
+            at,
+            icon: ok ? "check" : "alert",
+            label: ok ? `Signed in to ${signIn}` : `Could not sign in to ${signIn}`,
+            ...(ok ? {} : { tone: "error" as const }),
+          });
+          break;
+        }
+        this.resolutions.set(interactionId, resolutionOf(this.asks.get(interactionId), data as never));
+        this.answering.delete(interactionId);
         break;
       }
       case "turn.started":
         this.live = true;
         this.liveLabel = null;
         break;
-      case "turn.failed":
-        this.items.push({ kind: "notice", key, at, icon: "alert", ...failureNotice(event.data.message) });
+      case "turn.paused":
         this.settle();
         break;
-      case "session.failed":
-      case "session.completed":
+      case "turn.settled": {
+        if (data.outcome === "failed") {
+          const error = isRecord(data.error) ? data.error : {};
+          this.items.push({ kind: "notice", key, at, icon: "alert", ...failureNotice(text(error.message) ?? "The turn failed.") });
+        }
+        this.settle();
+        break;
+      }
+      case "session.ended": {
+        if (data.outcome === "failed") {
+          const error = isRecord(data.error) ? data.error : {};
+          this.items.push({ kind: "notice", key, at, icon: "alert", ...failureNotice(text(error.message) ?? "The conversation failed.") });
+        }
         this.terminal = true;
         this.settle();
         break;
-      case "turn.completed":
-      case "turn.cancelled":
-      case "session.waiting":
-        this.settle();
-        break;
+      }
       default:
         break;
     }
@@ -778,10 +808,15 @@ export class RoomStore {
           buffer = buffer.slice(newline + 1);
           newline = buffer.indexOf("\n");
           if (line.trim() === "") continue;
-          this.index += 1;
           received += 1;
           try {
-            this.apply(JSON.parse(line) as MessageStreamEvent);
+            const event = JSON.parse(line) as ThreadEvent;
+            // The cursor moves once a stored line has arrived whole (see `inThread`).
+            if (typeof event.cursor === "number") this.index = Math.max(this.index, event.cursor);
+            if (!this.seen.has(event.key)) {
+              this.seen.add(event.key);
+              this.apply(event);
+            }
           } catch {
             // One malformed line should not end the thread.
           }

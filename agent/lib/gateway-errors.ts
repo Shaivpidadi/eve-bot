@@ -18,8 +18,8 @@
  *   input" (seen live from free models).
  * Null for anything else, which keeps its own message.
  */
-/** A model refusing an image: Gateway's wording, and the usual provider ones. */
-export const NO_IMAGES = /\bdoes not support (?:image|file|vision)\b|\bimage (?:or file )?input is not supported\b/i;
+/** A model refusing an image: Gateway's wording, and the usual provider ones (vLLM's for a text-only Nemotron, seen live). */
+export const NO_IMAGES = /\bdoes not support (?:image|file|vision)\b|\bimage (?:or file )?input is not supported\b|\bmultimodal (?:data|processing) is not enabled\b|\breceived multimodal data\b/i;
 
 export function explainGatewayError(
   message: string,

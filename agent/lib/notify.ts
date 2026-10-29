@@ -119,10 +119,11 @@ function repeated(workspaceId: string, tag: string, now: number): boolean {
  * quiet hours unless it needs them. Returns how many people it reached or
  * holds for. The store and the push sender are loaded only here.
  */
-export async function deliver(workspaceId: string, alert: Alert): Promise<number> {
+export async function deliver(workspaceId: string, alert: Alert, options: { readonly telegram?: boolean } = {}): Promise<number> {
   const [{ holdPush, sendPush, subscriptions }, { readPrefs }] = await Promise.all([import("./push"), import("./push-prefs")]);
+  const telegram = options.telegram === false ? 0 : await toTelegram(workspaceId, alert).catch(() => 0);
   const people = [...new Set((await subscriptions(workspaceId)).map((subscription) => subscription.person))];
-  if (people.length === 0) return 0;
+  if (people.length === 0) return telegram;
   const [{ effectiveEnv }, { defaultTimezone }] = await Promise.all([import("./settings/store"), import("./schedule")]);
   const timezone = defaultTimezone(await effectiveEnv(workspaceId).catch(() => process.env));
   let reached = 0;
@@ -136,7 +137,44 @@ export async function deliver(workspaceId: string, alert: Alert): Promise<number
     else await sendPush(workspaceId, message, { person });
     reached += 1;
   }
-  return reached;
+  return reached + telegram;
+}
+
+/**
+ * Whether the Telegram chat already shows what the event is about: its
+ * question or approval as buttons, or HQ's report of the job, because the
+ * work belongs to the Telegram room. A browser takeover is the exception: it
+ * is done from the console, so the chat is told.
+ */
+export async function shownInTelegram(event: Pick<ActivityEvent, "workspaceId" | "jobId" | "data">): Promise<boolean> {
+  const data = event.data ?? {};
+  if (data.takeover === true) return false;
+  const { TELEGRAM_ROOM } = await import("./rooms");
+  if (typeof data.room === "string") return data.room === TELEGRAM_ROOM;
+  if (event.jobId === null) return false;
+  const { getJob } = await import("./jobs");
+  return (await getJob(event.workspaceId, event.jobId).catch(() => null))?.room === TELEGRAM_ROOM;
+}
+
+/**
+ * The same alert to the paired Telegram chat (see lib/telegram.ts), as the
+ * person who connected it chose for their devices; outside quiet hours unless
+ * it needs them, and dropped rather than held. A link to the console when it
+ * is reachable from the phone.
+ */
+async function toTelegram(workspaceId: string, alert: Alert): Promise<number> {
+  const { readTelegramLink, sendToPairedChat, telegramOrigin, modeFor } = await import("./telegram");
+  const link = await readTelegramLink();
+  if (link === null || link.chat === null || link.workspaceId !== workspaceId) return 0;
+  const [{ readPrefs }, { effectiveEnv }, { defaultTimezone }] = await Promise.all([import("./push-prefs"), import("./settings/store"), import("./schedule")]);
+  const prefs = await readPrefs(workspaceId, link.by);
+  const wanted = alert.kind === "needs-you" ? prefs.needsYou : alert.kind === "done" ? prefs.done : prefs.fromBots;
+  if (!wanted) return 0;
+  const timezone = defaultTimezone(await effectiveEnv(workspaceId).catch(() => process.env));
+  if (!alert.urgent && quietUntil(new Date(), timezone, prefs.quietFrom, prefs.quietTo) !== null) return 0;
+  const origin = await telegramOrigin().catch(() => null);
+  const open = origin !== null && modeFor(origin) === "webhook" ? `\n\n${origin}${alert.url}` : "";
+  return (await sendToPairedChat(`${alert.title}\n${alert.body}${open}`)) ? 1 : 0;
 }
 
 /**
@@ -150,7 +188,7 @@ export async function notifyFor(event: ActivityEvent): Promise<void> {
     const bot = event.botId === null ? null : await getBot(event.workspaceId, event.botId).catch(() => null);
     const alert = alertFor(event, event.botId === null ? null : (bot?.name ?? "A Bot"));
     if (alert === null || repeated(event.workspaceId, alert.tag, Date.now())) return;
-    await deliver(event.workspaceId, alert);
+    await deliver(event.workspaceId, alert, { telegram: !(await shownInTelegram(event)) });
   } catch (error) {
     console.warn("[push] could not notify:", error instanceof Error ? error.message : String(error));
   }

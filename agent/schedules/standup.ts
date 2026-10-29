@@ -1,8 +1,8 @@
 import { defineSchedule } from "eve/schedules";
 
-import ops from "../channels/ops";
 import { getBot } from "../lib/bots";
-import { botIdForRoom, HQ_ROOM, roomAttributes } from "../lib/rooms";
+import { botIdForRoom, HQ_ROOM } from "../lib/rooms";
+import { sendToRoomAs } from "../lib/room-delivery";
 import { standupCron, standupRoom } from "../lib/standup";
 import { effectiveEnv } from "../lib/settings/store";
 
@@ -25,7 +25,11 @@ export default defineSchedule({
         // A Bot's room is only on the board while the Bot is on the roster.
         const botId = botIdForRoom(room);
         if (botId !== null && (await getBot(workspaceId, botId).catch(() => null)) === null) room = HQ_ROOM;
-        await to(ops, { workspaceId, room }).send(
+        await sendToRoomAs(
+          to,
+          appAuth,
+          workspaceId,
+          room,
           [
             "Write the daily standup for the team.",
             "Use activity_feed and list_jobs to see what happened since yesterday.",
@@ -33,7 +37,6 @@ export default defineSchedule({
             "what is blocked on a human, and what failed. One line each, names not ids.",
             "If nothing happened, say exactly that in one sentence.",
           ].join(" "),
-          { auth: { ...appAuth, attributes: roomAttributes(workspaceId, room) } },
         );
       })(),
     );

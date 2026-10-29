@@ -4,6 +4,14 @@
  */
 export const HQ_ROOM = "desk";
 
+/**
+ * HQ in the paired Telegram chat (see `channels/telegram.ts`). Work started
+ * there is recorded with this room, so what comes of it later (a due job, a
+ * routine's report, a teammate's answer) is delivered back to the chat; with
+ * no chat paired it goes to HQ's desk instead. The console never opens it.
+ */
+export const TELEGRAM_ROOM = "telegram";
+
 const BOT_ROOM_PREFIX = "bot-";
 const ROOM_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 
@@ -47,6 +55,7 @@ export function isSystemMessage(text: string): boolean {
 
 /** Auth attributes a turn in this room carries; tools read them, never model input. */
 export function roomAttributes(workspaceId: string, room: string): Record<string, string> {
+  if (room === TELEGRAM_ROOM) return { workspaceId, room, channel: "telegram" };
   const botId = botIdForRoom(room);
   return botId === null ? { workspaceId, room } : { workspaceId, room, botId };
 }

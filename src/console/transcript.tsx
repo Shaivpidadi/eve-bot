@@ -1,6 +1,6 @@
 "use client";
 
-import type { InputRequest, InputResolution } from "eve/client";
+import type { InputRequest, InputResolution } from "./asks";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {

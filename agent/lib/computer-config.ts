@@ -5,14 +5,13 @@ import { join } from "node:path";
 
 import type { SandboxNetworkPolicy, SandboxSession } from "eve/sandbox";
 import { DockerSandbox } from "eve/sandbox/docker";
-import { MicrosandboxSandbox } from "eve/sandbox/microsandbox";
 import { VercelSandbox } from "eve/sandbox/vercel";
 
 import { Sandbox as VercelMachine } from "@vercel/sandbox";
 
 import { attachDrive, bindDrive, DRIVE_MOUNT, driveHeld, driveMounts, driveWanted, ensureDrive } from "./computer-drive";
 import { effectiveEnv, liveEnv } from "./settings/store";
-import { TeamComputer } from "./team-computer";
+import { type MachineSandbox, TeamComputer } from "./team-computer";
 
 /**
  * Where the team's computer runs.
@@ -27,9 +26,9 @@ export type ComputerMode = "vercel" | "local";
 export const computerMode = (): ComputerMode => (process.env.BOT_COMPUTER === "local" ? "local" : "vercel");
 
 /**
- * Which local backend runs the computer: Docker by default, which the console
- * can watch live, or a microsandbox VM with `BOT_COMPUTER_LOCAL=microsandbox`
- * (`vm` also works).
+ * Which local backend runs the computer: Docker, which the console can watch
+ * live. eve 0.84 dropped its microsandbox provider, so
+ * `BOT_COMPUTER_LOCAL=microsandbox` is refused with a message (see `localModeError`).
  */
 export const localComputer = (): "docker" | "microsandbox" =>
   process.env.BOT_COMPUTER_LOCAL === "microsandbox" || process.env.BOT_COMPUTER_LOCAL === "vm" ? "microsandbox" : "docker";
@@ -94,15 +93,9 @@ export function vercelCredentialsError(): string | null {
 export function computerEnvironment(prepare: (sandbox: SandboxSession) => Promise<void>) {
   const image = computerImage();
   if (computerMode() === "local") {
-    if (localComputer() === "docker") {
-      const options = { prepare };
-      const environment = image.kind === "dockerfile" ? DockerSandbox.dockerfile(options) : image.kind === "image" ? DockerSandbox.image(image.reference, options) : DockerSandbox.environment(options);
-      return TeamComputer.environment({ provider: "docker", environment, check: localModeError });
-    }
-    const options = { prepare, memoryMiB: 2048 * computerVcpus(process.env) };
-    const environment =
-      image.kind === "dockerfile" ? MicrosandboxSandbox.dockerfile(options) : image.kind === "image" ? MicrosandboxSandbox.image(image.reference, options) : MicrosandboxSandbox.environment(options);
-    return TeamComputer.environment({ provider: "microsandbox", environment, check: localModeError });
+    const options = { prepare };
+    const environment = image.kind === "dockerfile" ? DockerSandbox.dockerfile(options) : image.kind === "image" ? DockerSandbox.image(image.reference, options) : DockerSandbox.environment(options);
+    return TeamComputer.environment({ provider: "docker", environment, check: localModeError });
   }
   // What a new machine is made with; Settings changed since are pushed to it by `reconcile`.
   return TeamComputer.environment({
@@ -148,7 +141,7 @@ const reconciled = new Map<string, { readonly wanted: string; readonly mounted: 
  * up apply at once, CPUs and a new drive from its next session), and the work
  * folders are bound from its drive (see `computer-drive.ts`).
  */
-export async function reconcile(sandbox: SandboxSession, state: unknown): Promise<void> {
+export async function reconcile(sandbox: MachineSandbox, state: unknown): Promise<void> {
   const name = (state as { sandboxName?: unknown } | null)?.sandboxName;
   if (typeof name !== "string") return;
   const env = await effectiveEnv().catch(() => process.env);
@@ -158,7 +151,8 @@ export async function reconcile(sandbox: SandboxSession, state: unknown): Promis
   if (known?.wanted !== key) {
     const machine = await VercelMachine.get({ name });
     const update: Parameters<typeof machine.update>[0] = {
-      ...(sameNetwork(machine.networkPolicy, wanted.networkPolicy) ? {} : { networkPolicy: wanted.networkPolicy }),
+      // eve's policy is the same shape as the SDK's, read-only.
+      ...(sameNetwork(machine.networkPolicy, wanted.networkPolicy) ? {} : { networkPolicy: wanted.networkPolicy as Parameters<typeof machine.update>[0]["networkPolicy"] }),
       ...(machine.vcpus === wanted.vcpus ? {} : { resources: { vcpus: wanted.vcpus } }),
       ...(machine.timeout === wanted.timeout ? {} : { timeout: wanted.timeout }),
     };
@@ -199,23 +193,34 @@ export function computerImage(
   return env.BOT_COMPUTER === "local" ? { kind: "dockerfile" } : { kind: "default" };
 }
 
+let warnedUnfenced = false;
+
 /** Options the machine is opened with: local providers take their network policy here, and a Vercel computer its drive. */
 export function computerOpenOptions(env: Env = liveEnv()): object | undefined {
   if (computerMode() !== "local") {
     const mounts = driveMounts(env);
     return mounts === undefined ? undefined : { mounts };
   }
-  return localComputer() === "docker" ? { networkPolicy: allowedDomains(env).length > 0 ? "deny-all" : "allow-all" } : { networkPolicy: networkPolicy(env) };
+  if (localComputer() === "docker") {
+    // Docker can only allow everything or nothing: a list it cannot enforce fails closed, and says so.
+    if (allowedDomains(env).length === 0) return { networkPolicy: "allow-all" };
+    if (!warnedUnfenced) {
+      warnedUnfenced = true;
+      console.warn("[bot] BOT_SANDBOX_ALLOW_DOMAINS is set, and a Docker computer cannot keep to a list: it gets no network at all, and its live view goes with it. Unset it to give the computer the network.");
+    }
+    return { networkPolicy: "deny-all" };
+  }
+  return { networkPolicy: networkPolicy(env) };
 }
 
 /**
  * Docker is the standalone computer: eve keeps its container running between
  * turns, stops it only when the server shuts down, and reattaches on the next
- * start. A microsandbox VM is for trying things out; the console cannot open
- * one, so a production server refuses it rather than run Bots nobody can watch.
+ * start. eve 0.84 removed its microsandbox provider, so a computer asked for
+ * as one is refused with a plain message rather than swapped for Docker.
  */
 function localModeError(): string | null {
-  return process.env.NODE_ENV === "production" && localComputer() === "microsandbox"
-    ? "BOT_COMPUTER_LOCAL=microsandbox is for development only. Unset it to run the computer in Docker."
+  return localComputer() === "microsandbox"
+    ? "BOT_COMPUTER_LOCAL=microsandbox is no longer available: eve dropped its microsandbox provider. Unset it to run the computer in Docker."
     : null;
 }

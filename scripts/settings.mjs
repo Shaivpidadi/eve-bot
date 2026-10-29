@@ -15,9 +15,10 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export function savedSettings(command, env = process.env) {
-  const tsx = join(process.cwd(), "node_modules", ".bin", "tsx");
+  // tsx's own entry, run by this Node: `.bin/tsx` is a `.cmd` on Windows, which Node will not start without a shell.
+  const tsx = join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
   if (!existsSync(tsx)) return null;
-  const result = spawnSync(tsx, [fileURLToPath(import.meta.url), command], { env, encoding: "utf8", timeout: 60_000 });
+  const result = spawnSync(process.execPath, [tsx, fileURLToPath(import.meta.url), command], { env, encoding: "utf8", timeout: 60_000 });
   const line = result.stdout?.trim().split("\n").pop() ?? "";
   try {
     if (result.status === 0) return JSON.parse(line);

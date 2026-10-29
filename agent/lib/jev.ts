@@ -2,7 +2,8 @@ import { experimental_decide as decide, type Experimental_DecisionQuestion as Ev
 
 import { chargeUsage, reportedCost } from "./spend";
 import type { Usage } from "./usage";
-import { withGatewayOptions } from "./models";
+import { chatDecisionModel } from "./endpoint-decisions";
+import { customEndpoint, endpointModel, modelForEffort, withGatewayOptions } from "./models";
 import { liveEnv } from "./settings/store";
 
 /**
@@ -14,9 +15,10 @@ import { liveEnv } from "./settings/store";
  * real money; a decision model answers them as a typed choice, a score, or a
  * probability, and charges for the input alone.
  *
- * It runs on AI Gateway, and this deployment may not have one — the whole
- * point of `BOT_MODEL_BASE_URL` is that Bot runs on your own models. So every
- * use of this module is optional by construction: `judge` returns null when
+ * It runs on AI Gateway; on your own provider (`BOT_MODEL_BASE_URL`), a chat
+ * model there answers the same questions in its place (`endpoint-decisions.ts`),
+ * without Jev's calibrated probabilities. Either way every use of this module
+ * is optional by construction: `judge` returns null when
  * Jev is switched off, unreachable, unsure, or slow, and each caller must have
  * something sensible to do with null. That is the condition for Jev being here
  * at all, and it is why the old one was removed.
@@ -50,7 +52,20 @@ export function gatewayReachable(env: Env = process.env): boolean {
  */
 export function jevEnabled(env: Env = liveEnv()): boolean {
   if (off(env.BOT_JEV)) return false;
+  // On your own provider, its chat model answers Jev's questions (see endpoint-decisions.ts).
+  if (customEndpoint() !== null) return true;
   return gatewayReachable(env);
+}
+
+/** What answers: Jev on AI Gateway, or a chat model on your own provider standing in for it. */
+function decisionModel(): { readonly model: Parameters<typeof decide>[0]["model"]; readonly id: string } {
+  const endpoint = customEndpoint();
+  if (endpoint === null) {
+    const id = liveEnv().BOT_JEV_MODEL?.trim() || DEFAULT_MODEL;
+    return { model: id, id };
+  }
+  const id = liveEnv().BOT_JEV_MODEL?.trim() || modelForEffort("quick");
+  return { model: chatDecisionModel(endpointModel(endpoint, id), id), id };
 }
 
 export function confidenceFloor(env: Env = liveEnv()): number {
@@ -138,17 +153,18 @@ export async function judge<const QUESTIONS extends Record<string, EvaluationQue
 ): Promise<Judgement<QUESTIONS> | null> {
   if (!jevEnabled()) return null;
   try {
+    const { model, id } = decisionModel();
     const result = await decide({
-      model: liveEnv().BOT_JEV_MODEL?.trim() || DEFAULT_MODEL,
+      model,
       state: state as never,
       questions,
-      providerOptions: withGatewayOptions(),
+      ...(customEndpoint() === null ? { providerOptions: withGatewayOptions() } : {}),
       maxRetries: 0,
       abortSignal: options.abortSignal ?? AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
     if (options.workspaceId !== undefined) {
       // Jev is a Gateway call like any other; the usage page and the budget should see it. Never in the way of the answer.
-      void chargeUsage(options.workspaceId, "jev", spent(result.usage, result.providerMetadata), {
+      void chargeUsage(options.workspaceId, "jev", spent(result.usage, result.providerMetadata, id), {
         runToken: options.runToken ?? null,
         costReported: reportedCost(result.providerMetadata) !== null,
       }).catch(() => undefined);

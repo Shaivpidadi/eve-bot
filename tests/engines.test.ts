@@ -34,7 +34,11 @@ describe("the engine switch", () => {
 
   it("refuses a harness engine when it is off, for a tenant, or where it would drop a data control", async () => {
     const { engineRefusal } = await import("../agent/lib/engines");
-    const on = { BOT_ENGINES: "claude-code" };
+    const on = { BOT_ENGINES: "claude-code", VERCEL_OIDC_TOKEN: "t" };
+    // A standalone server with no Vercel credentials can't make a job's Sandbox.
+    expect(engineRefusal("claude-code", { workspaceId: WORKSPACE, env: { BOT_ENGINES: "claude-code" } })).toMatch(/no Vercel credentials/);
+    expect(engineRefusal("claude-code", { workspaceId: WORKSPACE, env: { BOT_ENGINES: "claude-code", VERCEL: "1" } })).toBeNull();
+    expect(engineRefusal("claude-code", { workspaceId: WORKSPACE, env: { BOT_ENGINES: "claude-code", VERCEL_TOKEN: "t", VERCEL_TEAM_ID: "team", VERCEL_PROJECT_ID: "prj" } })).toBeNull();
     expect(engineRefusal("eve", { workspaceId: "tenant", env: {} })).toBeNull();
     expect(engineRefusal("claude-code", { workspaceId: WORKSPACE, env: {} })).toMatch(/off on this deployment/);
     expect(engineRefusal("claude-code", { workspaceId: WORKSPACE, env: on })).toBeNull();

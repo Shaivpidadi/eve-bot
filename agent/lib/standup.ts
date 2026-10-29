@@ -1,4 +1,4 @@
-import { botIdForRoom, HQ_ROOM, isRoomName } from "./rooms";
+import { botIdForRoom, HQ_ROOM, isRoomName, TELEGRAM_ROOM } from "./rooms";
 
 /**
  * Where and when the daily standup lands.
@@ -31,6 +31,9 @@ export function standupCron(env: Env = process.env): string {
 export const isBoardRoom = (room: string): boolean =>
   room === HQ_ROOM || (isRoomName(room) && (botIdForRoom(room) ?? "") !== "");
 
+/** Where the standup may go: a room the board lists, or the paired Telegram chat (HQ's desk while none is paired). */
+const isStandupRoom = (room: string): boolean => isBoardRoom(room) || room === TELEGRAM_ROOM;
+
 /**
  * The room the standup posts to: `BOT_STANDUP_ROOM` when it names a room the
  * board lists, HQ's desk otherwise. A Bot's room is only checked by shape here;
@@ -39,7 +42,7 @@ export const isBoardRoom = (room: string): boolean =>
 export function standupRoom(env: Env = process.env): string {
   const named = env.BOT_STANDUP_ROOM?.trim();
   if (named === undefined || named === "") return HQ_ROOM;
-  if (isBoardRoom(named)) return named;
+  if (isStandupRoom(named)) return named;
   console.warn(`[bot] BOT_STANDUP_ROOM="${named}" is not a room the console shows; posting the standup to ${HQ_ROOM}.`);
   return HQ_ROOM;
 }

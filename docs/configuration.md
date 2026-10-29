@@ -5,8 +5,10 @@ environment variables below are the defaults until it is, and `.env.example` doc
 
 ## Settings
 
-The gear in the console's sidebar opens Settings, by area: Models, Spend, Team computer, Browser, Memory & decisions,
-Email, Background work, Team and Data controls. Each setting says where its value comes from (changed here, from
+The gear in the console's sidebar opens Settings, by area: Spend, Models, Team computer, Browser, Web search, Memory &
+decisions, Email, Background work, Team, Server, Data controls, Engines and Updates. Each area shows only what applies
+where this copy runs: AI Gateway's controls with Gateway models, your provider's with yours, Vercel's computer's on
+Vercel. Each setting says where its value comes from (changed here, from
 `.env`, or the default), and Reset goes back to the environment's.
 
 - **Who changes what.** Settings for the whole deployment (the computer, the browser, email, data controls) are its
@@ -22,27 +24,30 @@ Email, Background work, Team and Data controls. Each setting says where its valu
   - The computer's settings apply when a session next gets the computer. On Vercel the allowed sites and timeout are
     pushed to the running machine; CPUs and a drive apply from its next session. On Docker they apply from the
     container's next start.
-  - Cost and token caps and where the computer runs are fixed when the agent is built. `npm run build` and
+  - Cost and token caps, where the computer runs, your model provider, the search service, the schedules, the
+    engines and where conversations are kept are fixed when the agent is built. `npm run build` and
     `npm start` lay the saved values over the environment and record what they used, `npm start` rebuilds when they
     changed, and on Vercel they apply with the next deploy. Until then the page marks the change as waiting.
-- **Secrets** (the email webhook's token) are sealed with the computer's key and never shown again. An export
+- **Secrets** (the email webhook's token, your provider's and search's API keys, the Postgres address) are sealed with
+  the computer's key and never shown again. API keys are read on each call, never built in; the Postgres address is
+  handed to a standalone server when it starts. An export
   without secrets leaves all saved settings out.
 - **Locking.** `BOT_SETTINGS_EDITABLE=off` shows the page without letting anyone change it, so only the environment
   applies. `BOT_MODELS_EDITABLE=off` does the same for models alone.
 - **Environment only.** These stay in the environment, because the console needs them before it can run, or because
   changing them from a web page would be unsafe:
-  - model access and your own endpoint (`AI_GATEWAY_API_KEY`, `BOT_MODEL_BASE_URL`, …);
+  - a first model credential for the server to start with (`AI_GATEWAY_API_KEY`, or your provider in
+    `BOT_MODEL_BASE_URL` and `BOT_MODEL`); Settings → Models can change the provider afterwards;
   - the store (`BOT_STORE`, `BLOB_READ_WRITE_TOKEN`, `BOT_DATA_DIR`);
   - sign-in (`BOT_CONSOLE_TOKEN`, `BOT_CONSOLE_TOKENS`, `BOT_CONSOLE_AUTH`, `BOT_CONSOLE_OPEN`);
   - the computer's name and key (`BOT_COMPUTER_NAME`, `BOT_COMPUTER_KEY`), which name its drive and seal secrets;
   - shell isolation (`BOT_SHELL_ISOLATION`);
-  - web search on your own endpoint;
-  - the tick and standup schedules;
-  - whether the background worker runs at all (`BOT_WORKER`). Settings can pause it and set its pace.
+  - on Vercel, whether the background worker runs at all (`BOT_WORKER`). Settings can pause it and set its pace.
 
 ## Models
 
-The console's **Models** page picks the AI Gateway model for each role:
+The console's **Models** page picks the model for each role, on AI Gateway or on your own OpenAI-compatible provider
+(set in Settings → Models, or `BOT_MODEL_BASE_URL`):
 - **HQ:** the conversation.
 - **Bots:** standard, quick and deep jobs.
 - **Helper:** memories, a new Bot's hello, and team suggestions.
@@ -50,6 +55,14 @@ The console's **Models** page picks the AI Gateway model for each role:
 It lists Gateway's models, free ones first and then paid ones cheapest first, with prices and whether each can see
 screenshots. You can also type any `provider/model` id Gateway serves. **Free models only** puts every role on a free
 model; a role not set to one runs on the free model that can see screenshots (`minimax/minimax-m3.1-flash` today).
+
+On your own provider the page lists what it serves (its `/models`), and you can type any name it takes, such as
+`qwen3:8b`. Free models only is an AI Gateway choice and is not offered there. Choices are kept per provider: those
+made for AI Gateway never reach your provider, and the other way round. Jev's second opinions run there too, answered
+by your provider's quick model (or `BOT_JEV_MODEL` there), without Jev's calibrated probabilities; and memory by
+meaning uses your provider's embedding model once one is named (`BOT_MEMORY_EMBEDDING_MODEL`, such as
+`nomic-embed-text` on Ollama). eve's own web search and Zero Data Retention stay AI Gateway's; Settings → Web search
+picks a search service for your provider.
 
 Choices are saved per workspace and win over the variables below, which stay the defaults. A change applies from
 HQ's next message and each job's next run, within about 30 seconds, and a running job keeps its model. The page warns
@@ -109,6 +122,7 @@ paid option: $30 buys $80 of usage on the models it covers.
 | `BOT_SANDBOX_ALLOW_DOMAINS` / `BOT_BROWSER_ALLOWED_DOMAINS` | fence the computer and the browser |
 | `BOT_BROWSER_PAGE_CHARS` / `BOT_BROWSER_SETTLE_MS` | how much of a page a Bot reads per look (`8000`) and how long it lets the page settle first (`300`) |
 | `BOT_BROWSER_GUARD_MS` | how long after a click the network guard watches what the page sends (`1200`) |
+| `BOT_BROWSER_RECORDING` | `on` records each job's browser work (2 frames a second) and keeps the video with the job's files, up to 30 minutes and 50 MB a job. It shows the Bot's tab while it is on the screen, and holds still while another Bot's tab is in front. The first recording installs ffmpeg on the computer, about a minute; that job starts recording once it is there. Off by default; also in Settings → Browser |
 | `BOT_SHELL_TCP_PORTS` / `BOT_SHELL_ISOLATION` | extra ports the shell may reach (`5432,6379`); `off` runs it unfenced with every command gated (see [The Bots' shell](#the-bots-shell)) |
 
 ## Memory
@@ -131,7 +145,7 @@ paid option: $30 buys $80 of usage on the models it covers.
 | `BOT_DEPLOY_HOOK` | a Vercel deploy hook URL (Settings, Git, Deploy Hooks in Vercel), so **Rebuild now** applies a saved setting that waits for a build (the spend caps, where the computer runs, the engines) from the console; best saved in Settings (Updates), sealed. Only an `api.vercel.com` deploy hook is ever called |
 | `BOT_VERSION` | the version shown and compared when `package.json` is not shipped with the build |
 | `BOT_TICK_CRON` | the watchdog's schedule; daily by default |
-| `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | Vercel Pro, production, once the worker is declared (see [The background worker](#the-background-worker)): `on` makes it ask the app for the watchdog's work every `30` seconds, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. Settings can pause it or change its pace without a redeploy |
+| `BOT_WORKER` / `BOT_WORKER_EVERY_SECONDS` | standalone: on unless `off` (`npm start` runs it). Vercel Pro, production, once the worker is declared (see [The background worker](#the-background-worker)): `on` makes it ask the app for the watchdog's work every `30` seconds, so due work, teammates' notes and idle browsers move with no console open. The Usage page shows its last pass. Settings can pause it or change its pace without a redeploy |
 | `BOT_TICK_ON_START` | `off` stops a standalone server sweeping for stranded jobs a minute after it starts |
 | `BOT_WORKFLOW_WORLD` | a shared Workflow world package for a standalone server, such as `@workflow/world-postgres` (with `WORKFLOW_POSTGRES_URL`), so conversations survive rebuilds; experimental, see `docs/decisions/0002-workflow-world.md` |
 | `BOT_BUILD_ID` | overrides the build id leases are stamped with (see `docs/safety.md`, run fencing) |
@@ -168,7 +182,7 @@ built, what is not, and what the live checks showed.
 same `AI_GATEWAY_API_KEY` (or OIDC token) eve uses, so they are billed as
 Gateway credits, like every other Bot. A Claude Pro/Max or ChatGPT
 subscription is not used, and cannot be: the library has no way to sign in
-with one. Each job also uses a Vercel Sandbox and a Drive of its own, billed
+with one. On a standalone server, the plan engines below can. Each job also uses a Vercel Sandbox and a Drive of its own, billed
 by Vercel as Sandbox time and storage.
 
 What such a Bot gets, and does not:
@@ -212,6 +226,41 @@ Locally, sessions run on the local Workflow World (`.workflow-data`), but each
 job's Sandbox is still on Vercel, so a local server needs the project's
 credentials (`vercel env pull` for a `VERCEL_OIDC_TOKEN`, or `VERCEL_TOKEN`,
 `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`).
+
+## Bots on Claude Code or Codex with your own plan (standalone, experimental)
+
+On a standalone server whose team computer is local (`BOT_COMPUTER=local`), a
+Bot can also run on **Claude Code (your plan)** or **Codex (your plan)**: the
+CLI itself, on the team's computer, in the Bot's own folder there, signed in
+with your own Claude Pro/Max or ChatGPT plan. No Vercel Sandbox, durable-harness
+or AI Gateway is involved, and nothing needs a rebuild: an engine is offered in
+the hire dialog as soon as its sign-in is saved in **Settings → Engines**
+(owner only, stored sealed).
+
+| Setting | Does |
+| --- | --- |
+| `BOT_LOCAL_CLAUDE_TOKEN` | Claude Code's sign-in: the token `claude setup-token` prints (your plan), or an Anthropic API key (`sk-ant-api…`, billed per token), or with the address below, that service's key |
+| `BOT_LOCAL_CLAUDE_MODEL` / `BOT_LOCAL_CLAUDE_BASE_URL` | the model (`sonnet`, `opus`, or a full name) and, only to send its calls elsewhere (AI Gateway, a proxy), the API address |
+| `BOT_LOCAL_CODEX_AUTH` | Codex's sign-in: the contents of `~/.codex/auth.json` after `codex login --device-auth` (your ChatGPT plan). Codex refreshes it while it runs, and the saved copy follows |
+| `BOT_LOCAL_CODEX_API_KEY` / `BOT_LOCAL_CODEX_BASE_URL` / `BOT_LOCAL_CODEX_MODEL` | instead of a plan, a key billed per token, for OpenAI or another address that speaks the Responses API; and the model |
+| `BOT_ENGINE_TOOLS_URL` | where the computer's container reaches this server's tools. Docker Desktop, OrbStack and Colima reach it as `host.docker.internal` on its own port, the default; on Docker on Linux set it (`http://172.17.0.1:3000/bot/v1/engine/mcp`) |
+
+How it runs: the first job installs the pinned CLI once into
+`/workspace/.engines` (left out of the computer's backups). Each job starts the
+CLI in the background as the computer's `bot` user, under the same network
+fence as a Bot's own shell, and eve-bot reads its event stream about every 20
+seconds: its words appear in the Bot's thread and the job ends with its turn.
+Its tools are eve-bot's (read the job, log a step, record the result, propose
+an email, the team's connectors under their gates), reached over MCP with a
+secret that is good for that run only and forgotten when it stops. The CLI's
+own shell and file tools only with `BOT_ENGINE_BUILTINS=1`.
+
+What it costs: a plan's turns use your plan's limits and are charged $0 here
+(they still count as the job's turns). With a key, Claude Code's own report of
+what the turn cost is charged to the job and the Usage page; Codex reports
+tokens but no cost, so a Codex turn on a key is not charged here, and the
+spend caps do not see it: watch that key's own usage page. Owner's workspace only. Use your own plan
+for your own Bots: a plan's terms may not allow sharing it with others.
 
 ## Observability: Vercel Agent Runs
 
@@ -309,7 +358,13 @@ reports the mode as `shell`.
 
 ## The background worker
 
-`daemon/` holds a small worker that asks the app for the watchdog's work every 30 seconds with its OIDC token
+On a standalone server, `npm start` is the worker: every 30 seconds it asks the agent for the watchdog's work, with a
+secret it makes for each start, so due work, routines, teammates' notes and the outbox move with no console open.
+**Settings → Background work** pauses it or changes its pace; `BOT_WORKER=off` leaves the work to the console's polls
+and the daily tick. It also gives the agent its own address (`BOT_PUBLIC_URL`, unless you set one). The rest of this
+section is about Vercel.
+
+On Vercel, `daemon/` holds a small worker that asks the app for the watchdog's work every 30 seconds with its OIDC token
 (`POST /bot/v1/internal/tick`), so due work, teammates' notes and idle browsers move with no console open. Without
 it the same work happens on the console's polls, the daily cron and the server's own passes; it is only slower when
 nobody has the console open.
@@ -357,3 +412,42 @@ Notifications**, and chooses what reaches them:
 Nothing to configure on the server: the deployment makes its own Web Push keys the first time they are needed and
 keeps the private one sealed. Pressing a notification opens the Bot's thread; nothing is approved from one.
 
+
+## Telegram
+
+Text HQ from your phone. HQ answers there as it does in the console: it starts jobs, asks for approvals and
+answers with buttons, and sends the same alerts as Notifications. Setting it up takes a minute, on Vercel and on your
+own machine alike:
+
+1. In Telegram, open [@BotFather](https://t.me/BotFather), send `/newbot`, and pick a name. It answers with a token.
+2. In the console, **Settings → Telegram**, paste the token and press **Connect**. (On a standalone server
+   `npm run setup` can ask for it instead, as `TELEGRAM_BOT_TOKEN`; it connects at the first start.)
+3. Scan the code it shows with your phone's camera, or open the link, and press **Start** in Telegram.
+
+That chat is now paired. Every other chat that finds the bot gets one line saying it is private, and nothing reaches
+HQ from it. **Pair another chat** lets a new phone take over; **Disconnect** forgets the bot.
+
+How messages arrive is chosen for you:
+
+- **On Vercel, or any `https` address on the internet:** a webhook to `/eve/v1/telegram`, checked with a secret made
+  when you connect. On Vercel it uses the production domain, so it survives new deployments. A deployment behind
+  Vercel Authentication for everything gets the project's automation bypass in the webhook's address, when the
+  project has one (`VERCEL_AUTOMATION_BYPASS_SECRET`).
+- **On a laptop or a home server:** the server asks Telegram for new messages itself, so there is no tunnel or public
+  address to set up. It answers while the server runs. `npm start` starts asking within a minute of booting (from
+  the background worker, or the start sweep when the worker is off); `npm run dev` starts when the console opens.
+  A standalone server with an `https` address (`BOT_PUBLIC_URL`) gets a webhook instead, like Vercel.
+
+Connecting again after the server's address changes (a custom domain, `BOT_PUBLIC_URL`) moves the webhook. Use one
+bot per deployment: a laptop and a deployment sharing one bot take it from each other. The token is kept sealed in
+the store and never shown again.
+
+The Telegram chat is its own conversation with HQ, separate from HQ's thread in the console; jobs, the board, and the
+feed are the same in both. Work started from the chat reports back to it: a scheduled job or routine wakes HQ in the
+chat when it is due, its sign-off arrives there as buttons, and a Bot's answer to something HQ asked from the chat
+comes back to the chat. While no chat is paired, that work goes to HQ's thread in the console instead.
+`BOT_STANDUP_ROOM=telegram` (Settings → Team) posts the daily standup there too.
+
+Alerts follow the choices and quiet hours of whoever connected the bot (Settings → Notifications), and carry a link
+to the console when it is reachable from the phone. What the chat already shows (its own approvals and jobs) is not
+sent again; a Bot that needs you to take over its browser is, since that is done from the console.

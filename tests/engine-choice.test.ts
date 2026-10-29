@@ -26,6 +26,8 @@ beforeEach(() => {
   vi.stubEnv("BOT_CONSOLE_OPEN", "");
   vi.stubEnv("NODE_ENV", "test");
   vi.stubEnv("BOT_ENGINES", "");
+  // A job's Sandbox needs Vercel credentials; these tests are about the choice, so they have some.
+  vi.stubEnv("VERCEL_OIDC_TOKEN", "test-oidc");
   vi.stubEnv("BOT_ZDR", "");
   vi.stubEnv("BOT_INFERENCE_REGION", "");
   vi.stubEnv("BOT_MODEL_BASE_URL", "");
@@ -48,9 +50,9 @@ describe("choosing an engine", () => {
   it("offers only eve until the owner turns another on", async () => {
     const { engineChoices } = await import("../agent/lib/engines");
     expect(engineChoices("default", {})).toEqual(["eve"]);
-    expect(engineChoices("default", { BOT_ENGINES: "claude-code,codex" })).toEqual(["eve", "claude-code", "codex"]);
-    expect(engineChoices("tenant", { BOT_ENGINES: "claude-code" })).toEqual(["eve"]);
-    expect(engineChoices("default", { BOT_ENGINES: "codex", BOT_ZDR: "1" })).toEqual(["eve"]);
+    expect(engineChoices("default", { BOT_ENGINES: "claude-code,codex", VERCEL_OIDC_TOKEN: "t" })).toEqual(["eve", "claude-code", "codex"]);
+    expect(engineChoices("tenant", { BOT_ENGINES: "claude-code", VERCEL_OIDC_TOKEN: "t" })).toEqual(["eve"]);
+    expect(engineChoices("default", { BOT_ENGINES: "codex", BOT_ZDR: "1", VERCEL_OIDC_TOKEN: "t" })).toEqual(["eve"]);
   });
 
   it("hires on eve by default, and on another engine only where it is on", async () => {
@@ -81,5 +83,12 @@ describe("choosing an engine", () => {
     const board = await buildBoard("default");
     expect(board.engines).toEqual(["eve", "claude-code"]);
     expect(board.members.find((member) => member.name === "Cody")?.profile?.engine).toBe("claude-code");
+  });
+
+  it("never hires or renames a Bot to HQ, which is the chief of staff's name", async () => {
+    expect(await call("POST", "/bot/v1/bots", { ...hire, name: "hq" })).toMatchObject({ status: 409, body: { error: expect.stringContaining("HQ is taken") } });
+    const plain = await call("POST", "/bot/v1/bots", { ...hire, name: "Mira" });
+    const id = (plain.body.bot as { id: string }).id;
+    expect(await call("PATCH", `/bot/v1/bots/${id}`, { name: " HQ " })).toMatchObject({ status: 409 });
   });
 });

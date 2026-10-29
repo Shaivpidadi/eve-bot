@@ -30,10 +30,19 @@ const workflowData = join(root, ".eve", ".workflow-data");
 const computerName = process.env.BOT_COMPUTER_NAME ?? "bot-computer";
 const withComputer = process.argv.includes("--computer");
 
+const SERVER = /eve[\\/]bin[\\/]eve\.js|local-server-child\.js|next dev|next[\\/]dist[\\/]bin[\\/]next"? (dev|start)|\.output[\\/]server[\\/]index\.mjs|scripts[\\/]start\.mjs/;
+
+/** Whether a Bot server is running here: every Node process's command line, by `ps`, or PowerShell on Windows. */
 function running() {
   try {
-    const out = execFileSync("pgrep", ["-f", "eve/bin/eve.js|local-server-child.js|next dev|\\.output/server/index\\.mjs"], { encoding: "utf8" });
-    return out.trim().split("\n").filter((pid) => pid !== "" && Number(pid) !== process.pid && Number(pid) !== process.ppid).length > 0;
+    const lines =
+      process.platform === "win32"
+        ? execFileSync("powershell", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | ForEach-Object { \"$($_.ProcessId) $($_.CommandLine)\" }"], { encoding: "utf8" })
+        : execFileSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" });
+    return lines
+      .split(/\r?\n/)
+      .map((line) => line.trim().match(/^(\d+)\s+(.*)$/))
+      .some((match) => match !== null && Number(match[1]) !== process.pid && Number(match[1]) !== process.ppid && SERVER.test(match[2]));
   } catch {
     return false;
   }
@@ -61,12 +70,21 @@ for (const name of ["dev-runtime", "dev-hosts", "locks", "dev-server-state.v1.js
 }
 
 if (withComputer) {
-  for (const name of [computerName, `${computerName}-gateway`]) {
+  const docker = process.env.EVE_DOCKER_PATH ?? "docker";
+  // eve names the computer's container by a hash and labels it with the computer's name; the live view's forwarder goes by name.
+  let containers = [`${computerName}-gateway`];
+  try {
+    const labelled = execFileSync(docker, ["ps", "-aq", "--filter", `label=eve.sandbox.tag.agent=${computerName}`], { encoding: "utf8" });
+    containers = [...labelled.split(/\s+/).filter((id) => id !== ""), ...containers];
+  } catch {
+    // No Docker: nothing to remove.
+  }
+  for (const name of containers) {
     try {
-      execFileSync(process.env.EVE_DOCKER_PATH ?? "docker", ["rm", "-f", name], { stdio: "ignore" });
+      execFileSync(docker, ["rm", "-f", name], { stdio: "ignore" });
       console.log(`removed container ${name}`);
     } catch {
-      // Not there, or no Docker: nothing to remove.
+      // Not there: nothing to remove.
     }
   }
 } else {

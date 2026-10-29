@@ -7,6 +7,7 @@ import {
   bestMatches,
   refsMatching,
   scriptUrl,
+  webAddress,
   treeFacts,
   type TreeFacts,
   treeIndex,
@@ -266,5 +267,32 @@ describe("scriptUrl", () => {
     expect(scriptUrl("data:text/html,<script>1</script>")).toBe(true);
     expect(scriptUrl("https://mail.example.com/")).toBe(false);
     expect(scriptUrl("app.example.com")).toBe(false);
+  });
+});
+
+describe("webAddress", () => {
+  it("opens web pages, bare domains and a blank page", () => {
+    for (const url of ["https://mail.example.com/inbox", "http://127.0.0.1:8765/", "app.example.com", "app.example.com/a?b=c", "localhost:3000", "example.com:8080/x", "about:blank"]) {
+      expect(webAddress(url), url).toBe(true);
+    }
+  });
+
+  it("refuses the computer's files and the browser's own pages, however they are written", () => {
+    for (const url of [
+      "file:///workspace/.computer/chrome/3/Default/Cookies",
+      " FILE:///workspace/.computer/identity",
+      "file:/etc/passwd",
+      "/workspace/.computer/chrome/",
+      "./notes.txt",
+      "~/secrets",
+      "chrome://settings/passwords",
+      "view-source:https://example.com",
+      "javascript:alert(1)",
+      "data:text/html,hi",
+      "mailto:a@example.com",
+      "ftp://example.com/x",
+    ]) {
+      expect(webAddress(url), url).toBe(false);
+    }
   });
 });

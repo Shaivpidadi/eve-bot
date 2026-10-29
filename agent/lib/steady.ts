@@ -13,9 +13,10 @@ import { wrapLanguageModel, type LanguageModelMiddleware } from "ai";
  * This middleware reads the provider's stream itself. When the stream errors
  * with exactly that complaint, and the model had already produced text or a
  * complete tool call, it closes any open parts and ends the stream with a
- * synthesized finish, so the turn completes on what was received. A stream
- * cut in the middle of a tool call's arguments cannot be completed and still
- * fails, as does any other error.
+ * synthesized finish, so the turn completes on what was received. When it
+ * errors before the model produced anything, the step is asked for again. A
+ * stream cut in the middle of a tool call's arguments cannot be completed and
+ * still fails, as does any other error.
  */
 
 type StreamResult = Awaited<ReturnType<Parameters<NonNullable<LanguageModelMiddleware["wrapStream"]>>[0]["doStream"]>>;
@@ -35,9 +36,22 @@ const NO_USAGE = {
   raw: undefined,
 };
 
-/** The stream, ended cleanly if the provider drops it after real content. */
-export function tolerateTruncation(stream: ReadableStream<StreamPart>): ReadableStream<StreamPart> {
-  const reader = stream.getReader();
+/**
+ * The stream, ended cleanly if the provider drops it after real content, and
+ * asked for again (`again`, at most `retries` times) if it drops before the
+ * model said anything at all: nothing has been acted on yet, so a fresh
+ * request is safe. The provider reports the drop either by failing the stream
+ * or as an `error` part in it; both are read here.
+ */
+export function tolerateTruncation(
+  stream: ReadableStream<StreamPart>,
+  again?: () => Promise<ReadableStream<StreamPart>>,
+  retries = 2,
+): ReadableStream<StreamPart> {
+  let reader = stream.getReader();
+  let left = again === undefined ? 0 : retries;
+  // A stream asked for again starts over; its opening parts were already passed on once.
+  let restarted = false;
   const openText = new Set<string>();
   const openReasoning = new Set<string>();
   const openToolInputs = new Set<string>();
@@ -80,31 +94,63 @@ export function tolerateTruncation(stream: ReadableStream<StreamPart>): Readable
     }
   };
 
+  /** What to do about a drop: finish on what came, ask again, or pass the error on. */
+  async function dropped(controller: ReadableStreamDefaultController<StreamPart>, error: unknown, asPart: boolean): Promise<"retried" | "done"> {
+    const truncated = !finished && isTruncatedStream(error) && openToolInputs.size === 0;
+    if (truncated && (content || toolCalls > 0)) {
+      for (const id of openReasoning) controller.enqueue({ type: "reasoning-end", id } as StreamPart);
+      for (const id of openText) controller.enqueue({ type: "text-end", id } as StreamPart);
+      controller.enqueue({
+        type: "finish",
+        finishReason: { unified: toolCalls > 0 ? "tool-calls" : "stop", raw: "stream-truncated" },
+        usage: NO_USAGE,
+        providerMetadata: { custom: { truncatedStream: true } },
+      } as StreamPart);
+      controller.close();
+      return "done";
+    }
+    if (truncated && left > 0 && again !== undefined) {
+      left -= 1;
+      // What it was thinking is closed; the new request thinks again.
+      for (const id of openReasoning) controller.enqueue({ type: "reasoning-end", id } as StreamPart);
+      for (const id of openText) controller.enqueue({ type: "text-end", id } as StreamPart);
+      openReasoning.clear();
+      openText.clear();
+      void reader.cancel().catch(() => undefined);
+      reader = (await again()).getReader();
+      restarted = true;
+      return "retried";
+    }
+    if (asPart) {
+      controller.enqueue({ type: "error", error } as StreamPart);
+      controller.close();
+    } else controller.error(error);
+    return "done";
+  }
+
   return new ReadableStream<StreamPart>({
     async pull(controller) {
-      try {
-        const { done, value } = await reader.read();
-        if (done) {
+      for (;;) {
+        let read: ReadableStreamReadResult<StreamPart>;
+        try {
+          read = await reader.read();
+        } catch (error) {
+          if ((await dropped(controller, error, false)) === "retried") continue;
+          return;
+        }
+        if (read.done) {
           controller.close();
           return;
         }
-        track(value);
-        controller.enqueue(value);
-      } catch (error) {
-        const recoverable = !finished && isTruncatedStream(error) && openToolInputs.size === 0 && (content || toolCalls > 0);
-        if (!recoverable) {
-          controller.error(error);
+        const part = read.value;
+        if (part.type === "error") {
+          if ((await dropped(controller, part.error, true)) === "retried") continue;
           return;
         }
-        for (const id of openReasoning) controller.enqueue({ type: "reasoning-end", id } as StreamPart);
-        for (const id of openText) controller.enqueue({ type: "text-end", id } as StreamPart);
-        controller.enqueue({
-          type: "finish",
-          finishReason: { unified: toolCalls > 0 ? "tool-calls" : "stop", raw: "stream-truncated" },
-          usage: NO_USAGE,
-          providerMetadata: { custom: { truncatedStream: true } },
-        } as StreamPart);
-        controller.close();
+        if (restarted && (part.type === "stream-start" || part.type === "response-metadata")) continue;
+        track(part);
+        controller.enqueue(part);
+        return;
       }
     },
     cancel(reason) {
@@ -118,7 +164,7 @@ export function steadyModel(model: WrappableModel): WrappableModel {
     specificationVersion: "v4",
     async wrapStream({ doStream }) {
       const result = await doStream();
-      return { ...result, stream: tolerateTruncation(result.stream) };
+      return { ...result, stream: tolerateTruncation(result.stream, async () => (await doStream()).stream) };
     },
   };
   return wrapLanguageModel({ model, middleware });

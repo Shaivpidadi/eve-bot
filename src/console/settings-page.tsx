@@ -1,7 +1,7 @@
 "use client";
 
 import { RotateCcwIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { api, errorMessage, SignedOutError } from "./api";
 import { ModelsSection } from "./models-page";
 import { NotificationsSection } from "./notifications-section";
+import { TelegramSection } from "./telegram-section";
 import { Faint, PageBody, PageError, PageFrame, PageLoading, PageNote } from "./usage-page";
 
 /**
@@ -55,7 +56,7 @@ interface Report {
   readonly canRebuild?: boolean;
 }
 
-const AREAS = ["Spend", "Team computer", "Browser", "Memory & decisions", "Email", "Background work", "Team", "Data controls", "Engines", "Updates", "Notifications", "Models"] as const;
+const AREAS = ["Spend", "Models", "Team computer", "Browser", "Web search", "Memory & decisions", "Email", "Background work", "Team", "Server", "Data controls", "Engines", "Updates", "Notifications", "Telegram"] as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
@@ -117,8 +118,32 @@ export function SettingsPage({ area, onArea, onClose }: { area: string | null; o
     }
   }, []);
 
-  const areas = useMemo(() => AREAS.filter((name) => name === "Models" || name === "Notifications" || (report?.settings ?? []).some((setting) => setting.area === name)), [report]);
+  // Which edges of the tab bar have more areas beyond them, and the chosen one kept in view.
+  const tabBar = useRef<HTMLDivElement>(null);
+  const [fade, setFade] = useState({ left: false, right: false });
+  const edges = useCallback(() => {
+    const bar = tabBar.current;
+    if (bar === null) return;
+    const next = { left: bar.scrollLeft > 1, right: bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 1 };
+    setFade((current) => (current.left === next.left && current.right === next.right ? current : next));
+  }, []);
+
+  const areas = useMemo(() => AREAS.filter((name) => name === "Models" || name === "Notifications" || (name === "Telegram" && report?.owner === true) || (report?.settings ?? []).some((setting) => setting.area === name)), [report]);
   const current = area !== null && (areas as readonly string[]).includes(area) ? area : (areas[0] ?? "Models");
+
+  useEffect(() => {
+    const bar = tabBar.current;
+    if (bar === null) return;
+    // Past the fade on either side (scroll-px-8), then the fade as the scroll left it.
+    bar.querySelector<HTMLElement>(`[data-area="${current}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const frame = requestAnimationFrame(edges);
+    const observer = new ResizeObserver(edges);
+    observer.observe(bar);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [current, areas, edges, report]);
 
   return (
     <PageFrame title="Settings" label="Settings" onBack={onClose}>
@@ -127,9 +152,24 @@ export function SettingsPage({ area, onArea, onClose }: { area: string | null; o
       ) : (
         <Tabs value={current} onValueChange={(next) => typeof next === "string" && onArea(next)}>
           <div className="sticky top-[52px] z-10 border-b bg-background px-4">
-            <TabsList variant="line" className="h-auto w-full justify-start overflow-x-auto">
+            {/* More areas than fit: on a wide screen they wrap, all in view; on a phone they swipe sideways, without a scrollbar, fading out at an edge with more beyond it. */}
+            <TabsList
+              ref={tabBar}
+              variant="line"
+              onScroll={edges}
+              className={cn(
+                "h-auto w-full scroll-px-8 justify-start overflow-x-auto pr-8 [scrollbar-width:none] group-data-horizontal/tabs:h-auto sm:flex-wrap sm:pr-[3px] sm:overflow-x-visible sm:[mask-image:none] [&::-webkit-scrollbar]:hidden",
+                fade.left && fade.right
+                  ? "[mask-image:linear-gradient(to_right,transparent,black_24px,black_calc(100%-24px),transparent)]"
+                  : fade.left
+                    ? "[mask-image:linear-gradient(to_right,transparent,black_24px)]"
+                    : fade.right
+                      ? "[mask-image:linear-gradient(to_left,transparent,black_24px)]"
+                      : "",
+              )}
+            >
               {areas.map((name) => (
-                <TabsTrigger key={name} value={name} className="flex-none text-[12.5px]">
+                <TabsTrigger key={name} value={name} data-area={name} className="flex-none text-[12.5px]">
                   {name}
                 </TabsTrigger>
               ))}
@@ -139,7 +179,8 @@ export function SettingsPage({ area, onArea, onClose }: { area: string | null; o
             <TabsContent key={name} value={name}>
               {name === "Models" ? <ModelsSection /> : null}
               {name === "Notifications" ? <NotificationsSection /> : null}
-              {name === "Notifications" || (name === "Models" && !report.settings.some((setting) => setting.area === name)) ? null : (
+              {name === "Telegram" ? <TelegramSection /> : null}
+              {name === "Notifications" || name === "Telegram" || (name === "Models" && !report.settings.some((setting) => setting.area === name)) ? null : (
                 <PageBody className="max-w-[760px]">
                   {report.owner || name === "Models" ? null : (
                     <PageNote>These are your workspace&apos;s settings. The rest of the deployment&apos;s are set by its owner.</PageNote>

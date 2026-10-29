@@ -1,9 +1,11 @@
+import { failure } from "eve/events";
 import { defineHook } from "eve/hooks";
 import type { HookContext } from "eve/hooks";
 
 import { record } from "../lib/activity";
 import { isSystemMessage } from "../lib/rooms";
 import { noteActive, noteAsked, notePending, notePreview, noteResolved, noteSession, noteTurnStarted } from "../lib/roomstate";
+import { textOfParts } from "../lib/events";
 import { operator } from "../lib/session";
 
 /**
@@ -27,31 +29,25 @@ async function quietly(work: () => Promise<unknown>): Promise<void> {
   }
 }
 
-async function settle(_event: unknown, ctx: HookContext): Promise<void> {
-  if (!isRoot(ctx)) return;
-  const who = operator(ctx);
-  await quietly(() => noteActive(who.workspaceId, who.room, false));
-}
-
 export default defineHook({
   events: {
-    async "message.received"(event, ctx) {
+    async "delivery.consumed"(event, ctx) {
       if (!isRoot(ctx)) return;
       const auth = ctx.session.auth.current;
-      if (auth?.principalType !== "user" || isSystemMessage(event.data.message)) return;
+      const message = textOfParts(event.data.parts);
+      if (auth?.principalType !== "user" || message === "" || isSystemMessage(message)) return;
       const who = operator(ctx);
       const at = new Date().toISOString();
-      await quietly(() => notePreview(who.workspaceId, who.room, "you", event.data.message, at));
-      await quietly(() => noteAsked(who.workspaceId, who.room, event.data.message, at));
+      await quietly(() => notePreview(who.workspaceId, who.room, "you", message, at));
+      await quietly(() => noteAsked(who.workspaceId, who.room, message, at));
     },
 
-    async "message.completed"(event, ctx) {
-      if (!isRoot(ctx) || event.data.message === null) return;
+    async "content.completed"(event, ctx) {
+      if (!isRoot(ctx) || event.data.kind !== "text" || event.data.phase !== "reply") return;
+      const message = typeof event.data.value === "string" ? event.data.value : "";
+      if (message.trim() === "") return;
       const who = operator(ctx);
-      const message = event.data.message;
-      await quietly(() =>
-        notePreview(who.workspaceId, who.room, "bot", message, new Date().toISOString()),
-      );
+      await quietly(() => notePreview(who.workspaceId, who.room, "bot", message, new Date().toISOString()));
     },
 
     async "turn.started"(_event, ctx) {
@@ -61,55 +57,47 @@ export default defineHook({
       await quietly(() => noteTurnStarted(who.workspaceId, who.room));
     },
 
-    // Every way a turn can end clears the room's busy state: a session whose
-    // turn failed may never reach `session.waiting`.
-    "session.waiting": settle,
-    "turn.completed": settle,
-    "turn.cancelled": settle,
-
-    async "input.requested"(event, ctx) {
-      if (!isRoot(ctx)) return;
-      const who = operator(ctx);
-      const at = new Date().toISOString();
-      const requests = event.data.requests.map((request) => ({
-        requestId: request.requestId,
-        kind: request.kind,
-        prompt: request.prompt.split("\n")[0]?.slice(0, 200) ?? "",
-        at,
-      }));
-      await quietly(() => notePending(who.workspaceId, who.room, requests));
-      await quietly(() =>
-        record({
-          workspaceId: who.workspaceId,
-          kind: "input.requested",
-          botId: who.botId,
-          text: `Waiting on a human: ${requests[0]?.prompt || "input"}`,
-          data: { room: who.room, requestIds: requests.map((request) => request.requestId) },
-        }),
-      );
-    },
-
-    async "input.resolved"(event, ctx) {
-      if (!isRoot(ctx)) return;
-      const who = operator(ctx);
-      const ids = event.data.resolutions.map((resolution) => resolution.requestId);
-      await quietly(() => noteResolved(who.workspaceId, who.room, ids));
-    },
-
-    async "turn.failed"(event, ctx) {
+    // Every way a turn ends clears the room's busy state; a failure is also kept in the feed.
+    async "turn.settled"(event, ctx) {
       if (!isRoot(ctx)) return;
       const who = operator(ctx);
       await quietly(() => noteActive(who.workspaceId, who.room, false));
+      if (event.data.outcome !== "failed") return;
+      const error = event.data.error ?? failure(ctx.view, event.data.turnId);
       await quietly(() =>
         record({
           workspaceId: who.workspaceId,
           kind: "job.failed",
           botId: who.botId,
-          text: `A turn failed (${event.data.code}): ${event.data.message.slice(0, 280)}`,
+          text: `A turn failed (${error?.code ?? "unknown"}): ${(error?.message ?? "no detail").slice(0, 280)}`,
           // `turn`: the thread shows this from its own stream; the feed keeps it for the Activity panel.
           data: { room: who.room, sessionId: ctx.session.id, turn: true },
         }),
       );
+    },
+
+    async "interaction.opened"(event, ctx) {
+      if (!isRoot(ctx)) return;
+      const who = operator(ctx);
+      const at = new Date().toISOString();
+      const { interactionId, request } = event.data;
+      const prompt = (request.title ?? request.prompt).split("\n")[0]?.slice(0, 200) ?? "";
+      await quietly(() => notePending(who.workspaceId, who.room, [{ requestId: interactionId, kind: request.kind, prompt, at }]));
+      await quietly(() =>
+        record({
+          workspaceId: who.workspaceId,
+          kind: "input.requested",
+          botId: who.botId,
+          text: `Waiting on a human: ${prompt || "input"}`,
+          data: { room: who.room, requestIds: [interactionId] },
+        }),
+      );
+    },
+
+    async "interaction.settled"(event, ctx) {
+      if (!isRoot(ctx)) return;
+      const who = operator(ctx);
+      await quietly(() => noteResolved(who.workspaceId, who.room, [event.data.interactionId]));
     },
   },
 });

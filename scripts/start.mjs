@@ -6,11 +6,15 @@
  * `.output/` (HQ, the Bots, the console API, and the schedule runner), and the
  * Next.js console, whose build rewrote `/eve/v1` and `/bot/v1` to the agent on
  * 127.0.0.1:4274 (`EVE_NEXT_PRODUCTION_PORT`, which must match at build time).
- * Both read `.env` the way Next.js does. When either stops, so does the other,
- * and the agent stops the team's computer on the way out and reattaches to it
- * on the next start.
+ * Since eve 0.82, `next start` starts that agent itself (`withEve`), with the
+ * console's environment, and stops it when the console stops; starting a
+ * second one here as well left two fighting for the port. So this script
+ * prepares the environment (`.env`, saved settings, a build when one is due)
+ * and starts the console. The agent stops the team's computer on the way out
+ * and reattaches to it on the next start.
  */
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -24,6 +28,8 @@ nextEnv.loadEnvConfig(process.cwd(), false);
 // computer runs) win over .env; a change since the last build rebuilds it.
 const plan = savedSettings("plan");
 overlaySettings(plan?.overlay);
+// Saved secrets the server reads when it starts (the Postgres world's address): into its environment, never into a build.
+for (const [name, value] of Object.entries(plan?.secrets ?? {})) process.env[name] = value;
 
 const agentEntry = join(process.cwd(), ".output", "server", "index.mjs");
 
@@ -49,9 +55,16 @@ if (needed || templateMissing) {
         : "[bot] Building the agent..."
       : "[bot] Building the agent with the team computer's template...",
   );
-  const built = spawnSync(join(process.cwd(), "node_modules", ".bin", "eve"), ["build"], { stdio: "inherit" });
-  if (built.status === 0) savedSettings("record");
-  else if (needed) {
+  // A due build is the whole one (scripts/build.mjs: the agent, and the console, whose build
+  // carries the engines' route and the saved settings); a missing template only needs the agent's.
+  // Both run their tools' own entries with this Node (`.bin/*` are `.cmd` files on Windows).
+  const built = needed
+    ? spawnSync(process.execPath, [join(process.cwd(), "scripts", "build.mjs")], { stdio: "inherit" })
+    : spawnSync(process.execPath, [join(process.cwd(), "node_modules", "eve", "bin", "eve.js"), "build"], { stdio: "inherit" });
+  // scripts/build.mjs records what it used itself.
+  if (built.status === 0) {
+    if (!needed) savedSettings("record");
+  } else if (needed) {
     console.error("[bot] The agent did not build; see above.");
     process.exit(built.status ?? 1);
   } else {
@@ -92,21 +105,45 @@ if (process.env.BOT_TICK_ON_START !== "off") {
   }, 60_000).unref();
 }
 
+// The background worker, as a Vercel Daemon is on Vercel: the watchdog's work
+// (due jobs, routines, teammates' notes, the outbox) every 30 seconds, so none
+// of it waits for a console to be open. Settings → Background work pauses it or
+// changes the pace; BOT_WORKER=off leaves it to the daily tick. The calls carry
+// a secret made for this start and go to the agent itself, which also uses
+// that address to call itself (BOT_PUBLIC_URL, unless set).
+process.env.BOT_INTERNAL_SECRET ||= randomBytes(32).toString("base64url");
+process.env.BOT_PUBLIC_URL ||= `http://127.0.0.1:${agentPort}`;
+const workerOn = !/^(0|off|false|no)$/i.test(process.env.BOT_WORKER?.trim() ?? "");
+if (workerOn) {
+  process.env.BOT_WORKER = "on";
+  let every = 30;
+  const pass = async () => {
+    try {
+      const response = await fetch(`http://127.0.0.1:${agentPort}/bot/v1/internal/tick`, {
+        method: "POST",
+        headers: { "x-bot-internal": process.env.BOT_INTERNAL_SECRET },
+        signal: AbortSignal.timeout(120_000),
+      });
+      const body = await response.json().catch(() => null);
+      if (response.ok && typeof body?.everySeconds === "number" && body.everySeconds >= 10) every = body.everySeconds;
+    } catch {
+      // The agent is still starting, or restarting: the next pass tries again.
+    }
+    setTimeout(pass, every * 1000).unref();
+  };
+  setTimeout(pass, 45_000).unref();
+}
+
+// The console, which starts the agent (above) with this environment.
 const children = [
-  spawn(process.execPath, [agentEntry], {
+  spawn(process.execPath, [join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", host, "-p", consolePort], {
     stdio: "inherit",
     env: {
       ...process.env,
-      NODE_ENV: process.env.NODE_ENV ?? "production",
-      HOST: "127.0.0.1",
-      NITRO_HOST: "127.0.0.1",
-      PORT: agentPort,
-      NITRO_PORT: agentPort,
+      // NODE_ENV is what tells the agent it is serving rather than being developed (see above).
+      NODE_ENV: "production",
+      EVE_NEXT_PRODUCTION_PORT: agentPort,
     },
-  }),
-  spawn(process.execPath, [join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", host, "-p", consolePort], {
-    stdio: "inherit",
-    env: { ...process.env, NODE_ENV: "production" },
   }),
 ];
 
@@ -131,7 +168,7 @@ function stop(code, signal = "SIGTERM") {
 for (const child of children) {
   child.on("exit", (code, signal) => {
     if (stopping) return;
-    console.error(`[bot] ${child === children[0] ? "agent" : "console"} exited (${signal ?? code}); stopping.`);
+    console.error(`[bot] The console exited (${signal ?? code}); stopping.`);
     stop(code ?? 1);
   });
 }

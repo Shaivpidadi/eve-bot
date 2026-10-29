@@ -3,13 +3,14 @@ import { sleep } from "workflow";
 import { z } from "zod";
 
 import { record, recentActivity } from "../lib/activity";
-import { readArtifact } from "../lib/artifacts";
+import { artifactBytes, readArtifact } from "../lib/artifacts";
 import { getBot } from "../lib/bots";
 import { admitClaimedRun, BUDGET_HALT_REASON, releaseRun, runHalted, settleRun } from "../lib/budget";
 import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
 import { renderBrief } from "../lib/brief";
 import type { Engine, HarnessEngine } from "../lib/engines";
 import { reapIdleScreens } from "../lib/computer/reaper";
+import { sweepFinishedTabs } from "../lib/computer/tab-sweep";
 import { forgetJob } from "../lib/computer/screens";
 import { newId } from "../lib/ids";
 import { DISPATCH_LEASE_MS, dueMessage } from "../lib/dispatch";
@@ -140,6 +141,11 @@ export default defineWorkflowTool({
     now: looseBoolean()
       .optional()
       .describe("Start straight away even if the job is scheduled for later."),
+    note: z
+      .string()
+      .max(2_000)
+      .optional()
+      .describe("What the person wants changed, when they sent the job back without saying and you asked: the same bot revises with it."),
   }),
   label: {
     start: ({ jobId }) => `Run ${jobId}`,
@@ -147,8 +153,9 @@ export default defineWorkflowTool({
   async serve(receive, ctx) {
     "use workflow";
     const call = await receive();
-    const { jobId, now } = call.input;
+    const { jobId, now, note } = call.input;
     const workspaceId = operator(ctx).workspaceId;
+    if (note !== undefined && note.trim() !== "") await takeNote(workspaceId, jobId, note.trim());
 
     // 1. Not due yet: answer now, then wait for the start time without holding the conversation.
     if (now !== true) {
@@ -284,7 +291,7 @@ async function runCycle(
           .then((response) => response.result())
           .then(
             (result): Settled =>
-              result.status === "failed" ? { ok: false, error: result.error?.message ?? "The bot's turn failed." } : { ok: true, raw: result.data ?? result.message ?? null },
+              result.status === "failed" ? { ok: false, error: result.error?.message ?? "The bot's turn failed." } : { ok: true, raw: result.data ?? result.reply ?? null },
             (error: unknown): Settled => ({ ok: false, error: describeError(error) }),
           );
 
@@ -371,7 +378,9 @@ async function runCycle(
   const salvaged = await salvageResult(workspaceId, jobId, claim, settled.ok ? settled.raw : null);
   if (salvaged === null) {
     const error = settled.ok ? "The bot ended without a result: nothing was recorded, said, or saved." : (gateway?.text ?? settled.error);
-    await markFailed(workspaceId, jobId, error, claim.token);
+    const nextCycle = await markFailed(workspaceId, jobId, error, claim.token);
+    // A routine lost only this cycle: say when it runs again, so nobody starts it over.
+    if (nextCycle !== null) return answer({ jobId, ran: true, status: "scheduled", error, nextRunAt: nextCycle, note: "This cycle failed; the routine keeps its schedule. Do not create it again." });
     return answer({ jobId, ran: true, status: "failed", error });
   }
   const result: JobResult = salvaged;
@@ -422,7 +431,7 @@ async function runCycle(
       if (note === "") {
         const reason = "Sent back without a note.";
         await markBlocked(workspaceId, jobId, reason, claim.token, result);
-        return answer({ jobId, ran: true, status: "blocked", reason, next: "Ask the person what to change, then call run_job for this job again.", result });
+        return answer({ jobId, ran: true, status: "blocked", reason, next: "Ask the person what to change, then call run_job for this job again with their answer as `note`. Do not open a new job for it.", result });
       }
       // The revision is a fresh call, so its review card reaches the person: the job
       // goes back in the queue with the note in its brief, next to this result.
@@ -537,9 +546,9 @@ async function claimForRun(
     return refused(`${bot.name} is paused. Resume them to run this job.`);
   }
   // Checked again at every run, so a data control turned on since the Bot was set up stops it here.
-  const { engineOf, engineRefusal } = await import("../lib/engines");
+  const [{ engineOf, engineRefusal }, { effectiveEnv }] = await Promise.all([import("../lib/engines"), import("../lib/settings/store")]);
   const engine = engineOf(bot);
-  const engineRefused = engineRefusal(engine, { workspaceId });
+  const engineRefused = engineRefusal(engine, { workspaceId, env: await effectiveEnv(workspaceId) });
   if (engineRefused !== null) {
     await releaseJob(workspaceId, jobId);
     return refused(`${bot.name} runs on another engine that cannot run here: ${engineRefused}`);
@@ -643,9 +652,13 @@ async function salvageResult(workspaceId: string, jobId: string, claim: Extract<
   if (recorded !== null) return recorded;
 
   const text = typeof raw === "string" ? raw.trim() : "";
+  // Data the bot ended on (a tool's answer echoed back), which makes no summary.
+  let bareData = false;
   if (text.startsWith("{")) {
     try {
-      const parsed = JobResultZ.safeParse(JSON.parse(text));
+      const value: unknown = JSON.parse(text);
+      bareData = true;
+      const parsed = JobResultZ.safeParse(value);
       // The shape is the bot's, but the close is not: it never called finish_job.
       if (parsed.success) return { ...parsed.data, completion: "recovered" };
     } catch {
@@ -664,8 +677,9 @@ async function salvageResult(workspaceId: string, jobId: string, claim: Extract<
       continue;
     }
     const stored = await readArtifact(artifact.key);
-    if (stored === null) continue;
-    const content = Buffer.from(stored.base64, "base64").toString("utf8").trim().slice(0, Math.min(SALVAGE_ARTIFACT_CHARS, budget));
+    const bytes = stored === null ? null : await artifactBytes(stored);
+    if (bytes === null) continue;
+    const content = Buffer.from(bytes).toString("utf8").trim().slice(0, Math.min(SALVAGE_ARTIFACT_CHARS, budget));
     budget -= content.length;
     files.push(`### ${artifact.name}\n${content}`);
   }
@@ -673,7 +687,7 @@ async function salvageResult(workspaceId: string, jobId: string, claim: Extract<
 
   const notes = await recentActivity(workspaceId, { jobId, after: claim.startedAt, limit: 40 });
   const lastNote = notes.find((event) => event.kind === "job.progress")?.text ?? null;
-  const summary = (lastNote ?? text.split(/\n\s*\n/)[0] ?? "").slice(0, 600) || `${claim.botName} ended without a summary; see the deliverable.`;
+  const summary = (lastNote ?? (bareData ? "" : text.split(/\n\s*\n/)[0]) ?? "").slice(0, 600) || `${claim.botName} ended without a summary; see the deliverable.`;
   const deliverable = [text.slice(0, SALVAGE_TEXT_CHARS), ...files].filter((part) => part !== "").join("\n\n").slice(0, SALVAGE_TEXT_CHARS);
 
   await record({
@@ -899,10 +913,21 @@ async function markDone(
   await (job === null || job.status === "cancelled" ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
   // A handover this job raised is over with it.
   await forgetJob(workspaceId, jobId).catch(() => undefined);
+  // The run's tab, and its agent-browser session, go now that the job is over.
+  await sweepFinishedTabs(workspaceId).catch(() => 0);
   // Browsers nobody is using are stopped; they start again on the next use.
   await reapIdleScreens().catch(() => 0);
   const repeats = job?.status === "scheduled";
   return { status: job?.status ?? null, nextRunAt: repeats ? (job?.runAt ?? null) : null };
+}
+
+/**
+ * The person's note for a job they sent back without one (or that failed or is
+ * blocked): it goes in the brief of the next run, as a note on the card does.
+ */
+async function takeNote(workspaceId: string, jobId: string, note: string): Promise<void> {
+  "use step";
+  await patchJob(workspaceId, jobId, (job) => (job.status === "blocked" || job.status === "failed" ? { ...job, feedback: note } : job));
 }
 
 async function markFailed(
@@ -910,12 +935,15 @@ async function markFailed(
   jobId: string,
   error: string,
   token: string,
-): Promise<void> {
+): Promise<string | null> {
   "use step";
-  const failed = await failJob(workspaceId, jobId, error, { token });
+  const failed = await failJob(workspaceId, jobId, error, { token, routineGoesOn: true });
   await (failed === null ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
   await forgetJob(workspaceId, jobId).catch(() => undefined);
+  await sweepFinishedTabs(workspaceId).catch(() => 0);
   await reapIdleScreens().catch(() => 0);
+  // When the routine runs again, if this was a routine's cycle.
+  return failed?.status === "scheduled" ? failed.runAt : null;
 }
 
 async function markBlocked(

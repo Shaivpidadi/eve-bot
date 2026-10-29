@@ -2,6 +2,7 @@ import { defineDynamic } from "eve/connections";
 
 import { connectorConnection } from "../lib/connector-connection";
 import { listConnectors } from "../lib/connectors";
+import { perTurn } from "../lib/dynamic";
 import { operator } from "../lib/session";
 
 /**
@@ -15,21 +16,17 @@ import { operator } from "../lib/session";
  * might change something stays with a Bot and its gate (see the teammate's
  * connections).
  *
- * Resolved at the start of the session and again every turn, so settings
- * changed on the Connectors page reach a running conversation; every call is
+ * Read again every turn, so settings changed on the Connectors page reach a
+ * running conversation; every call is
  * also checked against the live record (see `connector-connection.ts`).
  */
-async function resolve(ctx: Parameters<typeof operator>[0]) {
+async function resolve(ctx: Parameters<typeof operator>[0] & Parameters<typeof perTurn>[0]) {
   const { workspaceId } = operator(ctx);
-  const entries = (await listConnectors(workspaceId))
+  // Read once a turn: the records are kept with the session, sealed as they are stored.
+  const entries = (await perTurn(ctx, () => listConnectors(workspaceId)))
     .map((connector) => [connector.name, connectorConnection(connector, "hq")] as const)
     .filter((entry): entry is readonly [string, NonNullable<(typeof entry)[1]>] => entry[1] !== null);
   return entries.length === 0 ? null : Object.fromEntries(entries);
 }
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => resolve(ctx),
-    "turn.started": (_event, ctx) => resolve(ctx),
-  },
-});
+export default defineDynamic((ctx) => resolve(ctx));

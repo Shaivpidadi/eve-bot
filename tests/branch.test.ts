@@ -5,14 +5,20 @@ import { withBranches, type TimelineItem } from "../src/console/room-store";
 
 /** Taking a thread back to one of its messages (D5.3). */
 
-const said = (id: string, type: "message.received" | "message.completed", message: string, at: string) => ({
+/** A message as eve 0.84 records it: the person's as a consumed delivery, the Bot's as a completed reply part. */
+const said = (line: number, type: "delivery.consumed" | "content.completed", text: string, at: string) => ({
   type,
-  meta: { id, at },
-  data: { message, sequence: 0, turnId: `turn_${id}`, ...(type === "message.completed" ? { finishReason: "stop", stepIndex: 0 } : { parts: [{ type: "text", text: message }] }) },
+  scope: { turnId: `turn_${line}` },
+  meta: { position: { line, index: 0 }, at },
+  data:
+    type === "delivery.consumed"
+      ? { deliveryId: `d${line}`, turnId: `turn_${line}`, parts: [{ kind: "text", text }] }
+      : { partId: `p${line}`, runId: `r${line}`, kind: "text", phase: "reply", value: text },
 });
+// Two sessions of one thread; the second's lines follow the first's, so its keys start at e2.
 const thread: Record<string, unknown[]> = {
-  s1: [said("evt_a", "message.received", "I moved to Austin.", "2026-10-15T10:00:00.000Z"), said("evt_b", "message.completed", "Noted.", "2026-10-15T10:00:02.000Z")],
-  s2: [said("evt_c", "message.received", "Lunch downtown?", "2026-10-15T10:05:00.000Z"), said("evt_d", "message.completed", "Try Phoebe's.", "2026-10-15T10:05:03.000Z")],
+  s1: [said(0, "delivery.consumed", "I moved to Austin.", "2026-10-15T10:00:00.000Z"), said(1, "content.completed", "Noted.", "2026-10-15T10:00:02.000Z")],
+  s2: [said(0, "delivery.consumed", "Lunch downtown?", "2026-10-15T10:05:00.000Z"), said(1, "content.completed", "Try Phoebe's.", "2026-10-15T10:05:03.000Z")],
 };
 async function* read(sessionId: string): AsyncIterable<unknown> {
   yield* thread[sessionId] ?? [];
@@ -20,18 +26,18 @@ async function* read(sessionId: string): AsyncIterable<unknown> {
 
 describe("foldUntil", () => {
   it("keeps the conversation up to and including the chosen message, across sessions", async () => {
-    const point = await foldUntil(["s1", "s2"], read, "evt_c");
+    const point = await foldUntil(["s1", "s2"], read, "e2_0");
     expect(point).toMatchObject({ eventAt: "2026-10-15T10:05:00.000Z", text: "Lunch downtown?" });
     expect(point?.messages.map((message) => message.text)).toEqual(["I moved to Austin.", "Noted.", "Lunch downtown?"]);
   });
 
   it("stops early: nothing after the point is read", async () => {
-    const point = await foldUntil(["s1", "s2"], read, "evt_a");
+    const point = await foldUntil(["s1", "s2"], read, "e0_0");
     expect(point?.messages).toEqual([{ role: "user", text: "I moved to Austin." }]);
   });
 
   it("finds nothing for an id that is not a message in the thread", async () => {
-    expect(await foldUntil(["s1", "s2"], read, "evt_zzz")).toBeNull();
+    expect(await foldUntil(["s1", "s2"], read, "e9_0")).toBeNull();
   });
 });
 
@@ -70,5 +76,15 @@ describe("the branch seed", () => {
     expect(await rooms.takeSeed("ws", "desk", "s3")).toHaveLength(1);
     expect(await rooms.takeSeed("ws", "desk", "s4")).toBeNull();
     expect((await rooms.getRoomState("ws", "desk"))?.branches).toHaveLength(1);
+  });
+});
+
+describe("a thread's events", () => {
+  it("carry a key that runs across sessions, and a cursor once their line is whole", async () => {
+    const { inThread } = await import("../agent/lib/events");
+    const event = { type: "content.completed", meta: { position: { line: 3, index: 1 }, at: "x" } };
+    expect(inThread(event, 10)).toMatchObject({ key: "e13_1", cursor: 14 });
+    // More of the same line follows: the cursor waits, so a reconnect reads the whole line again.
+    expect(inThread({ ...event, meta: { ...event.meta, endOfLine: false } }, 10)).not.toHaveProperty("cursor");
   });
 });

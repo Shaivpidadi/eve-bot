@@ -101,7 +101,7 @@ const set = (name, value) => lines.push([name, value]);
 
 say();
 if (platform === "standalone") {
-  note("Standalone Bot: the team's computer in Docker, storage on disk, models from your own endpoint.");
+  note("Standalone Bot: the team's computer in Docker, storage on disk.");
   set("BOT_COMPUTER", "local");
   set("BOT_STORE", "fs");
   if (!dockerRunning()) {
@@ -112,20 +112,28 @@ if (platform === "standalone") {
 }
 
 // ── Models ─────────────────────────────────────────────────────────────────
+// Any OpenAI-compatible provider runs Bot, a standalone server's default; AI
+// Gateway is one of them, and Vercel's default. Only eve's own web search and
+// Zero Data Retention need the Gateway.
 const modelChoices = [
   "Ollama on this machine (http://localhost:11434/v1)",
   "LM Studio on this machine (http://localhost:1234/v1)",
   "OpenRouter (https://openrouter.ai/api/v1, with an API key)",
   "Another OpenAI-compatible API (vLLM, a company proxy, ...)",
+  platform === "vercel" ? "Vercel AI Gateway (the default on Vercel)" : "Vercel AI Gateway, with an API key",
 ];
-if (platform === "vercel") modelChoices.push("Vercel AI Gateway (the default on Vercel)");
 const modelChoice = await choose("Where do the models come from?", modelChoices, platform === "vercel" ? 5 : 1);
 
 let customEndpoint = null;
 if (modelChoice === 5) {
-  const key = await ask("AI_GATEWAY_API_KEY (blank if the project is linked and uses OIDC):", "");
+  // A standalone server has no Vercel OIDC token to fall back on: it needs the key.
+  const key =
+    platform === "vercel"
+      ? await ask("AI_GATEWAY_API_KEY (blank if the project is linked and uses OIDC):", "")
+      : await ask("AI_GATEWAY_API_KEY (vercel.com → AI Gateway → API Keys):");
   note("Models through Vercel AI Gateway.");
   if (key !== "") set("AI_GATEWAY_API_KEY", key);
+  else if (platform === "standalone") say("No key: the Bots cannot reach a model until AI_GATEWAY_API_KEY is in .env.");
 } else {
   const baseURL =
     modelChoice === 1
@@ -180,17 +188,47 @@ const consoleToken = typed === "" ? token() : typed;
 note("The password you sign in to the console with.");
 set("BOT_CONSOLE_TOKEN", consoleToken);
 
+// ── Telegram ───────────────────────────────────────────────────────────────
+if (platform === "standalone") say();
+let telegramBot = null;
+// On Vercel the token is pasted in the deployed console instead: .env.local is for development, and a laptop polling the same bot would take it from the deployment.
+if (platform === "standalone" && await yes("Text HQ from Telegram? (you need a bot token from @BotFather: send it /newbot)", false)) {
+  for (;;) {
+    const botToken = await ask("Bot token (blank to skip):", "");
+    if (botToken === "") break;
+    try {
+      const answer = await (await fetch(`https://api.telegram.org/bot${botToken}/getMe`, { signal: AbortSignal.timeout(10_000) })).json();
+      if (answer?.ok === true && typeof answer.result?.username === "string") {
+        telegramBot = answer.result.username;
+        say(`  That is @${telegramBot}.`);
+        note("Telegram: connects on its own at the first start; pair your phone in the console (Settings, Telegram).");
+        set("TELEGRAM_BOT_TOKEN", botToken);
+        break;
+      }
+      say(`  Telegram did not take it${typeof answer?.description === "string" ? `: ${answer.description}` : ""}. Copy the whole token, like 123456789:AA…`);
+    } catch {
+      say("  Telegram could not be reached to check it; it is saved, and checked again when the server starts.");
+      note("Telegram: connects on its own at the first start; pair your phone in the console (Settings, Telegram).");
+      set("TELEGRAM_BOT_TOKEN", botToken);
+      telegramBot = "your bot";
+      break;
+    }
+  }
+}
+
 // ── Write ──────────────────────────────────────────────────────────────────
 const file = platform === "standalone" ? ".env" : ".env.local";
 const path = join(process.cwd(), file);
 if (existsSync(path)) {
   say();
-  if (!(await yes(`${file} exists. Replace it (the old one is kept as ${file}.bak)?`, false))) {
+  // An earlier run's backup is kept too: each replaced file gets its own name.
+  const backup = existsSync(`${path}.bak`) ? `${file}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}` : `${file}.bak`;
+  if (!(await yes(`${file} exists. Replace it (the old one is kept as ${backup})?`, false))) {
     say("Nothing written.");
     rl.close();
     process.exit(0);
   }
-  renameSync(path, `${path}.bak`);
+  renameSync(path, join(process.cwd(), backup));
 }
 const rendered = lines.map((line) => (typeof line === "string" ? line : `${line[0]}=${line[1]}`)).join("\n");
 writeFileSync(path, `${rendered}\n`);
@@ -201,10 +239,14 @@ say(`Wrote ${file}.`);
 say();
 if (platform === "standalone") {
   say("Next:");
+  if (lines.some((line) => Array.isArray(line) && line[0] === "BOT_SEARCH_PROVIDER" && line[1] === "searxng")) {
+    say("  docker compose up -d searxng    # the web search you picked, on http://localhost:8888");
+  }
   say("  npm run build && npm start      # then open http://localhost:3000/bot");
   say(`  sign in with: ${consoleToken}`);
   say("  keep .data/, .eve/ and the bot-computer Docker volume on storage that survives restarts");
   say("  npm run dev                     # for hacking on Bot itself, with the same .env");
+  if (telegramBot !== null) say(`  Telegram: open the console, Settings → Telegram, and scan the code with your phone to pair ${telegramBot.startsWith("@") || telegramBot === "your bot" ? telegramBot : `@${telegramBot}`}.`);
 } else {
   say("Next:");
   say("  npx vercel link && npx vercel env pull   # Vercel Sandbox and AI Gateway credentials for development");
@@ -213,4 +255,5 @@ if (platform === "standalone") {
   say("  npx vercel blob create-store bot-store --access private --yes");
   say(`  npx vercel env add BOT_CONSOLE_TOKEN production   # ${consoleToken}`);
   say("  npx vercel deploy --prod");
+  say("To text HQ from Telegram: on the deployment, Settings → Telegram, paste a token from @BotFather, and scan the code.");
 }

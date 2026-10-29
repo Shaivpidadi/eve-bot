@@ -905,7 +905,7 @@ export async function failJob(
   workspaceId: string,
   jobId: string,
   error: string,
-  options: { retryInMinutes?: number; token?: string } = {},
+  options: { retryInMinutes?: number; token?: string; routineGoesOn?: boolean } = {},
 ): Promise<Job | null> {
   const retry = options.retryInMinutes;
   const state: { outcome: CloseOutcome } = { outcome: "superseded" };
@@ -920,13 +920,17 @@ export async function failJob(
       return null;
     }
     state.outcome = "closed";
+    // A routine's run that failed is one cycle lost, not the routine: it runs again at its next time.
+    const nextCycle = retry === undefined && options.routineGoesOn === true && isRoutine(current);
     return stamp({
       ...current,
-      status: retry === undefined ? "failed" : "scheduled",
+      status: retry === undefined && !nextCycle ? "failed" : "scheduled",
       runAt:
-        retry === undefined
-          ? current.runAt
-          : new Date(Date.now() + retry * 60_000).toISOString(),
+        retry !== undefined
+          ? new Date(Date.now() + retry * 60_000).toISOString()
+          : nextCycle
+            ? nextRunAt(current)
+            : current.runAt,
       lease: null,
       error,
     });
@@ -943,7 +947,7 @@ export async function failJob(
       kind: "job.failed",
       botId: job.botId,
       jobId,
-      text: `Could not finish "${job.title}"${spent(job)}: ${error}`,
+      text: `Could not finish "${job.title}"${spent(job)}: ${error}${job.status === "scheduled" && isRoutine(job) ? ` It runs again at ${job.runAt}.` : ""}`,
       data: { room: job.room, title: job.title, error },
     });
   }

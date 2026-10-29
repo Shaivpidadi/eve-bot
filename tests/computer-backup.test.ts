@@ -51,7 +51,15 @@ function computer(files: Record<string, string>, drive?: { fresh: boolean }) {
     },
     readBinaryFile: async () => state.archive,
   };
-  return { state, sandbox };
+  /** The same computer as a plan engine's run reaches it (`ComputerIo`). */
+  const io = {
+    run: async (command: string) => run(command),
+    writeBinaryFile: async (_path: string, content: Uint8Array) => {
+      state.upload = content;
+    },
+    readBinaryFile: async () => state.archive,
+  };
+  return { state, sandbox, io };
 }
 
 const ctxFor = (sandbox: unknown) =>
@@ -117,6 +125,32 @@ describe("backing up a replaced computer", () => {
     expect(next.generation).not.toBe(saved.generation);
     expect(text(await store.readBytes(next.archiveKey))).toContain("three weeks of work");
     expect(await store.readBytes(saved.archiveKey)).toBeNull();
+  });
+
+  it("restores and backs up a replaced computer for a plan engine's run, which holds only its io", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    at("12:00");
+    const { backup, manifest, store, feed } = await load();
+
+    const original = computer({ "workspace/report.md": "three weeks of work" });
+    await backup.checkpointComputer(ctxFor(original.sandbox), { minIntervalMs: 0 });
+    const saved = (await manifest())!;
+
+    // The computer is replaced, and a Claude Code run on the owner's plan is the next to start.
+    at("13:00");
+    const replacement = computer({});
+    expect(await backup.ensureComputerRestoredFor("w1", replacement.io)).toBe(true);
+    expect(replacement.state.files).toEqual({ "workspace/report.md": "three weeks of work" });
+    expect(feed.at(-1)).toMatch(/^computer.restored: /);
+
+    // What the run writes is backed up with what was restored.
+    at("14:00");
+    replacement.state.files["workspace/bots/Atlas/notes.md"] = "the run's notes";
+    await backup.checkpointComputerFor("w1", replacement.io, { minIntervalMs: 0 });
+    const next = (await manifest())!;
+    expect(next.generation).not.toBe(saved.generation);
+    expect(text(await store.readBytes(next.archiveKey))).toContain("three weeks of work");
+    expect(text(await store.readBytes(next.archiveKey))).toContain("the run's notes");
   });
 
   it("never claims or backs up a new drive whose restore failed", async () => {

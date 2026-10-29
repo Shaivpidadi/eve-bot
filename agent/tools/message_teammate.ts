@@ -4,7 +4,8 @@ import { z } from "zod";
 import { record } from "../lib/activity";
 import { HQ_BOT_ID } from "../lib/bots";
 import { operator } from "../lib/session";
-import { MAX_NOTE_CHARS, postNote, speakerFor, teammateRoom } from "../lib/teammail";
+import { HQ_ROOM } from "../lib/rooms";
+import { hqRoomFor, MAX_NOTE_CHARS, postNote, speakerFor, teammateRoom } from "../lib/teammail";
 
 export default defineTool({
   description:
@@ -20,9 +21,13 @@ export default defineTool({
   label: { start: ({ to }) => `Message ${to}` },
   async execute(input, ctx) {
     const who = operator(ctx);
-    const target = await teammateRoom(who.workspaceId, input.to);
-    if (target === null) return { sent: false as const, reason: `No teammate called ${input.to}.` };
-    if (target.room === who.room) return { sent: false as const, reason: "That is you." };
+    const found = await teammateRoom(who.workspaceId, input.to);
+    if (found === null) return { sent: false as const, reason: `No teammate called ${input.to}.` };
+    const toHq = found.room === HQ_ROOM;
+    // HQ is one teammate in two rooms (its desk, the Telegram chat).
+    if (found.room === who.room || (toHq && who.botId === null)) return { sent: false as const, reason: "That is you." };
+    // A Bot writing to HQ reaches it where HQ last wrote to that Bot from.
+    const target = toHq ? { ...found, room: await hqRoomFor(who.workspaceId, who.room) } : found;
     if (target.paused) return { sent: false as const, reason: `${target.name} is paused and will not read it. Tell the operator instead.` };
     const fromName = await speakerFor(who.workspaceId, who.botId);
     const posted = await postNote({

@@ -20,7 +20,7 @@ for i in $(seq 1 40); do
   [ "$n" -ge 2 ] && break; sleep 1
 done
 t1=$(python3 -c 'import time;print(time.time())')
-turns=$(curl -s --max-time 5 "localhost:3000/bot/v1/rooms/desk/stream?startIndex=0" -H "Authorization: Bearer $T" | grep -c '"type":"turn.completed"')
+turns=$(curl -s --max-time 5 "localhost:3000/bot/v1/rooms/desk/stream?startIndex=0" -H "Authorization: Bearer $T" | grep -c '"type":"turn.settled"')
 starts=$(curl -s --max-time 5 "localhost:3000/bot/v1/rooms/desk/stream?startIndex=0" -H "Authorization: Bearer $T" | grep -c '"type":"session.started"')
 echo "$label ($mode): $resp | answered=$([ "$n" -ge 2 ] && echo yes || echo no) in $(python3 -c "print(round($t1-$t0,1))")s | turns on stream=$turns | session.started events=$starts"
 pkill -f "next dev"; pkill -f "eve dev"; pkill -f "scripts/start.mjs"; pkill -f ".output/server/index.mjs"; pkill -f "next start"; sleep 4

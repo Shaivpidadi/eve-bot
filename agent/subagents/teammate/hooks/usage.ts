@@ -6,12 +6,13 @@ import { listOpenJobs, patchJob, runCheckOf } from "../../../lib/jobs";
 import { operator } from "../../../lib/session";
 import { chargeUsage } from "../../../lib/spend";
 import type { Job } from "../../../lib/types";
-import { addUsage, stepCostReported, usageOfStep } from "../../../lib/usage";
+import { addUsage, ownSpend, stepCostReported, usageOfStep } from "../../../lib/usage";
 import { sessionState } from "../lib/session-state";
 import { isHalted, markHalted } from "../lib/stops";
 
 /**
- * What a job costs, added to the job and to its Bot's ledger step by step.
+ * What a job costs, added to the job and to its Bot's ledger as eve records it
+ * (`usage.recorded`, see `ownSpend`).
  *
  * The job is found through the screen binding `job_brief` made, or, before
  * that first call, through the open job whose session this is. A step that
@@ -21,14 +22,12 @@ import { isHalted, markHalted } from "../lib/stops";
  * reservation of the run this session is (see `budget.ts`). When the budget
  * says the run has spent past its reservation with nothing left in the
  * workspace, the session is marked halted. The teammate's model resolver
- * refuses the next step on that flag before any model call or compaction (see
- * `lib/stops.ts`; since eve 0.68 a throwing hook no longer stops a turn), and
+ * refuses the next model call on that flag (see `lib/stops.ts`), and
  * `run_job` notices the halt at its next look and cancels the Bot's turn. Hooks
  * observe after the fact, so the step that crossed the line is spent: the
  * overrun is bounded by one step, plus one per other instance running the
  * same session. tests/turn-stop.test.ts runs eve's own turn loop to check it.
  */
-const models = sessionState<string>();
 const jobs = sessionState<{ jobId: string; botId: string }>();
 
 /**
@@ -66,21 +65,19 @@ async function jobOf(workspaceId: string, sessionId: string): Promise<{ jobId: s
 
 export default defineHook({
   events: {
-    "step.started"(event, ctx) {
-      const modelId = (event.data as { modelId?: unknown }).modelId;
-      if (typeof modelId === "string") models.set(ctx.session.id, modelId);
-    },
-    async "step.completed"(event, ctx) {
+    async "usage.recorded"(event, ctx) {
+      const spent = ownSpend(event.data, ctx.view);
+      if (spent === null) return;
       try {
         const { workspaceId } = operator(ctx);
         const job = await jobOf(workspaceId, ctx.session.id);
         if (job === null) return;
-        const usage = usageOfStep(event.data, models.get(ctx.session.id) ?? null);
+        const usage = usageOfStep(event.data, spent.modelId);
         const updated = await patchJob(workspaceId, job.jobId, (current) => ({ ...current, usage: addUsage(current.usage, usage) }));
         const spend = await chargeUsage(workspaceId, { botId: job.botId }, usage, {
           runToken: runTokenOf(updated, ctx.session.id),
           costReported: stepCostReported(event.data),
-          id: `${ctx.session.id}:${event.meta.id}`,
+          id: `${ctx.session.id}:${ctx.position.line}:${ctx.position.index}`,
         });
         if (spend.halted) markHalted(ctx.session.id);
       } catch {

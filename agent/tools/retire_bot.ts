@@ -14,7 +14,8 @@ export default defineTool({
   description:
     "Permanently remove a bot from the roster and cancel its open jobs. Prefer pausing with update_bot; retiring discards the bot's playbook.",
   inputSchema: z.object({
-    bot: z.string().describe("Bot name or id."),
+    // The approval card reads this, so it must be the name the operator knows.
+    bot: z.string().describe("The Bot's name, as the operator calls it (Remy), never its id: the person approving reads it."),
   }),
   // Irreversible and it destroys learned context, so a person signs off every time.
   approval: always(),

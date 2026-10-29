@@ -235,6 +235,7 @@ type Adding = { kind: "catalog"; entry: CatalogEntry } | { kind: "custom" } | nu
 export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: string | null; onSelect: (id: string | null) => void; onClose: () => void }) {
   const [connectors, setConnectors] = useState<readonly ConnectorRow[] | null>(null);
   const [catalog, setCatalog] = useState<readonly CatalogEntry[]>([]);
+  const [connectAvailable, setConnectAvailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [adding, setAdding] = useState<Adding>(null);
@@ -246,6 +247,7 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
       if (response.ok && isRecord(body) && Array.isArray(body.connectors)) {
         setConnectors(body.connectors as ConnectorRow[]);
         if (Array.isArray(body.catalog)) setCatalog(body.catalog as CatalogEntry[]);
+        setConnectAvailable(body.connectAvailable === true);
         setError(null);
       } else setError("Could not load connectors.");
     } catch (caught) {
@@ -448,6 +450,7 @@ export function ConnectorsPage({ selectedId, onSelect, onClose }: { selectedId: 
           {adding === null ? null : (
             <AddForm
               adding={adding}
+              connectAvailable={connectAvailable}
               busy={busy === "add"}
               onCancel={() => setAdding(null)}
               onSubmit={async (body) => {
@@ -760,7 +763,21 @@ function ConnectorDetail({
   );
 }
 
-function AddForm({ adding, busy, onCancel, onSubmit }: { adding: NonNullable<Adding>; busy: boolean; onCancel: () => void; onSubmit: (body: Record<string, unknown>) => Promise<void> }) {
+function AddForm({
+  adding,
+  connectAvailable,
+  busy,
+  onCancel,
+  onSubmit,
+}: {
+  adding: NonNullable<Adding>;
+  /** This is a Vercel deployment, where Vercel Connect can sign connectors in. */
+  connectAvailable: boolean;
+  busy: boolean;
+  onCancel: () => void;
+  onSubmit: (body: Record<string, unknown>) => Promise<void>;
+}) {
+  const kinds = connectAvailable ? KIND_ITEMS : KIND_ITEMS.filter((item) => item.value !== "connect");
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
   const [kind, setKind] = useState<ConnectorKeyKind>("none");
@@ -813,7 +830,7 @@ function AddForm({ adding, busy, onCancel, onSubmit }: { adding: NonNullable<Add
           </FormField>
           <FormField label="Key" id={field("kind")}>
             <Select
-              items={KIND_ITEMS}
+              items={kinds}
               value={kind}
               onValueChange={(next) => next !== null && setKind(next as ConnectorKeyKind)}
             >
@@ -821,7 +838,7 @@ function AddForm({ adding, busy, onCancel, onSubmit }: { adding: NonNullable<Add
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {KIND_ITEMS.map((item) => (
+                {kinds.map((item) => (
                   <SelectItem key={item.value} value={item.value}>
                     {item.label}
                   </SelectItem>

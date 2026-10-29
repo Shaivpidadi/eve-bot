@@ -2,10 +2,10 @@
 import "./lib/settings/built";
 import { defineAgent, defineDynamic } from "eve";
 
-import type { DynamicResolveContext } from "eve";
+import type { DynamicModelContext } from "eve";
 
 import { enginesOn } from "./lib/engines";
-import { contextToSend, customEndpoint, defaultModelFor, gatewaySelection, hqModel, levelOf, reasoningFor, sessionUsage, withOutputLimit } from "./lib/models";
+import { contextToSend, customEndpoint, defaultModelFor, endpointModel, gatewaySelection, levelOf, reasoningFor, sessionUsage, withOutputLimit } from "./lib/models";
 
 /**
  * HQ's model on AI Gateway: the workspace's choice in the console (see
@@ -16,7 +16,7 @@ import { contextToSend, customEndpoint, defaultModelFor, gatewaySelection, hqMod
  */
 type HqChoice = { readonly selection: ReturnType<typeof gatewaySelection>; readonly picked: string | null };
 
-async function hqChoice(ctx: DynamicResolveContext): Promise<HqChoice> {
+async function hqChoice(ctx: DynamicModelContext): Promise<HqChoice> {
   const [{ resolveModel }, { operator }, { effectiveEnv }] = await Promise.all([import("./lib/model-settings"), import("./lib/session"), import("./lib/settings/store")]);
   const workspaceId = operator(ctx).workspaceId;
   const [resolved, env] = await Promise.all([resolveModel(workspaceId, "hq").catch(() => null), effectiveEnv(workspaceId).catch(() => process.env)]);
@@ -26,26 +26,28 @@ async function hqChoice(ctx: DynamicResolveContext): Promise<HqChoice> {
   return { selection: gatewaySelection({ id: resolved.id, context: contextToSend(resolved.context), reasoning: resolved.reasoning, level }), picked: resolved.id };
 }
 
-/** Each session's choice for its turn, so its steps run on the same model (on this instance; another one asks again). */
-const turns = new Map<string, HqChoice>();
-const MAX_TURNS = 500;
+/**
+ * Chosen once a turn and kept with the session, so every step of the turn runs
+ * on the same model, on any instance. A model picked in the console is handed
+ * over live with its output limit (see `withOutputLimit`).
+ */
+const hqOnGateway = defineDynamic(async (ctx: DynamicModelContext) => {
+  const choice = await ctx.memo(["model", ctx.turn?.id ?? null], () => hqChoice(ctx));
+  if (choice.picked === null) return choice.selection;
+  const { listedModel } = await import("./lib/gateway-models");
+  return withOutputLimit(choice.selection, await listedModel(choice.picked));
+});
 
-const hqOnGateway = defineDynamic({
-  events: {
-    "turn.started": async (_event, ctx) => {
-      const choice = await hqChoice(ctx);
-      if (turns.size >= MAX_TURNS) turns.delete(turns.keys().next().value as string);
-      turns.set(ctx.session.id, choice);
-      return choice.selection;
-    },
-    // A model picked in the console is handed over live with its output limit (see `withOutputLimit`).
-    "step.started": async (_event, ctx) => {
-      const choice = turns.get(ctx.session.id) ?? (await hqChoice(ctx));
-      if (choice.picked === null) return choice.selection;
-      const { listedModel } = await import("./lib/gateway-models");
-      return withOutputLimit(choice.selection, await listedModel(choice.picked));
-    },
-  },
+/**
+ * HQ's model on your own provider: the workspace's choice on the Models page,
+ * else `BOT_HQ_MODEL`, else the provider's model. eve evaluates it before every model
+ * call, from settings cached for 30 seconds, with the context window eve cannot look up.
+ */
+const endpoint = customEndpoint();
+const hqOnEndpoint = defineDynamic(async (ctx: DynamicModelContext) => {
+  const [{ resolveModel }, { operator }] = await Promise.all([import("./lib/model-settings"), import("./lib/session")]);
+  const resolved = await resolveModel(operator(ctx).workspaceId, "hq").catch(() => null);
+  return { model: endpointModel(endpoint!, resolved?.id ?? defaultModelFor("hq")), modelContextWindowTokens: endpoint!.contextWindowTokens };
 });
 
 /**
@@ -58,7 +60,7 @@ const hqOnGateway = defineDynamic({
  * `BOT_MODEL_BASE_URL` set, HQ runs on that endpoint's model instead.
  */
 export default defineAgent({
-  ...(customEndpoint() === null ? { model: hqOnGateway } : hqModel()),
+  model: endpoint === null ? hqOnGateway : hqOnEndpoint,
   ...reasoningFor(process.env.BOT_HQ_REASONING, "low"),
   compaction: {
     thresholdPercent: 0.8,
