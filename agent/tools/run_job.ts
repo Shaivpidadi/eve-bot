@@ -10,6 +10,7 @@ import { chargeComputerRuntimeSoon } from "../lib/computer-spend";
 import { renderBrief } from "../lib/brief";
 import type { Engine, HarnessEngine } from "../lib/engines";
 import { reapIdleScreens } from "../lib/computer/reaper";
+import { sweepFinishedTabs } from "../lib/computer/tab-sweep";
 import { forgetJob } from "../lib/computer/screens";
 import { newId } from "../lib/ids";
 import { DISPATCH_LEASE_MS, dueMessage } from "../lib/dispatch";
@@ -912,6 +913,8 @@ async function markDone(
   await (job === null || job.status === "cancelled" ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
   // A handover this job raised is over with it.
   await forgetJob(workspaceId, jobId).catch(() => undefined);
+  // The run's tab, and its agent-browser session, go now that the job is over.
+  await sweepFinishedTabs(workspaceId).catch(() => 0);
   // Browsers nobody is using are stopped; they start again on the next use.
   await reapIdleScreens().catch(() => 0);
   const repeats = job?.status === "scheduled";
@@ -937,6 +940,7 @@ async function markFailed(
   const failed = await failJob(workspaceId, jobId, error, { token, routineGoesOn: true });
   await (failed === null ? releaseRun(workspaceId, token) : settleRun(workspaceId, token)).catch(() => false);
   await forgetJob(workspaceId, jobId).catch(() => undefined);
+  await sweepFinishedTabs(workspaceId).catch(() => 0);
   await reapIdleScreens().catch(() => 0);
   // When the routine runs again, if this was a routine's cycle.
   return failed?.status === "scheduled" ? failed.runAt : null;

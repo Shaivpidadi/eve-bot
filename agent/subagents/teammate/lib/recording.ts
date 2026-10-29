@@ -17,8 +17,9 @@ import { sessionState } from "./session-state";
  *
  * What it can show: Chrome paints only the tab in front, so the video moves
  * while this run's tab is on the screen and holds still while another Bot's
- * is. A job that ends any other way (cancelled, failed) has its tab closed by
- * the tab sweep, which ends the recording too; that video is not kept.
+ * is. A job that ends any other way (cancelled, failed) has its tab closed and
+ * its agent-browser session ended (the teammate's tabs hook, or the tab sweep),
+ * which stops the recording; that video is not kept.
  *
  * agent-browser hands frames to ffmpeg, which the computer installs the first
  * time a recording is wanted (`bot-computer recorder`), in the background: the
@@ -88,8 +89,10 @@ export async function keepRecording(ctx: ToolContext, run: RunInTab, directory: 
 export async function keepJobRecording(ctx: ToolContext, jobId: string, directory: string, stop: () => Promise<unknown>): Promise<JobArtifact | null> {
   const path = `${directory}/${RECORDING_FILE}`;
   const sandbox = await ctx.getSandbox();
-  // Another process may have started it, so the file is what says there is one.
-  const exists = await sandbox.run({ command: `test -s '${path.replaceAll("'", "")}'` });
+  // Another process may have started it, so the file is what says there is one. It
+  // can still be empty: ffmpeg writes only once it has frames, so a short run's
+  // video appears when the recording stops.
+  const exists = await sandbox.run({ command: `test -e '${path.replaceAll("'", "")}'` });
   if (exists.exitCode !== 0) return null;
   if (recordings.get(ctx.session.id)?.state !== "stopped") await stop();
   recordings.set(ctx.session.id, { state: "stopped" });

@@ -349,6 +349,11 @@ export function closeTab(io: ComputerIo, n: number, targetId: string): Promise<{
   return runScript(io, ["close-tab", String(n), targetId], 15_000);
 }
 
+/** Ends a finished run's agent-browser session and the recording it made (see `end-run` in the script). Never fails the caller. */
+export function endRunSession(io: ComputerIo, session: string): Promise<{ ok: boolean; ended?: boolean }> {
+  return runScript(io, ["end-run", session], 60_000);
+}
+
 /** Points the screen's browser at a web address. */
 /** Opens a page on a screen's browser. `ifBlank` leaves a page that is already on screen alone. */
 export function openUrl(io: ComputerIo, n: number, url: string, options: { ifBlank?: boolean } = {}): Promise<void> {

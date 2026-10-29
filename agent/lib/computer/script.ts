@@ -649,6 +649,26 @@ cmd_close_tab() {
   node "$BIN/bot-computer-cdp.mjs" close-target "$((9300 + n))" "$target"
 }
 
+# end-run SESSION: a run is over, so its agent-browser session goes: its
+# recording is stopped first (so the video is whole), then the session is
+# closed, which ends its background process and the recorder it started. A
+# session attached to the shared browser over DevTools leaves the browser
+# running. A session that is not running is left alone: any command would
+# start one.
+cmd_end_run() {
+  local session=$1 ab pid
+  printf '%s' "$session" | grep -Eq '^run-[A-Za-z0-9_-]{1,60}$' || fail args "expected a run's session name"
+  pid=$(cat "$HOME/.agent-browser/$session.pid" 2>/dev/null)
+  if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+    printf '{"ok":true,"ended":false}\n'
+    return 0
+  fi
+  ab=$(command -v agent-browser || printf '%s' "$HOME/.local/bin/agent-browser")
+  AGENT_BROWSER_SESSION="$session" timeout 30 "$ab" record stop >/dev/null 2>&1 || true
+  AGENT_BROWSER_SESSION="$session" timeout 20 "$ab" close >/dev/null 2>&1 || true
+  printf '{"ok":true,"ended":true}\n'
+}
+
 # launch KIND: what the dock's icons do. The screen comes from DISPLAY.
 cmd_launch() {
   local kind=$1 n bus
@@ -864,6 +884,7 @@ case "$1" in
   shot) cmd_shot "$2" "$3" "$4" "$5" ;;
   activate) cmd_activate "$2" "$3" ;;
   close-tab) cmd_close_tab "$2" "$3" ;;
+  end-run) cmd_end_run "$2" ;;
   open) cmd_open "$2" "$3" "$4" ;;
   tabs) cmd_tabs "$2" "$3" ;;
   launch) cmd_launch "$2" ;;
@@ -875,7 +896,7 @@ case "$1" in
   recover) cmd_recover ;;
   settle) cmd_settle ;;
   drive) cmd_drive "$2" ;;
-  *) fail args "usage: bot-computer version | install | recorder | ensure N | stop N | status | launch browser|files|terminal | raise N | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | isolate PORTS | recover | settle | drive MOUNT" ;;
+  *) fail args "usage: bot-computer version | install | recorder | ensure N | stop N | status | launch browser|files|terminal | raise N | close-tab N TARGET | end-run SESSION | reload | open N URL [if-blank] | tabs save N | shot N PATH [QUALITY] | input N JSON | identity export|import|sync N | isolate PORTS | recover | settle | drive MOUNT" ;;
 esac
 `;
 

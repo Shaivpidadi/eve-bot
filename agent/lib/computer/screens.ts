@@ -106,6 +106,9 @@ export async function setBotTab(workspaceId: string, botId: string, tab: BotTab)
 }
 
 /** A tab a run opened, kept until its job is over so the tab can be closed then. */
+/** A run's agent-browser session: the run's id, kept to characters agent-browser accepts. */
+export const runSessionName = (sessionId: string): string => `run-${sessionId.replace(/[^A-Za-z0-9_-]/g, "")}`.slice(0, 60);
+
 export interface RunTab {
   readonly n: number;
   readonly sessionId: string;

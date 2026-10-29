@@ -126,12 +126,42 @@ describe("recording a job's browser", () => {
   it("installs ffmpeg on the computer only when asked, in a script bash accepts", () => {
     const script = computerRuntime().files.find((file) => file.path.endsWith("/bot-computer"))!.content;
     expect(script).toContain("recorder) cmd_recorder ;;");
+    // A finished run's session, and the recorder it started, can be ended.
+    expect(script).toContain('end-run) cmd_end_run "$2" ;;');
     expect(script).toContain("--enable-features=WebMCPTesting,DevToolsWebMCPSupport");
     // Not in the packages every computer installs: it is large, and most teams never record.
     expect(/^PACKAGES="([^"]+)"/m.exec(script)?.[1]).not.toContain("ffmpeg");
     const checked = spawnSync("bash", ["-n"], { input: script, encoding: "utf8" });
     expect(checked.stderr).toBe("");
     expect(checked.status).toBe(0);
+  });
+});
+
+describe("keeping a job's recording", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubEnv("BOT_STORE", "memory");
+  });
+
+  it("stops a recording whose file is still empty, then keeps what it wrote", async () => {
+    vi.doMock("../agent/lib/jobs", async (original) => ({ ...(await original<object>()), attachArtifact: vi.fn(async () => ({ ok: true })) }));
+    vi.doMock("../agent/subagents/teammate/lib/journal", () => ({ journal: vi.fn(async () => undefined) }));
+    const { keepJobRecording } = await import("../agent/subagents/teammate/lib/recording");
+    // ffmpeg writes nothing until it has frames: a short run's file is empty until the recording stops.
+    let video = new Uint8Array(0);
+    const sandbox = {
+      run: async ({ command }: { command: string }) => ({ exitCode: command.startsWith("test -s") && video.byteLength === 0 ? 1 : 0, stdout: "", stderr: "" }),
+      readBinaryFile: async () => video,
+    };
+    const ctx = { getSandbox: async () => sandbox, session: { id: "s1", auth: { initiator: { principalId: "owner", attributes: { workspaceId: "w1" } } } } };
+    const stop = vi.fn(async () => {
+      video = new Uint8Array([26, 69, 223, 163]);
+    });
+    const kept = await keepJobRecording(ctx as never, "job_1", "/workspace/sessions/s1", stop);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(kept).toMatchObject({ name: "Browser recording.webm", mediaType: "video/webm" });
+    vi.doUnmock("../agent/lib/jobs");
+    vi.doUnmock("../agent/subagents/teammate/lib/journal");
   });
 });
 

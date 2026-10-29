@@ -51,6 +51,8 @@ export interface Hands {
     /** Brings one Bot's tab to the front. */
     activate(n: number, targetId: string): Promise<{ ok: boolean }>;
     close(n: number, targetId: string): Promise<{ ok: boolean; closed?: boolean }>;
+    /** Ends a finished run's agent-browser session, and the recording it made. */
+    endRun(session: string): Promise<{ ok: boolean; ended?: boolean }>;
     open(n: number, url: string, options?: { ifBlank?: boolean }): Promise<void>;
     saveTabs(n: number): Promise<{ saved: number }>;
   };

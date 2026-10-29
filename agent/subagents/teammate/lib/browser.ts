@@ -16,6 +16,7 @@ import {
   bindSession,
   liveControl,
   noteRunTab,
+  runSessionName as sessionNameOf,
   screenPorts,
   sessionBinding,
   setBotTab,
@@ -60,7 +61,7 @@ const preparedDirectories = sessionState<true>();
  * this Bot its own tab. The session name is the run's, kept to characters
  * agent-browser accepts.
  */
-const runSessionName = (ctx: ToolContext) => `run-${ctx.session.id.replace(/[^A-Za-z0-9_-]/g, "")}`.slice(0, 60);
+const runSessionName = (ctx: ToolContext) => sessionNameOf(ctx.session.id);
 
 /** Runs opened with their tab ready, so the label lookup happens once per run. */
 /**

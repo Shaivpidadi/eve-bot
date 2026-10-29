@@ -81,12 +81,13 @@ function contract(name: string, make: () => Promise<Made>) {
       await hands.browser.raise(1);
       expect(await hands.browser.activate(1, "T1")).toMatchObject({ ok: true });
       await hands.browser.close(1, "T1");
+      await hands.browser.endRun("run-wrun_1");
       await hands.browser.open(1, "https://example.com/a", { ifBlank: true });
       await hands.browser.saveTabs(1);
       await hands.identity.sync(1);
       await hands.identity.export(1);
       expect(calls()).toEqual(
-        expect.arrayContaining(["raise 1", "activate 1 T1", "close-tab 1 T1", "open 1 https://example.com/a if-blank", "tabs save 1", "identity sync 1", "identity export 1"]),
+        expect.arrayContaining(["raise 1", "activate 1 T1", "close-tab 1 T1", "end-run run-wrun_1", "open 1 https://example.com/a if-blank", "tabs save 1", "identity sync 1", "identity export 1"]),
       );
     });
 
