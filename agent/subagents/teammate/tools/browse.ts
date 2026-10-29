@@ -5,7 +5,7 @@ import { watchAuthWall } from "../../../lib/jev-watch";
 import { operator } from "../../../lib/session";
 
 import { browser, refreshScreen } from "../lib/browser";
-import { scriptUrl } from "../lib/consequence";
+import { scriptUrl, webAddress } from "../lib/consequence";
 import { forgetLook, isLook, look } from "../lib/page";
 
 export default defineTool({
@@ -29,6 +29,13 @@ export default defineTool({
         opened: false as const,
         url,
         error: "Script and data addresses are not opened: they act on the page instead of opening one. Open a web address, and act on the page with page_click or page_fill.",
+      };
+    }
+    if (url !== undefined && !webAddress(url)) {
+      return {
+        opened: false as const,
+        url,
+        error: "Only web addresses are opened: files on the computer and the browser's own pages are not. Read the team's files with read_file.",
       };
     }
     const opened = await browser(ctx, url === undefined ? [go as string] : ["open", url]);

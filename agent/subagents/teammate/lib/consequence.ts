@@ -433,3 +433,21 @@ export function refsMatching(tree: string, by: "text" | "role", target: string, 
  */
 const SCRIPT_URL = /^(javascript|vbscript|data|blob):/i;
 export const scriptUrl = (url: string): boolean => SCRIPT_URL.test(url.replace(/[\u0000- \u007f]/g, ""));
+
+/**
+ * Whether an address is a web page a Bot may open: `http(s)`, a bare domain
+ * (`app.example.com`, `localhost:3000`), or `about:blank`. Anything else is
+ * refused: a script (above), and a file on the computer or one of the
+ * browser's own pages (`file:`, a bare path, `chrome:`, `view-source:`), which
+ * would read what the computer keeps from Bots (the browser profiles, the
+ * sign-in jar) around the shell's fence.
+ */
+export function webAddress(url: string): boolean {
+  const address = url.replace(/[\u0000- \u007f]/g, "").toLowerCase();
+  if (address === "about:blank") return true;
+  if (/^[a-z][a-z0-9+.-]*:\/\//.test(address)) return /^https?:\/\//.test(address);
+  if (/^[./~\\]/.test(address)) return false;
+  // A scheme without slashes is a host and port (`localhost:3000`) only when a port follows.
+  const scheme = /^([a-z][a-z0-9+.-]*):/.exec(address)?.[1];
+  return scheme === undefined || /^\d/.test(address.slice(scheme.length + 1));
+}

@@ -419,6 +419,15 @@ describe("consequential browser actions", () => {
     expect(result).toMatchObject({ opened: false });
     expect(fake.acted).toEqual([]);
   });
+
+  it("never opens the computer's own files, such as the browser profiles", async () => {
+    const { tools } = await setup();
+    // Seen live: a Bot walked into the browser profiles by path and by file: address.
+    for (const url of ["/workspace/.computer/chrome/3/Default/", "file:///workspace/.computer/chrome/2-tabs.json"]) {
+      expect(await tools.browse.execute({ url }, ctxFor("sess_A"))).toMatchObject({ opened: false, error: expect.stringMatching(/Only web addresses/) });
+    }
+    expect(fake.acted).toEqual([]);
+  });
 });
 
 /** An account settings page in a single-page app: fields named by labels, buttons with test ids. */

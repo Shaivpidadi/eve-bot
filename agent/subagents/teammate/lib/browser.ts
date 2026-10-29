@@ -28,6 +28,7 @@ import {
 } from "../../../lib/computer/screens";
 import { posterKey, saveScreen } from "../../../lib/screens";
 import { operator } from "../../../lib/session";
+import { webAddress } from "./consequence";
 import { journal } from "./journal";
 import { keepRecording } from "./recording";
 import { sessionState } from "./session-state";
@@ -322,6 +323,8 @@ export interface BrowserResult {
 
 /** agent-browser commands that would take the browser away from the operator too. */
 const FORBIDDEN = new Set(["close", "quit", "exit", "connect", "install"]);
+/** agent-browser commands whose next word is an address to open. */
+const NAVIGATES = new Set(["open", "goto", "navigate"]);
 
 /** How long a run trusts that its screen is up before asking the computer again. */
 const SCREEN_TRUSTED_MS = 30_000;
@@ -401,6 +404,11 @@ async function browserCommand(ctx: ToolContext, args: readonly string[], options
   if (missing !== null) return failure(new Error(missing));
   if (FORBIDDEN.has(args[0] ?? "")) {
     return failure(new Error(`"${args[0]}" is not available: the browser stays open so the team can see and use it.`));
+  }
+  // Every way to an address, whichever tool asks: only web pages (see `webAddress`).
+  const address = NAVIGATES.has(args[0] ?? "") ? args[1] : args[0] === "tab" && args[1] === "new" ? args.slice(2).find((word) => !word.startsWith("-")) : undefined;
+  if (address !== undefined && !webAddress(address)) {
+    return failure(new Error("Only web addresses are opened: files on the computer and the browser's own pages are not."));
   }
   const { workspaceId } = operator(ctx);
   const binding = await sessionBinding(workspaceId, ctx.session.id);
